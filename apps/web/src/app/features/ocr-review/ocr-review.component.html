@@ -1,0 +1,94 @@
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">AI PREDICTION → HUMAN LABEL → DATASET</p>
+    <h1>Duyệt OCR biển số</h1>
+    <p>Kiểm tra evidence, xác nhận hoặc sửa biển số mà không làm mất prediction gốc.</p>
+  </div>
+  @if (auth.canReviewPlates()) {
+    <button class="button secondary" type="button" (click)="load(true)" [disabled]="loading()">
+      <svg lucideRefreshCw aria-hidden="true" [class.spin]="loading()"></svg> Làm mới
+    </button>
+  }
+</div>
+
+@if (!auth.canReviewPlates()) {
+  <div class="notice neutral" role="status">Tài khoản VIEWER chỉ có quyền đọc sự kiện. Hàng đợi OCR yêu cầu vai trò OPERATOR hoặc ADMIN.</div>
+} @else {
+  @if (error()) { <div class="notice error" role="alert">{{ error() }}</div> }
+
+  <section class="panel table-panel">
+    <div class="panel-heading">
+      <div><h2>Hàng đợi cần duyệt</h2><p>{{ events().length }} event NEEDS_REVIEW đã tải</p></div>
+      <span class="live-chip"><svg lucideScanText aria-hidden="true"></svg> OCR review</span>
+    </div>
+    @if (loading() && !events().length) {
+      <div class="empty-state">Đang tải hàng đợi…</div>
+    } @else if (!events().length) {
+      <div class="empty-state"><svg lucideCheck aria-hidden="true"></svg><strong>Không còn event chờ duyệt</strong><span>Event confidence thấp mới sẽ tự xuất hiện qua realtime.</span></div>
+    } @else {
+      <div class="table-scroll">
+        <table class="interactive-table">
+          <thead><tr><th>Thời gian</th><th>AI prediction</th><th>Camera</th><th>Vehicle</th><th>Confidence</th><th>Evidence</th><th></th></tr></thead>
+          <tbody>
+            @for (event of events(); track event._id) {
+              <tr (click)="showReview(event)" tabindex="0" (keydown.enter)="showReview(event)">
+                <td><strong>{{ event.occurredAt | date: 'dd/MM HH:mm:ss' }}</strong><small class="mono">{{ event.trackId }}</small></td>
+                <td><strong class="plate-text">{{ displayPlate(event) }}</strong><small>raw: {{ event.plate?.raw || 'N/A' }}</small></td>
+                <td><strong>{{ event.camera.name }}</strong><small>{{ event.camera.zone || event.camera.id }}</small></td>
+                <td>{{ event.vehicle.type }}<small>{{ event.vehicle.color || 'Chưa rõ màu' }}</small></td>
+                <td>{{ event.plate ? (event.plate.confidence | percent: '1.0-1') : 'N/A' }}</td>
+                <td>{{ event.media.plateCropKey ? 'Plate crop' : 'Snapshot only' }}</td>
+                <td><svg lucideChevronRight aria-hidden="true"></svg></td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      @if (nextCursor()) {
+        <div class="load-more"><button class="button secondary" type="button" (click)="load(false)" [disabled]="loadingMore()">{{ loadingMore() ? 'Đang tải…' : 'Tải thêm' }}</button></div>
+      }
+    }
+  </section>
+}
+
+@if (selected(); as event) {
+  <button class="drawer-backdrop" type="button" aria-label="Đóng form duyệt" (click)="closeReview()"></button>
+  <aside class="detail-drawer wide" aria-label="Duyệt OCR biển số">
+    <div class="drawer-heading">
+      <div><p class="eyebrow">HUMAN OCR REVIEW</p><h2>{{ displayPlate(event) }}</h2></div>
+      <button class="icon-button" type="button" aria-label="Đóng" (click)="closeReview()"><svg lucideX aria-hidden="true"></svg></button>
+    </div>
+    <div class="detail-hero"><span class="status-pill" [attr.data-status]="event.status">{{ event.status }}</span><span class="direction" [class.enter]="event.direction === 'ENTER'" [class.exit]="event.direction === 'EXIT'">{{ event.direction }}</span></div>
+
+    <section class="review-comparison" aria-label="So sánh prediction và label">
+      <div><span>AI raw</span><strong class="mono">{{ event.plate?.raw || 'N/A' }}</strong></div>
+      <div><span>AI normalized</span><strong class="plate-text">{{ event.plate?.normalized || 'N/A' }}</strong></div>
+      <div><span>Confidence</span><strong>{{ event.plate ? (event.plate.confidence | percent: '1.0-1') : 'N/A' }}</strong></div>
+      <div><span>Observations</span><strong>{{ event.plate?.observationCount ?? 0 }}</strong></div>
+    </section>
+
+    <app-media-evidence [event]="event"></app-media-evidence>
+
+    @if (success()) { <div class="notice success review-notice" role="status"><svg lucideDatabase aria-hidden="true"></svg>{{ success() }}</div> }
+    @if (reviewError()) { <div class="notice error review-notice" role="alert">{{ reviewError() }}</div> }
+
+    @if (event.status === 'NEEDS_REVIEW' && event.plate) {
+      <form class="review-form" (ngSubmit)="submitReview()">
+        <label>
+          <span class="field-label">Biển số xác nhận</span>
+          <input name="reviewedPlate" [(ngModel)]="plateText" minlength="4" maxlength="32" autocomplete="off" spellcheck="false" required>
+        </label>
+        <label>
+          <span class="field-label">Ghi chú (không bắt buộc)</span>
+          <textarea name="reviewNote" [(ngModel)]="note" maxlength="500" rows="3" placeholder="Ví dụ: ký tự cuối được đối chiếu từ plate crop"></textarea>
+        </label>
+        <p><svg lucideClock aria-hidden="true"></svg> Submit dùng review revision {{ event.plate.review?.revision ?? 0 }}; nếu operator khác đã lưu trước, API sẽ trả conflict.</p>
+        <button class="button primary full" type="submit" [disabled]="submitting() || plateText.trim().length < 4">
+          <svg lucideCheck aria-hidden="true"></svg>{{ submitting() ? 'Đang lưu…' : 'Xác nhận và tạo feedback' }}
+        </button>
+      </form>
+    } @else if (event.plate?.review; as review) {
+      <section class="drawer-section"><h3>Đã được duyệt</h3><p>{{ review.reviewedBy.displayName }} · revision {{ review.revision }} · {{ review.reviewedAt | date: 'dd/MM/yyyy HH:mm:ss' }}</p><p>Final plate: <strong class="plate-text">{{ review.normalized }}</strong></p></section>
+    }
+  </aside>
+}

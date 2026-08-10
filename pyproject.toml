@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vehicle-intelligence"
+version = "0.1.0"
+description = "Edge-first ANPR and vehicle intelligence pipeline"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "cryptography>=46,<49",
+  "fastapi>=0.115,<1",
+  "httpx>=0.27,<1",
+  "numpy>=1.26,<2",
+  "opencv-python-headless>=4.10,<4.12",
+  "opentelemetry-api>=1.36,<2",
+  "opentelemetry-exporter-otlp-proto-http>=1.36,<2",
+  "opentelemetry-instrumentation-fastapi>=0.57b0,<1",
+  "opentelemetry-sdk>=1.36,<2",
+  "prometheus-client>=0.22,<1",
+  "PyJWT[crypto]>=2.10,<3",
+  "pydantic>=2.9,<3",
+  "pydantic-settings>=2.6,<3",
+  "pymongo>=4.17,<5",
+  "PyYAML>=6,<7",
+  "redis>=7.4,<8",
+  "uvicorn[standard]>=0.31,<1",
+]
+
+[project.optional-dependencies]
+vision = [
+  "paddleocr>=3.3,<4",
+  "supervision>=0.27,<0.28",
+  "ultralytics>=8.3,<9",
+]
+minio = ["minio>=7.2,<8"]
+reid = ["torch>=2.2,<3"]
+optimization = [
+  "onnx>=1.17,<2",
+  "onnxruntime>=1.20,<2",
+]
+dev = [
+  "pytest>=8.3,<9",
+  "pytest-asyncio>=0.24,<2",
+  "ruff>=0.8,<1",
+]
+
+[project.scripts]
+vehicle-pipeline = "vehicle_intelligence.interfaces.cli:main"
+vehicle-camera = "vehicle_intelligence.interfaces.camera_cli:main"
+vehicle-camera-supervisor = "vehicle_intelligence.interfaces.supervisor_cli:main"
+vehicle-event-worker = "vehicle_intelligence.interfaces.event_worker_cli:main"
+vehicle-retention-worker = "vehicle_intelligence.interfaces.retention_cli:main"
+vehicle-credential-rotation = "vehicle_intelligence.interfaces.credential_rotation_cli:main"
+vehicle-edge-entrypoint = "vehicle_intelligence.interfaces.edge_entrypoint:main"
+vehicle-dataset-export = "vehicle_intelligence.interfaces.dataset_export_cli:main"
+vehicle-production-readiness = "vehicle_intelligence.interfaces.readiness_cli:main"
+vehicle-api = "vehicle_intelligence.interfaces.api:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Security"]

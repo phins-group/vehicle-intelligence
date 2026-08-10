@@ -1,0 +1,139 @@
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">EDGE SOURCES</p>
+    <h1>Camera</h1>
+    <p>Quản lý nguồn RTSP và quan sát health gần nhất mà không lộ credential.</p>
+  </div>
+  <div class="heading-actions">
+    <button class="button secondary" type="button" (click)="load()" [disabled]="loading()"><svg lucideRefreshCw aria-hidden="true" [class.spin]="loading()"></svg> Làm mới</button>
+    @if (auth.canTestCameras()) {
+      <button class="button secondary" type="button" (click)="discoverOnvif()" [disabled]="discovering()"><svg lucideRadar aria-hidden="true" [class.spin]="discovering()"></svg> {{ discovering() ? 'Đang quét…' : 'Quét ONVIF' }}</button>
+    }
+    @if (auth.canManageCameras()) {
+      <button class="button primary" type="button" (click)="openCreate()"><svg lucidePlus aria-hidden="true"></svg> Thêm camera</button>
+    }
+  </div>
+</div>
+
+@if (error()) { <div class="notice error" role="alert">{{ error() }}</div> }
+@if (notice()) { <div class="notice success" role="status">{{ notice() }}</div> }
+
+@if (discoveryOpen()) {
+  <section class="panel onvif-panel" aria-labelledby="onvif-discovery-title" aria-busy="{{ discovering() }}">
+    <div class="panel-heading">
+      <div>
+        <p class="eyebrow">WS-DISCOVERY</p>
+        <h2 id="onvif-discovery-title">Thiết bị ONVIF trong mạng cục bộ</h2>
+        <p>Danh sách tạm thời từ multicast discovery; không tự lưu camera hoặc truy xuất credential.</p>
+      </div>
+      <div class="heading-actions">
+        <button class="button ghost" type="button" (click)="discoverOnvif()" [disabled]="discovering()"><svg lucideRefreshCw aria-hidden="true" [class.spin]="discovering()"></svg> Quét lại</button>
+        <button class="icon-button" type="button" aria-label="Đóng kết quả ONVIF" (click)="closeDiscovery()"><svg lucideX aria-hidden="true"></svg></button>
+      </div>
+    </div>
+    @if (discovering()) {
+      <div class="onvif-scanning" role="status"><svg lucideRadar aria-hidden="true" class="spin"></svg><strong>Đang chờ thiết bị phản hồi…</strong><span>Quá trình tự kết thúc theo timeout cấu hình.</span></div>
+    } @else if (discoveryRan() && !discoveredDevices().length) {
+      <div class="empty-state compact"><svg lucideNetwork aria-hidden="true"></svg><strong>Không tìm thấy thiết bị</strong><span>Kiểm tra cùng broadcast domain, multicast và ONVIF discovery trên camera.</span></div>
+    } @else {
+      <div class="onvif-device-grid">
+        @for (device of discoveredDevices(); track device.endpointReference) {
+          <article class="onvif-device-card">
+            <div class="onvif-device-icon"><svg lucideNetwork aria-hidden="true"></svg></div>
+            <div class="onvif-device-copy">
+              <div class="onvif-device-title"><h3>{{ device.name || device.hardware || 'ONVIF Device' }}</h3><span class="status-pill" data-status="CONFIRMED">DISCOVERED</span></div>
+              <p>{{ device.remoteAddress || 'Unknown address' }} · {{ device.hardware || 'Unknown hardware' }}</p>
+              @if (device.locations.length) { <p><svg lucideMapPin aria-hidden="true"></svg>{{ device.locations.join(' / ') }}</p> }
+              <code [title]="device.serviceAddresses[0] || ''">{{ device.serviceAddresses[0] || 'No service address' }}</code>
+              <div class="camera-config-line">
+                @for (type of device.types; track type) { <span>{{ type }}</span> }
+                @if (device.metadataVersion !== null) { <span>Metadata v{{ device.metadataVersion }}</span> }
+              </div>
+            </div>
+            @if (auth.canManageCameras()) {
+              <button class="button primary" type="button" (click)="useDiscoveredDevice(device)"><svg lucideImport aria-hidden="true"></svg> Dùng cấu hình</button>
+            }
+          </article>
+        }
+      </div>
+    }
+  </section>
+}
+
+@if (loading() && !cameras().length) {
+  <div class="panel empty-state">Đang tải camera…</div>
+} @else if (!cameras().length) {
+  <div class="panel empty-state"><svg lucideCamera aria-hidden="true"></svg><strong>Chưa có camera</strong><span>Thêm nguồn camera đầu tiên để bắt đầu giám sát.</span></div>
+} @else {
+  <section class="camera-grid" aria-label="Danh sách camera">
+    @for (camera of cameras(); track camera.id) {
+      <article class="camera-card">
+        <div class="camera-preview" [class.offline]="camera.health?.status !== 'ONLINE'">
+          <svg lucideCamera aria-hidden="true"></svg>
+          <span class="camera-health-badge" [attr.data-status]="camera.health?.status || 'UNKNOWN'">
+            @if (camera.health?.status === 'ONLINE') { <svg lucideWifi aria-hidden="true"></svg> } @else { <svg lucideWifiOff aria-hidden="true"></svg> }
+            {{ camera.health?.status || 'NO HEALTH' }}
+          </span>
+          <span class="camera-id mono">{{ camera.id }}</span>
+        </div>
+        <div class="camera-card-body">
+          <div class="camera-title">
+            <div><h2>{{ camera.name }}</h2><p><svg lucideMapPin aria-hidden="true"></svg>{{ camera.location.name || 'Chưa gán vị trí' }} · {{ camera.location.zone || 'No zone' }}</p></div>
+            <span class="status-pill" [attr.data-status]="camera.enabled ? 'CONFIRMED' : 'UNREADABLE'">{{ camera.enabled ? 'ENABLED' : 'DISABLED' }}</span>
+          </div>
+          <dl class="camera-metrics">
+            <div><dt>Source FPS</dt><dd>{{ camera.health?.sourceFps ?? 0 | number: '1.1-1' }}</dd></div>
+            <div><dt>Decode FPS</dt><dd>{{ camera.health?.decodeFps ?? 0 | number: '1.1-1' }}</dd></div>
+            <div><dt>Dropped</dt><dd>{{ camera.health?.droppedFrames ?? 0 }}</dd></div>
+            <div><dt>Queue</dt><dd>{{ camera.health?.queueSize ?? 0 }}</dd></div>
+          </dl>
+          <div class="camera-config-line"><span>{{ camera.direction }}</span><span>{{ camera.stream.fpsLimit }} FPS limit</span><span>Vehicle ≥ {{ camera.vision.vehicleConfidence }}</span></div>
+          @if (testResults()[camera.id]; as result) {
+            <div class="connection-result" [class.success]="result.connected">
+              @if (result.connected) { <svg lucideCircleCheck aria-hidden="true"></svg> Kết nối tốt · {{ result.latencyMs | number: '1.0-0' }} ms }
+              @else { <svg lucideCircleAlert aria-hidden="true"></svg> Kết nối thất bại · {{ result.errorCode || 'UNKNOWN' }} }
+            </div>
+          }
+          <div class="camera-actions">
+            <a class="button primary" routerLink="/live-monitor" [queryParams]="{ camera: camera.id }"><svg lucideCctv aria-hidden="true"></svg> Xem live</a>
+            @if (auth.canTestCameras()) {
+              <button class="button ghost" type="button" (click)="test(camera)" [disabled]="isBusy(camera.id)"><svg lucideFlaskConical aria-hidden="true"></svg> Test</button>
+            }
+            @if (auth.canManageCameras()) {
+              <button class="button secondary" type="button" (click)="toggle(camera)" [disabled]="isBusy(camera.id)"><svg lucidePower aria-hidden="true"></svg> {{ camera.enabled ? 'Tắt' : 'Bật' }}</button>
+            }
+          </div>
+        </div>
+      </article>
+    }
+  </section>
+}
+
+@if (createOpen()) {
+  <button class="drawer-backdrop" type="button" aria-label="Đóng form" (click)="closeCreate()"></button>
+  <aside class="detail-drawer wide" aria-label="Tạo camera">
+    <form (ngSubmit)="createCamera()">
+      <div class="drawer-heading">
+        <div><p class="eyebrow">CAMERA MANAGER</p><h2>Thêm camera</h2></div>
+        <button class="icon-button" type="button" aria-label="Đóng" (click)="closeCreate()"><svg lucideX aria-hidden="true"></svg></button>
+      </div>
+      <div class="notice neutral"><svg lucideLockKeyhole aria-hidden="true"></svg> RTSP URL chỉ được gửi một lần tới API và không được render lại.</div>
+      @if (selectedOnvif(); as device) {
+        <div class="notice neutral"><svg lucideNetwork aria-hidden="true"></svg> Đã lấy metadata từ {{ device.name || device.remoteAddress }}. ONVIF discovery không cung cấp RTSP credential; hãy nhập RTSP URL được cấp cho camera.</div>
+      }
+      <div class="form-grid two-columns">
+        <label><span>Camera ID</span><input name="id" [(ngModel)]="draft.id" placeholder="gate-01" pattern="[A-Za-z0-9_-]+" required></label>
+        <label><span>Tên camera</span><input name="name" [(ngModel)]="draft.name" placeholder="Main Gate" required></label>
+        <label class="full-span"><span>RTSP URL</span><input type="password" name="rtspUrl" [(ngModel)]="draft.rtspUrl" placeholder="rtsp://…" autocomplete="new-password" spellcheck="false" required></label>
+        <label><span>Vị trí</span><input name="location" [(ngModel)]="draft.location" placeholder="Main Entrance"></label>
+        <label><span>Zone</span><input name="zone" [(ngModel)]="draft.zone" placeholder="ZONE_A"></label>
+        <label><span>Hướng camera</span><select name="direction" [(ngModel)]="draft.direction"><option value="BOTH">BOTH</option><option value="ENTRY">ENTRY</option><option value="EXIT">EXIT</option></select></label>
+        <label><span>Inference FPS</span><input type="number" name="fpsLimit" [(ngModel)]="draft.fpsLimit" min="0.1" step="0.1" required></label>
+        <label><span>Vehicle confidence</span><input type="number" name="vehicleConfidence" [(ngModel)]="draft.vehicleConfidence" min="0" max="1" step="0.05" required></label>
+        <label><span>Plate confidence</span><input type="number" name="plateConfidence" [(ngModel)]="draft.plateConfidence" min="0" max="1" step="0.05" required></label>
+        <label class="checkbox-field full-span"><input type="checkbox" name="enabled" [(ngModel)]="draft.enabled"><span>Bật camera ngay sau khi tạo</span></label>
+      </div>
+      <div class="drawer-actions"><button class="button ghost" type="button" (click)="closeCreate()">Hủy</button><button class="button primary" type="submit" [disabled]="saving() || !draft.id.trim() || !draft.name.trim() || !draft.rtspUrl">{{ saving() ? 'Đang lưu…' : 'Tạo camera' }}</button></div>
+    </form>
+  </aside>
+}

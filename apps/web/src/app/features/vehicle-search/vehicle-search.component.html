@@ -1,0 +1,106 @@
+<div class="page-heading vehicle-search-heading">
+  <div>
+    <p class="eyebrow">PLATE → OBSERVATIONS → HISTORY</p>
+    <h1>Tra cứu biển số</h1>
+    <p>Tổng hợp các vehicle event khớp chính xác với biển số đã chuẩn hóa.</p>
+  </div>
+  @if (resultQuery()) {
+    <button class="button secondary" type="button" (click)="refresh()" [disabled]="loading()">
+      <svg lucideRefreshCw aria-hidden="true" [class.spin]="loading()"></svg> Làm mới
+    </button>
+  }
+</div>
+
+<section class="investigation-search" aria-label="Tra cứu biển số">
+  <div class="investigation-copy">
+    <span class="search-emblem"><svg lucideSearch aria-hidden="true"></svg></span>
+    <div><strong>Exact plate investigation</strong><span>API chuẩn hóa định dạng biển số Việt Nam trước khi query index.</span></div>
+  </div>
+  <form class="plate-search-form" (ngSubmit)="submitSearch()">
+    <label for="vehicle-plate-search">Biển số xe</label>
+    <div class="plate-search-command">
+      <input id="vehicle-plate-search" name="plate" [(ngModel)]="plate" minlength="4" maxlength="32" placeholder="51H12345" autocomplete="off" spellcheck="false" required>
+      @if (plate) { <button class="icon-button clear-search" type="button" aria-label="Xóa biển số" (click)="clearSearch()"><svg lucideX aria-hidden="true"></svg></button> }
+      <button class="button primary" type="submit" [disabled]="loading() || plate.trim().length < 4"><svg lucideSearch aria-hidden="true"></svg>{{ loading() ? 'Đang tra cứu…' : 'Tra cứu' }}</button>
+    </div>
+  </form>
+</section>
+
+@if (error()) { <div class="notice error" role="alert">{{ error() }}</div> }
+
+@if (!searched()) {
+  <section class="panel vehicle-search-empty">
+    <span class="empty-illustration"><svg lucideRoute aria-hidden="true"></svg></span>
+    <div><h2>Bắt đầu từ một biển số</h2><p>Nhập biển liền, có dấu cách hoặc dấu phân cách. Kết quả trả về canonical plate và các observation mới nhất.</p></div>
+    <ul><li>Không OCR lại ảnh</li><li>Không quét toàn collection</li><li>Không tự gán vehicle identity</li></ul>
+  </section>
+} @else if (loading()) {
+  <section class="panel empty-state" aria-live="polite">Đang tìm observation theo biển số…</section>
+} @else if (resultQuery() && !events().length) {
+  <section class="panel empty-state"><svg lucideSearch aria-hidden="true"></svg><strong>Không tìm thấy {{ resultQuery() }}</strong><span>Exact search chưa ghi nhận event nào cho canonical plate này.</span></section>
+} @else if (resultQuery()) {
+  <section class="plate-result-hero">
+    <div class="plate-result-identity">
+      <p class="eyebrow">CANONICAL PLATE</p>
+      <strong class="hero-plate">{{ resultQuery() }}</strong>
+      <div class="vehicle-evidence-tags"><span><svg lucideCar aria-hidden="true"></svg>{{ summary().commonVehicleType || 'Chưa rõ loại xe' }}</span><span>{{ summary().commonColor || 'Chưa rõ màu' }}</span></div>
+    </div>
+    <div class="identity-boundary-note"><svg lucideInfo aria-hidden="true"></svg><p><strong>Biển số là tín hiệu, không phải identity tuyệt đối.</strong><span>Màn hình chỉ tổng hợp event khớp biển; không merge track hoặc khẳng định tất cả observation thuộc cùng một xe.</span></p></div>
+  </section>
+
+  <section class="metric-grid history-metrics" aria-label="Tóm tắt observations đã tải">
+    <article class="metric-card accent-blue"><span class="metric-icon"><svg lucideRoute aria-hidden="true"></svg></span><div><span>Observation đã tải</span><strong>{{ summary().loadedCount }}{{ nextCursor() ? '+' : '' }}</strong><small>{{ nextCursor() ? 'Còn dữ liệu ở trang sau' : 'Đã đến cuối kết quả hiện có' }}</small></div></article>
+    <article class="metric-card accent-violet"><span class="metric-icon"><svg lucideCamera aria-hidden="true"></svg></span><div><span>Camera đã gặp</span><strong>{{ summary().cameraCount }}</strong><small>trong tập observation đã tải</small></div></article>
+    <article class="metric-card accent-green"><span class="metric-icon"><svg lucideArrowDownRight aria-hidden="true"></svg></span><div><span>ENTER / EXIT</span><strong>{{ summary().entries }} / {{ summary().exits }}</strong><small>{{ summary().unknownDirections }} chưa xác định hướng</small></div></article>
+    <article class="metric-card accent-amber"><span class="metric-icon"><svg lucideCircleAlert aria-hidden="true"></svg></span><div><span>OCR confidence TB</span><strong>{{ summary().averagePlateConfidence !== null ? (summary().averagePlateConfidence | percent: '1.0-0') : 'N/A' }}</strong><small>chỉ trên event đã tải</small></div></article>
+  </section>
+
+  <div class="plate-history-layout">
+    <section class="panel plate-timeline-panel">
+      <div class="panel-heading"><div><h2>Lịch sử observation</h2><p>Từ cũ đến mới trong tập đã tải</p></div><span class="timeline-count">{{ timeline().length }} events</span></div>
+      <ol class="plate-timeline">
+        @for (event of timeline(); track event._id) {
+          <li>
+            <time><strong>{{ event.occurredAt | date: 'HH:mm:ss' }}</strong><span>{{ event.occurredAt | date: 'dd/MM/yyyy' }}</span></time>
+            <span class="timeline-marker" [class.enter]="event.direction === 'ENTER'" [class.exit]="event.direction === 'EXIT'"></span>
+            <button class="timeline-event" type="button" (click)="showDetails(event)">
+              <span class="timeline-event-main"><strong>{{ event.camera.name }}</strong><small><svg lucideMapPin aria-hidden="true"></svg>{{ event.camera.zone || event.camera.id }}</small></span>
+              <span class="direction" [class.enter]="event.direction === 'ENTER'" [class.exit]="event.direction === 'EXIT'">{{ event.direction }}</span>
+              <span class="timeline-vehicle"><strong>{{ event.vehicle.type }}</strong><small>{{ event.vehicle.color || 'Chưa rõ màu' }}</small></span>
+              <span class="status-pill" [attr.data-status]="event.status">{{ event.status }}</span>
+              <svg lucideChevronRight aria-hidden="true"></svg>
+            </button>
+          </li>
+        }
+      </ol>
+      @if (nextCursor() && !clientBoundReached()) { <div class="load-more"><button class="button secondary" type="button" (click)="loadMore()" [disabled]="loadingMore()">{{ loadingMore() ? 'Đang tải…' : 'Tải observation cũ hơn' }}</button></div> }
+      @if (clientBoundReached()) { <div class="history-bound-notice"><svg lucideInfo aria-hidden="true"></svg> Đã đạt giới hạn 500 observation trong bộ nhớ trình duyệt.</div> }
+    </section>
+
+    <aside class="plate-context-column" aria-label="Ngữ cảnh kết quả">
+      <section class="panel context-card"><div class="panel-heading"><div><h2>Khoảng dữ liệu đã tải</h2><p>Không suy diễn ngoài tập hiện tại</p></div><svg lucideClock aria-hidden="true"></svg></div><dl class="context-list"><div><dt>Mới nhất đã tải</dt><dd>{{ summary().latestLoadedAt | date: 'dd/MM/yyyy HH:mm:ss' }}</dd></div><div><dt>Cũ nhất đã tải</dt><dd>{{ summary().oldestLoadedAt | date: 'dd/MM/yyyy HH:mm:ss' }}</dd></div><div><dt>Logical vehicle IDs</dt><dd>{{ summary().logicalVehicleIdCount }}</dd></div><div><dt>Chưa có identity</dt><dd>{{ summary().unresolvedIdentityCount }} events</dd></div></dl></section>
+      <section class="panel context-card caution-card"><div class="panel-heading"><div><h2>Ranh giới điều tra</h2><p>Exact canonical matching</p></div><svg lucideInfo aria-hidden="true"></svg></div><ul><li>Chưa fuzzy search ký tự OCR.</li><li>Chưa xác thực plate clone hoặc đổi biển.</li><li>Chưa dùng visual embedding/topology.</li></ul></section>
+    </aside>
+  </div>
+}
+
+@if (selected(); as event) {
+  <button class="drawer-backdrop" type="button" aria-label="Đóng chi tiết" (click)="closeDetails()"></button>
+  <aside class="detail-drawer wide" aria-label="Chi tiết observation">
+    <div class="drawer-heading"><div><p class="eyebrow">PLATE OBSERVATION</p><h2>{{ displayPlate(event) }}</h2></div><button class="icon-button" type="button" aria-label="Đóng" (click)="closeDetails()"><svg lucideX aria-hidden="true"></svg></button></div>
+    <div class="detail-hero"><span class="direction" [class.enter]="event.direction === 'ENTER'" [class.exit]="event.direction === 'EXIT'">{{ event.direction }}</span><span class="status-pill" [attr.data-status]="event.status">{{ event.status }}</span></div>
+    <dl class="detail-list">
+      <div><dt><svg lucideClock aria-hidden="true"></svg> Thời gian</dt><dd>{{ event.occurredAt | date: 'dd/MM/yyyy HH:mm:ss' }}</dd></div>
+      <div><dt>Camera</dt><dd>{{ event.camera.name }} · {{ event.camera.zone || event.camera.id }}</dd></div>
+      <div><dt>Track ID</dt><dd class="mono break-all">{{ event.trackId }}</dd></div>
+      <div><dt>Vehicle ID</dt><dd class="mono break-all">{{ event.vehicleId || 'Chưa gán' }}</dd></div>
+      <div><dt>Vehicle</dt><dd>{{ event.vehicle.type }} · {{ event.vehicle.color || 'chưa rõ màu' }}</dd></div>
+      <div><dt>OCR observations</dt><dd>{{ event.plate?.observationCount ?? 0 }}</dd></div>
+      <div><dt>Plate confidence</dt><dd>{{ event.plate ? (event.plate.confidence | percent: '1.0-1') : 'N/A' }}</dd></div>
+      @if (event.plate?.review; as review) { <div><dt>AI / Human</dt><dd>{{ event.plate?.prediction?.normalized || event.plate?.normalized }} → {{ review.normalized }}</dd></div> }
+    </dl>
+    <app-media-evidence [event]="event"></app-media-evidence>
+    @if (event.vehicleId) { <a class="button primary full" [routerLink]="['/vehicles', event.vehicleId]">Mở logical vehicle <svg lucideChevronRight aria-hidden="true"></svg></a> }
+    <section class="drawer-section"><h3>Traceability</h3><p class="mono break-all">Event ID: {{ event._id }}</p><p class="mono break-all">Track ID: {{ event.trackId }}</p><p class="mono break-all">Schema version: {{ event.schemaVersion }}</p></section>
+  </aside>
+}

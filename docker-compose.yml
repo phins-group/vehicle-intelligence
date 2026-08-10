@@ -1,0 +1,215 @@
+services:
+  mongodb:
+    image: mongo:8
+    restart: unless-stopped
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "${MONGODB_HOST_PORT:-27017}:27017"
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  mongodb-init:
+    image: mongo:8
+    restart: "no"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    command:
+      - bash
+      - -ec
+      - |
+        mongosh --host mongodb:27017 --quiet --eval '
+          try {
+            rs.status();
+          } catch (error) {
+            rs.initiate({_id: "rs0", members: [{_id: 0, host: "mongodb:27017"}]});
+          }
+        '
+        until mongosh --host mongodb:27017 --quiet --eval 'quit(db.hello().isWritablePrimary ? 0 : 1)'; do
+          sleep 1
+        done
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_HOST_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${VIP_MINIO__ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${VIP_MINIO__SECRET_KEY:-minioadmin}
+      MINIO_API_STALE_UPLOADS_EXPIRY: ${MINIO_API_STALE_UPLOADS_EXPIRY:-24h}
+      MINIO_API_STALE_UPLOADS_CLEANUP_INTERVAL: ${MINIO_API_STALE_UPLOADS_CLEANUP_INTERVAL:-6h}
+    ports:
+      - "${MINIO_API_HOST_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_HOST_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      VIP_MONGODB__ENABLED: "true"
+      VIP_MONGODB__URI: mongodb://mongodb:27017/?replicaSet=rs0
+      VIP_MONGODB__DATABASE: vehicle_intelligence
+      VIP_MONGODB__TRANSACTIONS_ENABLED: "true"
+      VIP_REDIS__URL: redis://redis:6379/0
+      VIP_REALTIME__ENABLED: ${VIP_REALTIME__ENABLED:-true}
+      VIP_LIVE_MONITOR__ENABLED: ${VIP_LIVE_MONITOR__ENABLED:-true}
+      VIP_LIVE_MONITOR__REDIS_CHANNEL: ${VIP_LIVE_MONITOR__REDIS_CHANNEL:-vehicle.live.frames}
+      VIP_ONVIF_DISCOVERY__ENABLED: ${VIP_ONVIF_DISCOVERY__ENABLED:-true}
+      VIP_ONVIF_DISCOVERY__TIMEOUT_SECONDS: ${VIP_ONVIF_DISCOVERY__TIMEOUT_SECONDS:-3.0}
+      VIP_ONVIF_DISCOVERY__PROBE_RETRIES: ${VIP_ONVIF_DISCOVERY__PROBE_RETRIES:-2}
+      VIP_ONVIF_DISCOVERY__MAXIMUM_RESULTS: ${VIP_ONVIF_DISCOVERY__MAXIMUM_RESULTS:-128}
+      VIP_CAMERA_MANAGER__MAXIMUM_CONFIGURED_CAMERAS: ${VIP_CAMERA_MANAGER__MAXIMUM_CONFIGURED_CAMERAS:-256}
+      VIP_CAMERA_MANAGER__BATCH_CREATE_LIMIT: ${VIP_CAMERA_MANAGER__BATCH_CREATE_LIMIT:-50}
+      VIP_OBSERVABILITY__PROMETHEUS_ENABLED: ${VIP_OBSERVABILITY__PROMETHEUS_ENABLED:-true}
+      VIP_OBSERVABILITY__OPENTELEMETRY_ENABLED: ${VIP_OBSERVABILITY__OPENTELEMETRY_ENABLED:-false}
+      VIP_OBSERVABILITY__OTLP_TRACES_ENDPOINT: ${VIP_OBSERVABILITY__OTLP_TRACES_ENDPOINT:-http://otel-collector:4318/v1/traces}
+      VIP_OBSERVABILITY__TRACE_SAMPLE_RATIO: ${VIP_OBSERVABILITY__TRACE_SAMPLE_RATIO:-0.1}
+      VIP_STORAGE__BACKEND: minio
+      VIP_MINIO__ENDPOINT: minio:9000
+      VIP_MINIO__PUBLIC_ENDPOINT: ${VIP_MINIO__PUBLIC_ENDPOINT:-localhost:4200}
+      VIP_MINIO__REGION: ${VIP_MINIO__REGION:-us-east-1}
+      VIP_MINIO__ACCESS_KEY: ${VIP_MINIO__ACCESS_KEY:-minioadmin}
+      VIP_MINIO__SECRET_KEY: ${VIP_MINIO__SECRET_KEY:-minioadmin}
+      VIP_MINIO__SECURE: "false"
+      VIP_MINIO__PUBLIC_SECURE: ${VIP_MINIO__PUBLIC_SECURE:-false}
+      VIP_MINIO__PRESIGNED_URL_TTL_SECONDS: ${VIP_MINIO__PRESIGNED_URL_TTL_SECONDS:-300}
+      VIP_AUTH__ENABLED: ${VIP_AUTH__ENABLED:-false}
+      VIP_AUTH__PROVIDER: ${VIP_AUTH__PROVIDER:-api_key}
+      VIP_AUTH__PRINCIPALS: ${VIP_AUTH__PRINCIPALS:-[]}
+      VIP_SECURITY__CAMERA_CREDENTIAL_KEY: ${VIP_SECURITY__CAMERA_CREDENTIAL_KEY:-}
+      VIP_SECURITY__CAMERA_CREDENTIAL_KEY_ID: ${VIP_SECURITY__CAMERA_CREDENTIAL_KEY_ID:-primary}
+    ports:
+      - "${API_HOST_PORT:-8000}:8000"
+    depends_on:
+      mongodb-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  web:
+    build:
+      context: ./apps/web
+    restart: unless-stopped
+    ports:
+      - "${WEB_HOST_PORT:-4200}:80"
+    depends_on:
+      - api
+
+  event-worker:
+    build: .
+    profiles: ["event-driven"]
+    restart: unless-stopped
+    command: ["vehicle-event-worker"]
+    environment:
+      VIP_EVENT_BUS__BACKEND: redis
+      VIP_REDIS__URL: redis://redis:6379/0
+      VIP_MONGODB__ENABLED: "true"
+      VIP_MONGODB__URI: mongodb://mongodb:27017/?replicaSet=rs0
+      VIP_MONGODB__DATABASE: vehicle_intelligence
+      VIP_MONGODB__TRANSACTIONS_ENABLED: "true"
+      VIP_REALTIME__ENABLED: ${VIP_REALTIME__ENABLED:-true}
+      VIP_IDENTITY__ENABLED: ${VIP_IDENTITY__ENABLED:-true}
+      VIP_RULE_ENGINE__ENABLED: "true"
+      VIP_RULE_ENGINE__EXTERNAL_ACTIONS_ENABLED: "false"
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongodb-init:
+        condition: service_completed_successfully
+
+  retention-worker:
+    build: .
+    profiles: ["maintenance"]
+    restart: unless-stopped
+    command: ["vehicle-retention-worker"]
+    environment:
+      VIP_MONGODB__ENABLED: "true"
+      VIP_MONGODB__URI: mongodb://mongodb:27017/?replicaSet=rs0
+      VIP_MONGODB__DATABASE: vehicle_intelligence
+      VIP_STORAGE__BACKEND: minio
+      VIP_MINIO__ENDPOINT: minio:9000
+      VIP_MINIO__ACCESS_KEY: ${VIP_MINIO__ACCESS_KEY:-minioadmin}
+      VIP_MINIO__SECRET_KEY: ${VIP_MINIO__SECRET_KEY:-minioadmin}
+      VIP_MINIO__SECURE: "false"
+      VIP_RETENTION__ENABLED: "true"
+      VIP_RETENTION__WORKER_INTERVAL_SECONDS: ${VIP_RETENTION__WORKER_INTERVAL_SECONDS:-3600}
+      VIP_RETENTION__BATCH_SIZE: ${VIP_RETENTION__BATCH_SIZE:-100}
+      VIP_RETENTION__VEHICLE_EVENTS_DAYS: ${VIP_RETENTION__VEHICLE_EVENTS_DAYS:-365}
+      VIP_RETENTION__SNAPSHOTS_DAYS: ${VIP_RETENTION__SNAPSHOTS_DAYS:-30}
+      VIP_RETENTION__VEHICLE_CROPS_DAYS: ${VIP_RETENTION__VEHICLE_CROPS_DAYS:-30}
+      VIP_RETENTION__PLATE_CROPS_DAYS: ${VIP_RETENTION__PLATE_CROPS_DAYS:-30}
+      VIP_RETENTION__EVENT_CLIPS_DAYS: ${VIP_RETENTION__EVENT_CLIPS_DAYS:-14}
+      VIP_RETENTION__DEBUG_IMAGES_DAYS: ${VIP_RETENTION__DEBUG_IMAGES_DAYS:-7}
+      VIP_OBSERVABILITY__PROMETHEUS_ENABLED: ${VIP_OBSERVABILITY__PROMETHEUS_ENABLED:-true}
+      VIP_OBSERVABILITY__RETENTION_METRICS_PORT: ${VIP_OBSERVABILITY__RETENTION_METRICS_PORT:-9101}
+    expose:
+      - "9101"
+    depends_on:
+      mongodb-init:
+        condition: service_completed_successfully
+      minio:
+        condition: service_started
+
+  prometheus:
+    image: prom/prometheus:v3.13.1
+    profiles: ["observability"]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROMETHEUS_HOST_PORT:-9090}:9090"
+    depends_on:
+      - api
+
+  otel-collector:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.153.0
+    profiles: ["observability"]
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/collector.yml"]
+    volumes:
+      - ./infrastructure/otel/collector.yml:/etc/otelcol/collector.yml:ro
+    ports:
+      - "${OTEL_HTTP_HOST_PORT:-4318}:4318"
+
+  mediamtx:
+    image: bluenviron/mediamtx:1
+    profiles: ["rtsp-dev"]
+    restart: unless-stopped
+    environment:
+      MTX_RTSPTRANSPORTS: tcp
+    ports:
+      - "${RTSP_HOST_PORT:-8554}:8554"
+
+volumes:
+  mongodb_data:
+  redis_data:
+  minio_data:
+  prometheus_data:

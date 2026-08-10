@@ -1,0 +1,354 @@
+app:
+  environment: development
+  log_level: INFO
+  config_version: default
+
+camera:
+  id: sample-camera
+  name: Sample Camera
+  fps_limit: 6.0
+  direction: BOTH
+  roi: null
+  crossing_line: null
+  crossing_positive_to_negative: ENTER
+  finalize_on_crossing: false
+
+vision:
+  # Bypass vehicle detection and track plates directly on the full frame.
+  plate_only: false
+  vehicle_detection:
+    provider: ultralytics
+    model_path: yolo11n.pt
+    model_name: vehicle-yolo
+    model_version: unset
+    confidence: 0.40
+    iou: 0.70
+    image_size: 640
+    device: null
+    execution_providers: []
+    onnx_output_format: auto
+    model_classes: null
+    picodet:
+      strides: [8, 16, 32, 64]
+      nms_top_k: 1000
+      keep_top_k: 100
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+      scale: 0.00392156862745098
+    classes: [car, motorcycle, bus, truck]
+  plate_detection:
+    provider: ultralytics
+    model_path: null
+    model_name: vietnam-plate-yolo
+    model_version: unset
+    confidence: 0.45
+    iou: 0.60
+    image_size: 640
+    device: null
+    execution_providers: []
+    onnx_output_format: auto
+    model_classes: null
+    picodet:
+      strides: [8, 16, 32, 64]
+      nms_top_k: 1000
+      keep_top_k: 100
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+      scale: 0.00392156862745098
+  plate_crop:
+    horizontal_padding_ratio: 0.08
+    vertical_padding_ratio: 0.08
+    # Some generic plate models detect only the lower row of Vietnamese
+    # motorcycle plates. Recover the upper row before quality/OCR.
+    two_line_top_expansion_ratio: 1.0
+    two_line_vehicle_classes: [motorcycle]
+  plate_quality:
+    minimum: 0.55
+    min_width: 48
+    min_height: 16
+    target_width: 160
+    target_height: 50
+    blur_reference: 180.0
+    brightness_min: 45.0
+    brightness_max: 220.0
+    contrast_reference: 55.0
+    aspect_ratio_min: 1.5
+    aspect_ratio_ideal: 3.2
+    aspect_ratio_max: 6.5
+    weights:
+      sharpness: 0.25
+      brightness: 0.15
+      contrast: 0.15
+      resolution: 0.20
+      angle: 0.10
+      detector: 0.15
+  preprocessing:
+    enabled: true
+    resize_width: 320
+    apply_clahe_below_contrast: 0.65
+    denoise_below_sharpness: 0.45
+    sharpen_below_sharpness: 0.70
+    clahe_clip_limit: 2.0
+  ocr:
+    provider: paddleocr
+    minimum_confidence: 0.60
+    detection_model_name: PP-OCRv5_mobile_det
+    model_name: PP-OCRv5_mobile_rec
+    model_version: PP-OCRv5
+    device: cpu
+    language: en
+    # Keep incomplete motorcycle OCR (for example "006.05") for human review.
+    # Complete Vietnamese plates are still preferred by temporal voting.
+    allow_partial_plate: true
+    partial_min_characters: 4
+    partial_max_characters: 12
+  snapshot_selection:
+    sharpness_reference: 220.0
+    vehicle_area_weight: 0.35
+    sharpness_weight: 0.35
+    detector_confidence_weight: 0.30
+    plate_quality_weight: 0.40
+    plate_ocr_weight: 0.35
+    plate_detector_weight: 0.25
+
+tracking:
+  provider: bytetrack
+  activation_threshold: 0.25
+  lost_track_buffer: 30
+  minimum_matching_threshold: 0.80
+  minimum_consecutive_frames: 1
+  timeout_seconds: 2.0
+
+rtsp:
+  queue_size: 3
+  reconnect_initial_seconds: 0.5
+  reconnect_max_seconds: 30.0
+  open_timeout_ms: 5000
+  read_timeout_ms: 5000
+  consumer_wait_seconds: 0.25
+  shutdown_join_seconds: 6.0
+
+camera_manager:
+  reconcile_interval_seconds: 2.0
+  restart_backoff_seconds: 5.0
+  restart_backoff_max_seconds: 120.0
+  restart_stability_seconds: 60.0
+  worker_shutdown_seconds: 15.0
+  health_publish_interval_seconds: 5.0
+  connection_test_concurrency: 4
+  maximum_configured_cameras: 256
+  maximum_active_workers: 32
+  maximum_starts_per_reconcile: 4
+  batch_create_limit: 50
+  worker_command: [vehicle-camera]
+  worker_config_path: configs/default.yaml
+
+onvif_discovery:
+  enabled: true
+  multicast_address: 239.255.255.250
+  port: 3702
+  interface_address: null
+  timeout_seconds: 3.0
+  probe_retries: 2
+  multicast_ttl: 2
+  maximum_results: 128
+  maximum_response_bytes: 65535
+
+security:
+  camera_credential_key: null
+  camera_credential_key_id: camera-key-v1
+  camera_credential_keys: []
+  camera_credential_active_key_id: null
+
+auth:
+  enabled: false
+  provider: api_key
+  realm: vehicle-intelligence
+  minimum_token_length: 32
+  principals: []
+  oidc: null
+
+voting:
+  minimum_observations: 2
+  cluster_max_edit_distance: 2
+  frequency_weight: 0.25
+  ocr_confidence_weight: 0.30
+  quality_weight: 0.20
+  detection_confidence_weight: 0.15
+  character_consensus_weight: 0.10
+
+events:
+  minimum_plate_confidence: 0.75
+  review_plate_confidence: 0.85
+  duplicate_window_seconds: 10
+
+identity:
+  enabled: true
+  fingerprint_schema_version: 1
+  maximum_plate_aliases: 16
+  vector_candidate_limit: 1000
+  topology_edge_limit: 64
+  candidates_per_edge: 100
+  cross_camera_candidate_limit: 200
+  journey_event_limit: 1000
+  embedding:
+    enabled: false
+    provider: torchscript
+    model_path: null
+    model_name: vehicle-reid
+    model_version: unset
+    model_hash: null
+    dimension: 512
+    image_width: 256
+    image_height: 256
+    device: cpu
+  reid:
+    enabled: true
+    scoring_version: reid-score-v1
+    plate_weight: 0.40
+    embedding_weight: 0.25
+    vehicle_type_weight: 0.10
+    color_weight: 0.05
+    travel_time_weight: 0.20
+    match_threshold: 0.88
+    review_threshold: 0.65
+    maximum_scored_candidates: 100
+
+gpu_scheduler:
+  enabled: false
+  maximum_cameras: 32
+  maximum_batch_size: 8
+  per_camera_queue_size: 1
+  maximum_frame_age_ms: 250
+  batch_wait_ms: 5
+
+model_quality:
+  default_window_days: 30
+  maximum_window_days: 365
+  maximum_models: 50
+  in_memory_scan_limit: 100000
+
+dataset_export:
+  output_directory: datasets/exports
+  batch_size: 500
+  maximum_image_bytes: 5000000
+  maximum_image_pixels: 20000000
+  claim_stale_seconds: 600
+  train_ratio: 0.8
+  validation_ratio: 0.1
+  test_ratio: 0.1
+  split_seed: camera-split-v1
+
+event_bus:
+  backend: direct
+
+rule_engine:
+  enabled: true
+  evaluation_max_rules: 1000
+  action_timeout_seconds: 5.0
+  action_max_attempts: 3
+  action_claim_stale_seconds: 60.0
+  external_actions_enabled: false
+  external_allowed_hosts: []
+  external_targets: []
+  external_maximum_url_length: 2048
+
+redis:
+  url: redis://localhost:6379/0
+  stream: vehicle.events
+  dead_letter_stream: vehicle.events.dlq
+  consumer_group: event-processors
+  max_length: 100000
+  dead_letter_max_length: 10000
+  batch_size: 25
+  block_ms: 1000
+  claim_idle_ms: 30000
+  connection_timeout_ms: 3000
+  retry_delay_seconds: 1.0
+  delete_after_ack: true
+
+realtime:
+  enabled: false
+  redis_channel: vehicle.events.realtime
+  client_queue_size: 50
+  replay_size: 500
+  heartbeat_seconds: 15.0
+  websocket_auth_timeout_seconds: 5.0
+  broker_poll_seconds: 1.0
+  reconnect_initial_seconds: 0.5
+  reconnect_max_seconds: 30.0
+
+live_monitor:
+  enabled: false
+  redis_channel: vehicle.live.frames
+  preview_fps: 2.0
+  preview_max_width: 960
+  jpeg_quality: 72
+  maximum_payload_bytes: 750000
+  publish_timeout_seconds: 1.0
+  frame_buffer_size: 3
+  maximum_cameras: 256
+  stale_after_seconds: 5.0
+  broker_poll_seconds: 0.25
+  reconnect_initial_seconds: 0.5
+  reconnect_max_seconds: 30.0
+
+storage:
+  backend: local
+  output_directory: output
+  snapshots: true
+  vehicle_crops: true
+  plate_crops: true
+  clips: false
+
+mongodb:
+  enabled: false
+  uri: mongodb://localhost:27017
+  database: vehicle_intelligence
+  server_selection_timeout_ms: 3000
+  connect_timeout_ms: 3000
+  socket_timeout_ms: 10000
+  transactions_enabled: false
+  transaction_max_commit_time_ms: 5000
+
+minio:
+  endpoint: localhost:9000
+  public_endpoint: null
+  region: us-east-1
+  access_key: minioadmin
+  secret_key: minioadmin
+  bucket: vehicle-media
+  secure: false
+  public_secure: null
+  presigned_url_ttl_seconds: 300
+
+observability:
+  prometheus_enabled: true
+  prometheus_path: /metrics
+  retention_metrics_port: 9101
+  opentelemetry_enabled: false
+  otlp_traces_endpoint: null
+  otlp_headers: null
+  service_name: vehicle-intelligence-api
+  service_version: 0.1.0
+  trace_sample_ratio: 0.10
+  export_timeout_seconds: 5.0
+
+retention:
+  enabled: false
+  worker_interval_seconds: 3600
+  batch_size: 100
+  claim_stale_seconds: 600
+  vehicle_events_days: 365
+  snapshots_days: 30
+  vehicle_crops_days: 30
+  plate_crops_days: 30
+  event_clips_days: 14
+  debug_images_days: 7
+  minio_lifecycle_enabled: true
+
+debug:
+  save_plate_candidates: false
+  save_vehicle_crops: false
+  draw_overlay: false
+  verbose_tracking: false

@@ -1,0 +1,129 @@
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">TRUNG TÂM VẬN HÀNH</p>
+    <h1>Tổng quan hôm nay</h1>
+    <p>Theo dõi luồng phương tiện, trạng thái camera và cảnh báo cần xử lý.</p>
+  </div>
+  <button class="button secondary" type="button" (click)="load()" [disabled]="loading()">
+    <svg lucideRefreshCw aria-hidden="true" [class.spin]="loading()"></svg>
+    Làm mới
+  </button>
+</div>
+
+@if (error()) {
+  <div class="notice error" role="alert">{{ error() }}</div>
+}
+
+<section class="metric-grid" aria-label="Chỉ số hôm nay">
+  <article class="metric-card accent-blue">
+    <div class="metric-icon"><svg lucideCar aria-hidden="true"></svg></div>
+    <div>
+      <span>Phương tiện hôm nay</span>
+      <strong>{{ total() }}{{ truncated() ? '+' : '' }}</strong>
+      <small>{{ truncated() ? 'Hiển thị tối thiểu 200 sự kiện' : 'Từ 00:00 theo giờ địa phương' }}</small>
+    </div>
+  </article>
+  <article class="metric-card accent-green">
+    <div class="metric-icon"><svg lucideArrowDownRight aria-hidden="true"></svg></div>
+    <div>
+      <span>Lượt vào</span>
+      <strong>{{ entries() }}</strong>
+      <small>{{ total() ? (entries() / total() | percent: '1.0-0') : '0%' }} tổng lưu lượng</small>
+    </div>
+  </article>
+  <article class="metric-card accent-violet">
+    <div class="metric-icon"><svg lucideArrowUpRight aria-hidden="true"></svg></div>
+    <div>
+      <span>Lượt ra</span>
+      <strong>{{ exits() }}</strong>
+      <small>{{ total() ? (exits() / total() | percent: '1.0-0') : '0%' }} tổng lưu lượng</small>
+    </div>
+  </article>
+  <article class="metric-card accent-amber">
+    <div class="metric-icon"><svg lucideCircleAlert aria-hidden="true"></svg></div>
+    <div>
+      <span>Không đọc được biển</span>
+      <strong>{{ unknown() }}</strong>
+      <small>{{ alerts().length }} cảnh báo đang mở</small>
+    </div>
+  </article>
+</section>
+
+<div class="dashboard-grid">
+  <section class="panel activity-panel">
+    <div class="panel-heading">
+      <div>
+        <h2>Hoạt động theo giờ</h2>
+        <p>7 giờ gần nhất trong tập sự kiện đã tải</p>
+      </div>
+      <span class="live-chip"><svg lucideRadio aria-hidden="true"></svg> Live</span>
+    </div>
+    <div class="activity-chart" aria-label="Biểu đồ hoạt động theo giờ">
+      @for (row of hourlyActivity(); track row.label) {
+        <div class="activity-row">
+          <span>{{ row.label }}</span>
+          <div class="activity-track">
+            <div class="activity-bar" [style.width.%]="row.width">
+              @if (row.total > 0) { {{ row.total }} }
+            </div>
+          </div>
+          <small><b>{{ row.entries }}</b> vào · <b>{{ row.exits }}</b> ra</small>
+        </div>
+      }
+    </div>
+  </section>
+
+  <section class="panel camera-summary">
+    <div class="panel-heading">
+      <div>
+        <h2>Camera</h2>
+        <p>Tình trạng nguồn tại edge</p>
+      </div>
+      <svg lucideCamera aria-hidden="true"></svg>
+    </div>
+    <div class="camera-score">
+      <strong>{{ onlineCameras() }}</strong><span>/ {{ cameras().length }} online</span>
+    </div>
+    <div class="availability-bar" aria-hidden="true">
+      <span [style.width.%]="cameras().length ? onlineCameras() / cameras().length * 100 : 0"></span>
+    </div>
+    <div class="camera-status-list">
+      <span><i class="dot online"></i> Online <b>{{ onlineCameras() }}</b></span>
+      <span><i class="dot offline"></i> Offline/khác <b>{{ offlineCameras() }}</b></span>
+      <span><i class="dot neutral"></i> Chưa có health <b>{{ cameras().length - onlineCameras() - offlineCameras() }}</b></span>
+    </div>
+  </section>
+</div>
+
+<section class="panel table-panel">
+  <div class="panel-heading">
+    <div>
+      <h2>Sự kiện gần đây</h2>
+      <p>Quan sát mới nhất từ tất cả camera</p>
+    </div>
+    <svg lucideActivity aria-hidden="true"></svg>
+  </div>
+  @if (loading() && !events().length) {
+    <div class="empty-state">Đang tải sự kiện…</div>
+  } @else if (!recentEvents().length) {
+    <div class="empty-state">Chưa có sự kiện phương tiện hôm nay.</div>
+  } @else {
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Thời gian</th><th>Biển số</th><th>Phương tiện</th><th>Camera</th><th>Hướng</th><th>Trạng thái</th></tr></thead>
+        <tbody>
+          @for (event of recentEvents(); track event._id) {
+            <tr>
+              <td class="mono subtle">{{ event.occurredAt | date: 'HH:mm:ss' }}</td>
+              <td><strong class="plate-text">{{ plate(event) }}</strong></td>
+              <td>{{ event.vehicle.type }}</td>
+              <td><strong>{{ event.camera.name }}</strong><small>{{ event.camera.zone || 'Chưa gán zone' }}</small></td>
+              <td><span class="direction" [class.enter]="event.direction === 'ENTER'" [class.exit]="event.direction === 'EXIT'">{{ event.direction }}</span></td>
+              <td><span class="status-pill" [attr.data-status]="event.status">{{ event.status }}</span></td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</section>

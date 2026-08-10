@@ -1,0 +1,61 @@
+<section class="drawer-section media-evidence" aria-live="polite" [attr.aria-busy]="loading()">
+  <div class="media-evidence-heading">
+    <div>
+      <h3><svg lucideImage aria-hidden="true"></svg> Media evidence</h3>
+      <p>URL ký ngắn hạn, chỉ cấp từ media reference của event.</p>
+    </div>
+    @if (hasReferences()) {
+      <button class="icon-button" type="button" aria-label="Cấp lại URL media" (click)="reload()" [disabled]="loading()">
+        <svg lucideRefreshCw aria-hidden="true" [class.spin]="loading()"></svg>
+      </button>
+    }
+  </div>
+
+  @if (!hasReferences()) {
+    <div class="media-empty"><svg lucideImage aria-hidden="true"></svg><span>Event không có media reference.</span></div>
+  } @else if (loading()) {
+    <div class="media-grid" aria-label="Đang tải media">
+      <div class="media-skeleton"></div><div class="media-skeleton"></div>
+    </div>
+  } @else if (error()) {
+    <div class="media-error" role="alert">
+      <svg lucideTriangleAlert aria-hidden="true"></svg>
+      <div><strong>Media chưa sẵn sàng</strong><p>{{ error() }}</p></div>
+      <button class="button secondary compact" type="button" (click)="reload()">Thử lại</button>
+    </div>
+  } @else if (access(); as mediaAccess) {
+    <div class="media-grid">
+      @for (item of imageAssets(); track item.slot) {
+        <article class="media-card" [class.plate-media]="item.slot === 'plateCrop'">
+          <div class="media-card-heading"><strong>{{ item.label }}</strong><span [attr.data-status]="item.asset.status">{{ item.asset.status }}</span></div>
+          @if (usableUrl(item); as url) {
+            <a class="media-preview" [href]="url" target="_blank" rel="noopener noreferrer" [attr.aria-label]="'Mở ' + item.label + ' kích thước gốc'">
+              <img [src]="url" [alt]="item.label + ' của event ' + event._id" referrerpolicy="no-referrer" (error)="markFailed(item.slot)" />
+              <span><svg lucideArrowUpRight aria-hidden="true"></svg> Mở ảnh gốc</span>
+            </a>
+          } @else {
+            <div class="media-unavailable"><svg lucideTriangleAlert aria-hidden="true"></svg><span>{{ unavailableMessage(item) }}</span></div>
+          }
+          <details><summary>Object key</summary><p class="mono break-all">{{ item.asset.key }}</p></details>
+        </article>
+      }
+    </div>
+
+    @if (clipAsset(); as item) {
+      <article class="media-card media-clip-card">
+        <div class="media-card-heading"><strong>{{ item.label }}</strong><span [attr.data-status]="item.asset.status">{{ item.asset.status }}</span></div>
+        @if (usableUrl(item); as url) {
+          <video controls preload="metadata" [src]="url" (error)="markFailed(item.slot)"></video>
+        } @else {
+          <div class="media-unavailable"><svg lucideTriangleAlert aria-hidden="true"></svg><span>{{ unavailableMessage(item) }}</span></div>
+        }
+        <details><summary>Object key</summary><p class="mono break-all">{{ item.asset.key }}</p></details>
+      </article>
+    }
+
+    <div class="media-access-note">
+      <span><svg lucideShieldCheck aria-hidden="true"></svg> Không chia sẻ liên kết tạm thời</span>
+      <span><svg lucideClock aria-hidden="true"></svg> Tự cấp lại trước {{ mediaAccess.expiresAt | date: 'HH:mm:ss' }}</span>
+    </div>
+  }
+</section>

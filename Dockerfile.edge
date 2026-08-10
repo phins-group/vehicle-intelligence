@@ -1,0 +1,36 @@
+FROM python:3.12-slim
+
+ARG ONNXRUNTIME_PACKAGE="onnxruntime>=1.20,<2"
+ARG PADDLE_PACKAGE="paddlepaddle>=3.0,<4"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    VIP_EDGE_MANIFEST=/run/edge/manifest.json \
+    VIP_EDGE_MODEL_ROOT=/models
+
+WORKDIR /app
+
+RUN groupadd --system vehicle && useradd --system --gid vehicle --home /app vehicle
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+COPY configs ./configs
+
+RUN python -m pip install --no-cache-dir '.[minio]' \
+      'paddleocr>=3.3,<4' 'supervision>=0.27,<0.28' 'onnx>=1.17,<2' \
+      "${ONNXRUNTIME_PACKAGE}" "${PADDLE_PACKAGE}" && \
+    mkdir -p /models /data /run/edge && \
+    chown -R vehicle:vehicle /app /data /run/edge
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends --yes libgl1 libglib2.0-0 && \
+    rm -rf /var/lib/apt/lists/*
+
+USER vehicle
+
+VOLUME ["/models", "/data"]
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD ["python", "-c", "import os; os.kill(1, 0); assert os.path.isfile(os.environ['VIP_EDGE_MANIFEST'])"]
+
+ENTRYPOINT ["vehicle-edge-entrypoint"]

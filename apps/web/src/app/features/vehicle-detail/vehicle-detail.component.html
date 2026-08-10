@@ -1,0 +1,106 @@
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">IDENTITY → OBSERVATIONS → JOURNEY</p>
+    <h1>Chi tiết phương tiện</h1>
+    <p class="mono break-all">{{ identity()?.id || vehicleId }}</p>
+  </div>
+  <div class="heading-actions">
+    <a class="button secondary" routerLink="/vehicle-search">Tra cứu biển số</a>
+    <button class="button secondary" type="button" (click)="refresh()" [disabled]="loading()">
+      <svg lucideRefreshCw aria-hidden="true" [class.spin]="loading()"></svg> Làm mới
+    </button>
+  </div>
+</div>
+
+@if (error()) { <div class="notice error" role="alert">{{ error() }}</div> }
+
+@if (loading()) {
+  <section class="panel empty-state" aria-live="polite">Đang dựng logical vehicle và hành trình…</section>
+} @else if (identity(); as vehicle) {
+  <section class="vehicle-identity-hero">
+    <div>
+      <p class="eyebrow">PRIMARY IDENTITY SIGNAL</p>
+      <strong class="hero-plate">{{ vehicle.primaryPlate || 'UNKNOWN PLATE' }}</strong>
+      <div class="vehicle-evidence-tags">
+        <span><svg lucideCar aria-hidden="true"></svg>{{ vehicle.attributes.type || 'Chưa rõ loại' }}</span>
+        <span>{{ vehicle.attributes.color || 'Chưa rõ màu' }}</span>
+        <span class="status-pill" [attr.data-status]="vehicle.status">{{ vehicle.status }}</span>
+      </div>
+    </div>
+    <div class="identity-boundary-note">
+      <svg lucideInfo aria-hidden="true"></svg>
+      <p><strong>Identity được suy luận từ observations đã review.</strong><span>Biển số, thuộc tính và camera topology là evidence; local track ID không phải global identity.</span></p>
+    </div>
+  </section>
+
+  @if (mergedInto()) {
+    <div class="notice warning"><svg lucideCircleAlert aria-hidden="true"></svg> Identity này đã merge vào <a [routerLink]="['/vehicles', mergedInto()]" class="mono">{{ mergedInto() }}</a>.</div>
+  }
+
+  <section class="metric-grid history-metrics" aria-label="Tóm tắt logical vehicle">
+    <article class="metric-card accent-blue"><span class="metric-icon"><svg lucideRoute aria-hidden="true"></svg></span><div><span>Observations</span><strong>{{ summary()?.observationCount ?? 0 }}{{ journey()?.truncated ? '+' : '' }}</strong><small>{{ vehicle.observationCount }} fingerprints trong aggregate</small></div></article>
+    <article class="metric-card accent-violet"><span class="metric-icon"><svg lucideCamera aria-hidden="true"></svg></span><div><span>Camera</span><strong>{{ summary()?.cameraCount ?? 0 }}</strong><small>{{ vehicle.latestEvent?.camera?.name || 'Chưa có latest event' }}</small></div></article>
+    <article class="metric-card accent-green"><span class="metric-icon"><svg lucideClock aria-hidden="true"></svg></span><div><span>Thời lượng</span><strong>{{ duration() }}</strong><small>{{ journey()?.startedAt | date: 'dd/MM HH:mm' }} → {{ journey()?.endedAt | date: 'dd/MM HH:mm' }}</small></div></article>
+    <article class="metric-card accent-amber"><span class="metric-icon"><svg lucideCircleAlert aria-hidden="true"></svg></span><div><span>Topology issues</span><strong>{{ summary()?.infeasibleSegments ?? 0 }}</strong><small>{{ summary()?.unknownTopologySegments ?? 0 }} segment chưa có topology</small></div></article>
+  </section>
+
+  <div class="vehicle-detail-layout">
+    <section class="panel journey-panel">
+      <div class="panel-heading"><div><h2>Hành trình camera</h2><p>Chronological events; segment được kiểm tra bằng travel window</p></div><span class="timeline-count">{{ steps().length }} stops</span></div>
+      @if (!steps().length) {
+        <div class="empty-state">Identity chưa có canonical event khả dụng.</div>
+      } @else {
+        <ol class="journey-timeline">
+          @for (step of steps(); track step.observation.eventId) {
+            <li>
+              @if (step.segmentBefore; as segment) {
+                <div class="journey-segment" [attr.data-feasible]="segment.feasible">
+                  <svg lucideArrowDownRight aria-hidden="true"></svg>
+                  <span>{{ segmentLabel(segment.elapsedSeconds) }}</span>
+                  @if (segment.feasible === true) { <small>Trong travel window</small> }
+                  @else if (segment.feasible === false) { <small>Ngoài travel window</small> }
+                  @else { <small>Chưa cấu hình topology</small> }
+                </div>
+              }
+              <button class="journey-stop" type="button" (click)="showEvent(step.observation)" [disabled]="eventLoading()">
+                <span class="journey-marker"><svg lucideMapPin aria-hidden="true"></svg></span>
+                <span class="journey-stop-main"><strong>{{ step.observation.cameraName }}</strong><small>{{ step.observation.zone || step.observation.cameraId }}</small></span>
+                <time><strong>{{ step.observation.occurredAt | date: 'HH:mm:ss' }}</strong><small>{{ step.observation.occurredAt | date: 'dd/MM/yyyy' }}</small></time>
+                <span class="direction" [class.enter]="step.observation.direction === 'ENTER'" [class.exit]="step.observation.direction === 'EXIT'">{{ step.observation.direction }}</span>
+                <svg lucideChevronRight aria-hidden="true"></svg>
+              </button>
+            </li>
+          }
+        </ol>
+      }
+      @if (journey()?.truncated) { <div class="history-bound-notice"><svg lucideInfo aria-hidden="true"></svg> Journey bị giới hạn bởi cấu hình API; không suy diễn phần chưa tải.</div> }
+    </section>
+
+    <aside class="vehicle-facts">
+      <section class="panel context-card">
+        <div class="panel-heading"><div><h2>Identity evidence</h2><p>Bounded aggregate</p></div><svg lucideCar aria-hidden="true"></svg></div>
+        <dl class="context-list">
+          <div><dt>Revision</dt><dd>{{ vehicle.revision }}</dd></div>
+          <div><dt>First seen</dt><dd>{{ vehicle.firstSeenAt | date: 'dd/MM/yyyy HH:mm:ss' }}</dd></div>
+          <div><dt>Last seen</dt><dd>{{ vehicle.lastSeenAt | date: 'dd/MM/yyyy HH:mm:ss' }}</dd></div>
+          <div><dt>Plate aliases</dt><dd>{{ vehicle.plates.length }}</dd></div>
+        </dl>
+      </section>
+      @if (vehicle.plates.length) {
+        <section class="panel context-card"><div class="panel-heading"><div><h2>Plate signals</h2><p>Không phải identity tuyệt đối</p></div></div><ul class="plate-signal-list">@for (plate of vehicle.plates; track plate.text) { <li><strong>{{ plate.text }}</strong><span>{{ plate.confidence | percent: '1.0-1' }}</span></li> }</ul></section>
+      }
+      @if (vehicle.latestEvent) {
+        <section class="panel context-card"><div class="panel-heading"><div><h2>Latest evidence</h2><p>{{ vehicle.latestEvent.camera.name }}</p></div><svg lucideCamera aria-hidden="true"></svg></div><app-media-evidence [event]="vehicle.latestEvent"></app-media-evidence></section>
+      }
+    </aside>
+  </div>
+}
+
+@if (selected(); as event) {
+  <button class="drawer-backdrop" type="button" aria-label="Đóng chi tiết" (click)="closeEvent()"></button>
+  <aside class="detail-drawer wide" aria-label="Chi tiết event hành trình">
+    <div class="drawer-heading"><div><p class="eyebrow">JOURNEY OBSERVATION</p><h2>{{ event.plate?.final || event.plate?.normalized || 'UNKNOWN PLATE' }}</h2></div><button class="icon-button" type="button" aria-label="Đóng" (click)="closeEvent()"><svg lucideX aria-hidden="true"></svg></button></div>
+    <dl class="detail-list"><div><dt>Camera</dt><dd>{{ event.camera.name }} · {{ event.camera.zone || event.camera.id }}</dd></div><div><dt>Thời gian</dt><dd>{{ event.occurredAt | date: 'dd/MM/yyyy HH:mm:ss' }}</dd></div><div><dt>Direction</dt><dd>{{ event.direction }}</dd></div><div><dt>Event ID</dt><dd class="mono break-all">{{ event._id }}</dd></div></dl>
+    <app-media-evidence [event]="event"></app-media-evidence>
+  </aside>
+}

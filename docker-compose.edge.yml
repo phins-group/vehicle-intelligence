@@ -1,0 +1,45 @@
+services:
+  vision-edge:
+    build:
+      context: .
+      dockerfile: Dockerfile.edge
+      args:
+        ONNXRUNTIME_PACKAGE: ${EDGE_ONNXRUNTIME_PACKAGE:-onnxruntime>=1.20,<2}
+        PADDLE_PACKAGE: ${EDGE_PADDLE_PACKAGE:-paddlepaddle>=3.0,<4}
+    profiles: ["edge"]
+    init: true
+    restart: unless-stopped
+    environment:
+      VIP_EDGE_MANIFEST: /run/edge/manifest.json
+      VIP_EDGE_MODEL_ROOT: /models
+      VIP_EDGE_RTSP_URL: ${EDGE_RTSP_URL:-}
+      VIP_EVENT_BUS__BACKEND: redis
+      VIP_REDIS__URL: ${EDGE_REDIS_URL:-redis://host.docker.internal:6379/0}
+      VIP_STORAGE__BACKEND: minio
+      VIP_MINIO__ENDPOINT: ${EDGE_MINIO_ENDPOINT:-host.docker.internal:9000}
+      VIP_MINIO__ACCESS_KEY: ${VIP_MINIO__ACCESS_KEY:-minioadmin}
+      VIP_MINIO__SECRET_KEY: ${VIP_MINIO__SECRET_KEY:-minioadmin}
+      VIP_MINIO__SECURE: ${EDGE_MINIO_SECURE:-false}
+      VIP_MONGODB__ENABLED: "false"
+    volumes:
+      - ${EDGE_MODEL_DIRECTORY:-./models}:/models:ro
+      - ${EDGE_MANIFEST_PATH:-./edge-manifest.json}:/run/edge/manifest.json:ro
+      - edge_output:/data
+    command:
+      - vehicle-camera
+      - --camera
+      - ${EDGE_CAMERA_ID:-edge-camera}
+      - --camera-name
+      - ${EDGE_CAMERA_NAME:-Edge Camera}
+      - --rtsp-env
+      - VIP_EDGE_RTSP_URL
+      - --output
+      - /data
+      - --storage
+      - minio
+      - --event-backend
+      - redis
+      - --no-mongo
+
+volumes:
+  edge_output:

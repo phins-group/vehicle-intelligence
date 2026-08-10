@@ -1,0 +1,49 @@
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">MODEL OBSERVABILITY</p>
+    <h1>Chất lượng AI</h1>
+    <p>OCR success, unknown plate, human correction và feedback dataset theo version model.</p>
+  </div>
+  <div class="heading-actions">
+    <select aria-label="Khoảng thời gian" [value]="windowDays()" (change)="setWindow(+$any($event.target).value)">
+      <option value="7">7 ngày</option><option value="30">30 ngày</option><option value="90">90 ngày</option>
+    </select>
+    <button class="button secondary" type="button" (click)="load()" [disabled]="loading()"><svg lucideRefreshCw aria-hidden="true" [class.spin]="loading()"></svg> Làm mới</button>
+  </div>
+</div>
+
+@if (error()) { <div class="notice error" role="alert">{{ error() }}</div> }
+@if (report()?.truncated) { <div class="notice neutral"><svg lucideCircleAlert aria-hidden="true"></svg> Báo cáo local đã chạm giới hạn scan; MongoDB production dùng server-side aggregation đầy đủ.</div> }
+
+<section class="metric-grid">
+  <article class="metric-card accent-green"><div class="metric-icon"><svg lucideScanText aria-hidden="true"></svg></div><div><span>OCR success</span><strong>{{ report()?.totals?.ocrSuccessRate ?? 0 | percent: '1.1-1' }}</strong><small>{{ report()?.totals?.readablePlateCount ?? 0 }} / {{ report()?.totals?.eventCount ?? 0 }} event</small></div></article>
+  <article class="metric-card accent-amber"><div class="metric-icon"><svg lucideCircleAlert aria-hidden="true"></svg></div><div><span>Unknown plate</span><strong>{{ report()?.totals?.unknownPlateRate ?? 0 | percent: '1.1-1' }}</strong><small>NO_PLATE + UNREADABLE</small></div></article>
+  <article class="metric-card accent-violet"><div class="metric-icon"><svg lucideGauge aria-hidden="true"></svg></div><div><span>Human correction</span><strong>{{ report()?.totals?.humanCorrectionRate ?? 0 | percent: '1.1-1' }}</strong><small>{{ report()?.totals?.correctedCount ?? 0 }} / {{ report()?.totals?.reviewedCount ?? 0 }} reviewed</small></div></article>
+  <article class="metric-card accent-blue"><div class="metric-icon"><svg lucideActivity aria-hidden="true"></svg></div><div><span>OCR confidence</span><strong>{{ report()?.totals?.averagePlateConfidence ?? 0 | percent: '1.1-1' }}</strong><small>Trung bình trên plate đọc được</small></div></article>
+</section>
+
+<div class="dashboard-grid">
+  <section class="panel">
+    <div class="panel-heading"><div><h2>Event theo ngày</h2><p>UTC · {{ report()?.window?.from | date: 'dd/MM/yyyy' }} — {{ report()?.window?.to | date: 'dd/MM/yyyy' }}</p></div><svg lucideActivity aria-hidden="true"></svg></div>
+    <div class="activity-chart">
+      @for (point of report()?.daily ?? []; track point.day) {
+        <div class="activity-row"><span>{{ point.day | date: 'dd/MM' }}</span><div class="activity-track"><span class="activity-bar" [style.width.%]="barWidth(point.metrics.eventCount)">{{ point.metrics.eventCount }}</span></div><small>{{ point.metrics.ocrSuccessRate | percent: '1.0-1' }} OCR</small></div>
+      } @empty { <div class="empty-state">Chưa có event trong khoảng đã chọn.</div> }
+    </div>
+  </section>
+  <section class="panel">
+    <div class="panel-heading"><div><h2>Retraining feedback</h2><p>Trạng thái export có lease và retry</p></div><svg lucideScanText aria-hidden="true"></svg></div>
+    <dl class="counter-grid">
+      <div><dt>Ready</dt><dd>{{ report()?.feedback?.ready ?? 0 }}</dd></div><div><dt>Exporting</dt><dd>{{ report()?.feedback?.exporting ?? 0 }}</dd></div><div><dt>Exported</dt><dd>{{ report()?.feedback?.exported ?? 0 }}</dd></div><div><dt>Failed</dt><dd>{{ report()?.feedback?.exportFailed ?? 0 }}</dd></div><div><dt>Corrections</dt><dd>{{ report()?.feedback?.corrections ?? 0 }}</dd></div><div><dt>Confirmations</dt><dd>{{ report()?.feedback?.confirmations ?? 0 }}</dd></div>
+    </dl>
+  </section>
+</div>
+
+<section class="panel table-panel">
+  <div class="panel-heading"><div><h2>Theo version OCR</h2><p>Traceability từ AI metadata của canonical event</p></div><svg lucideGauge aria-hidden="true"></svg></div>
+  <div class="table-scroll"><table><thead><tr><th>Model</th><th>Events</th><th>OCR success</th><th>Unknown</th><th>Reviewed</th><th>Correction</th><th>Confidence</th></tr></thead><tbody>
+    @for (item of report()?.models ?? []; track (item.model?.name ?? 'unknown') + (item.model?.version ?? '')) {
+      <tr><td><strong>{{ item.model?.name || 'Unknown metadata' }}</strong><small>{{ item.model?.version || '—' }} @if (item.model?.hash) { · <span class="mono">{{ item.model?.hash }}</span> }</small></td><td>{{ item.metrics.eventCount }}</td><td>{{ item.metrics.ocrSuccessRate | percent: '1.1-1' }}</td><td>{{ item.metrics.unknownPlateRate | percent: '1.1-1' }}</td><td>{{ item.metrics.reviewedCount }}</td><td>{{ item.metrics.humanCorrectionRate | percent: '1.1-1' }}</td><td>{{ item.metrics.averagePlateConfidence ?? 0 | percent: '1.1-1' }}</td></tr>
+    } @empty { <tr><td colspan="7"><div class="empty-state">Chưa có model metadata.</div></td></tr> }
+  </tbody></table></div>
+</section>

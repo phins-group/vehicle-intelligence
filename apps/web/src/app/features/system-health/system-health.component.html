@@ -1,0 +1,57 @@
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">OBSERVABILITY</p>
+    <h1>Sức khỏe hệ thống</h1>
+    <p>Latest state của API, realtime delivery và từng camera edge.</p>
+  </div>
+  <div class="heading-actions">
+    @if (updatedAt()) { <small class="subtle">Cập nhật {{ updatedAt() | date: 'HH:mm:ss' }}</small> }
+    <button class="button secondary" type="button" (click)="load()" [disabled]="loading()"><svg lucideRefreshCw aria-hidden="true" [class.spin]="loading()"></svg> Làm mới</button>
+  </div>
+</div>
+
+@if (error()) { <div class="notice error" role="alert">{{ error() }}</div> }
+
+<section class="metric-grid health-metrics">
+  <article class="metric-card accent-green"><div class="metric-icon"><svg lucideServer aria-hidden="true"></svg></div><div><span>API</span><strong class="health-word">{{ system()?.status || 'UNKNOWN' }}</strong><small>Phase {{ system()?.phase || '—' }}</small></div></article>
+  <article class="metric-card accent-blue"><div class="metric-icon"><svg lucideRadio aria-hidden="true"></svg></div><div><span>Realtime source</span><strong class="health-word">{{ realtime()?.status || 'UNKNOWN' }}</strong><small>{{ realtime()?.subscribers ?? 0 }} subscriber(s)</small></div></article>
+  <article class="metric-card accent-violet"><div class="metric-icon"><svg lucideCamera aria-hidden="true"></svg></div><div><span>Camera online</span><strong>{{ onlineCameras() }} / {{ cameras().length }}</strong><small>{{ totalReconnects() }} lần reconnect</small></div></article>
+  <article class="metric-card accent-amber"><div class="metric-icon"><svg lucideGauge aria-hidden="true"></svg></div><div><span>Frame đã drop</span><strong>{{ totalDropped() }}</strong><small>Tổng counter hiện tại</small></div></article>
+</section>
+
+<div class="health-grid">
+  <section class="panel">
+    <div class="panel-heading"><div><h2>Platform services</h2><p>Trạng thái public và authenticated probe</p></div><svg lucideServer aria-hidden="true"></svg></div>
+    <div class="service-list">
+      <div><span><svg lucideCircleCheck aria-hidden="true"></svg> API</span><b>{{ system()?.status || 'UNKNOWN' }}</b></div>
+      <div><span><svg lucideActivity aria-hidden="true"></svg> Camera manager</span><b>{{ system()?.cameraManagement || 'UNKNOWN' }}</b></div>
+      <div><span><svg lucideActivity aria-hidden="true"></svg> ONVIF discovery</span><b>{{ system()?.onvifDiscovery || 'UNKNOWN' }}</b></div>
+      <div><span><svg lucideActivity aria-hidden="true"></svg> Policy engine</span><b>{{ system()?.policyEngine || 'UNKNOWN' }}</b></div>
+      <div><span><svg lucideActivity aria-hidden="true"></svg> Audit log</span><b>{{ system()?.auditLog || 'UNKNOWN' }}</b></div>
+      <div><span><svg lucideActivity aria-hidden="true"></svg> Signed media</span><b>{{ system()?.mediaAccess || 'UNKNOWN' }}</b></div>
+      <div><span><svg lucideActivity aria-hidden="true"></svg> Human OCR review</span><b>{{ system()?.humanReview || 'UNKNOWN' }}</b></div>
+      <div><span><svg lucideGauge aria-hidden="true"></svg> Model quality</span><b>{{ system()?.modelQuality || 'UNKNOWN' }}</b></div>
+      <div><span><svg lucideCamera aria-hidden="true"></svg> Live monitor</span><b>{{ liveMonitor()?.status || system()?.liveMonitor || 'UNKNOWN' }} · {{ liveMonitor()?.camerasBuffered ?? 0 }} camera(s)</b></div>
+      <div><span><svg lucideRadio aria-hidden="true"></svg> Realtime</span><b>{{ realtime()?.status || system()?.realtime || 'UNKNOWN' }}</b></div>
+    </div>
+  </section>
+  <section class="panel">
+    <div class="panel-heading"><div><h2>Realtime counters</h2><p>Fan-out và broker supervision</p></div><svg lucideRadio aria-hidden="true"></svg></div>
+    <dl class="counter-grid">
+      <div><dt>Received</dt><dd>{{ realtime()?.eventsReceived ?? 0 }}</dd></div><div><dt>Distributed</dt><dd>{{ realtime()?.eventsDistributed ?? 0 }}</dd></div><div><dt>Duplicates</dt><dd>{{ realtime()?.duplicateEvents ?? 0 }}</dd></div><div><dt>Client drops</dt><dd>{{ realtime()?.clientEventsDropped ?? 0 }}</dd></div><div><dt>Source failures</dt><dd>{{ realtime()?.sourceFailures ?? 0 }}</dd></div><div><dt>Reconnects</dt><dd>{{ realtime()?.reconnectCount ?? 0 }}</dd></div>
+    </dl>
+  </section>
+</div>
+
+<section class="panel table-panel">
+  <div class="panel-heading"><div><h2>Camera telemetry</h2><p>Health document mới nhất, không phải metric theo từng frame</p></div><svg lucideCamera aria-hidden="true"></svg></div>
+  @if (!cameras().length) {
+    <div class="empty-state">Không có camera health để hiển thị.</div>
+  } @else {
+    <div class="table-scroll"><table><thead><tr><th>Camera</th><th>Status</th><th>Source / Decode FPS</th><th>Queue</th><th>Dropped</th><th>Reconnect</th><th>Last frame</th></tr></thead><tbody>
+      @for (item of cameras(); track item.camera.id) {
+        <tr><td><strong>{{ item.camera.name }}</strong><small class="mono">{{ item.camera.id }}</small></td><td><span class="camera-health-badge inline" [attr.data-status]="item.health?.status || 'UNKNOWN'">@if (item.health?.status === 'ONLINE') { <svg lucideCircleCheck aria-hidden="true"></svg> } @else { <svg lucideCircleAlert aria-hidden="true"></svg> } {{ item.health?.status || 'NO DATA' }}</span></td><td>{{ item.health?.sourceFps ?? 0 | number: '1.1-1' }} / {{ item.health?.decodeFps ?? 0 | number: '1.1-1' }}</td><td>{{ item.health?.queueSize ?? 0 }}</td><td>{{ item.health?.droppedFrames ?? 0 }}</td><td>{{ item.health?.reconnectCount ?? 0 }}</td><td>{{ item.health?.lastFrameAt ? (item.health?.lastFrameAt | date: 'dd/MM HH:mm:ss') : '—' }}</td></tr>
+      }
+    </tbody></table></div>
+  }
+</section>

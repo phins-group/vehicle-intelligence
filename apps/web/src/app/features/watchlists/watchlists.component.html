@@ -1,0 +1,130 @@
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">IDENTITY SIGNALS</p>
+    <h1>Danh sách xe</h1>
+    <p>Quản lý whitelist, blacklist và nhóm nghiệp vụ theo khoảng hiệu lực.</p>
+  </div>
+  <div class="heading-actions">
+    <button class="button secondary" type="button" (click)="load()" [disabled]="loading()">
+      <svg lucideRefreshCw aria-hidden="true" [class.spin]="loading()"></svg> Làm mới
+    </button>
+    @if (auth.canManagePolicies()) {
+      <button class="button primary" type="button" (click)="openCreate()">
+        <svg lucidePlus aria-hidden="true"></svg> Thêm biển số
+      </button>
+    }
+  </div>
+</div>
+
+<section class="metric-grid policy-metrics" aria-label="Tổng hợp watchlist">
+  <article class="metric-card accent-green">
+    <span class="metric-icon"><svg lucideShieldCheck aria-hidden="true"></svg></span>
+    <div><span>Whitelist</span><strong>{{ countType('WHITELIST') }}</strong><small>xe được cấp quyền</small></div>
+  </article>
+  <article class="metric-card accent-amber">
+    <span class="metric-icon"><svg lucideShieldAlert aria-hidden="true"></svg></span>
+    <div><span>Blacklist</span><strong>{{ countType('BLACKLIST') }}</strong><small>xe cần theo dõi</small></div>
+  </article>
+  <article class="metric-card accent-blue">
+    <span class="metric-icon"><svg lucideListChecks aria-hidden="true"></svg></span>
+    <div><span>Đang hiệu lực</span><strong>{{ countLifecycle('ACTIVE') }}</strong><small>tại thời điểm hiện tại</small></div>
+  </article>
+  <article class="metric-card accent-violet">
+    <span class="metric-icon"><svg lucideCalendarClock aria-hidden="true"></svg></span>
+    <div><span>Sắp hiệu lực</span><strong>{{ countLifecycle('SCHEDULED') }}</strong><small>đã có lịch bắt đầu</small></div>
+  </article>
+</section>
+
+@if (!auth.canManagePolicies()) {
+  <div class="notice neutral" role="note">
+    <svg lucideShieldCheck aria-hidden="true"></svg>
+    Chế độ chỉ đọc. Chỉ ADMIN có quyền tạo, sửa hoặc xóa policy.
+  </div>
+}
+@if (error()) { <div class="notice error" role="alert">{{ error() }}</div> }
+@if (notice()) { <div class="notice success" role="status">{{ notice() }}</div> }
+
+<section class="panel filter-panel compact">
+  <div class="filter-grid watchlist-filters">
+    <label>
+      <span>Tìm biển số hoặc ID</span>
+      <div class="input-with-icon"><svg lucideSearch aria-hidden="true"></svg><input [(ngModel)]="search" placeholder="51H12345"></div>
+    </label>
+    <label>
+      <span>Loại danh sách</span>
+      <select [(ngModel)]="listType"><option value="">Tất cả</option>@for (type of listTypes; track type) { <option [value]="type">{{ type }}</option> }</select>
+    </label>
+    <label>
+      <span>Trạng thái cấu hình</span>
+      <select [(ngModel)]="enabledFilter"><option value="ALL">Tất cả</option><option value="ENABLED">Enabled</option><option value="DISABLED">Disabled</option></select>
+    </label>
+    <div class="filter-actions"><button class="button ghost" type="button" (click)="clearFilters()">Xóa lọc</button></div>
+  </div>
+</section>
+
+<section class="panel table-panel" aria-label="Watchlist entries">
+  @if (loading() && !entries().length) {
+    <div class="empty-state">Đang tải danh sách xe…</div>
+  } @else if (!filteredEntries().length) {
+    <div class="empty-state"><svg lucideListChecks aria-hidden="true"></svg><strong>Không có biển số phù hợp</strong><span>Thử thay đổi bộ lọc hoặc thêm entry mới.</span></div>
+  } @else {
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Biển số</th><th>Danh sách</th><th>Hiệu lực</th><th>Khoảng thời gian</th><th>Cập nhật</th>@if (auth.canManagePolicies()) { <th class="action-column">Thao tác</th> }</tr></thead>
+        <tbody>
+          @for (entry of filteredEntries(); track entry.id) {
+            <tr>
+              <td><strong class="plate-text">{{ entry.plate }}</strong><small class="mono">{{ entry.id }} · rev {{ entry.revision }}</small></td>
+              <td><span class="list-type-pill" [attr.data-type]="entry.listType">{{ entry.listType }}</span></td>
+              <td><span class="status-pill" [attr.data-lifecycle]="lifecycle(entry)">{{ lifecycle(entry) }}</span></td>
+              <td><strong>{{ entry.validFrom ? (entry.validFrom | date: 'dd/MM/yyyy HH:mm') : 'Ngay lập tức' }}</strong><small>đến {{ entry.validUntil ? (entry.validUntil | date: 'dd/MM/yyyy HH:mm') : 'không giới hạn' }}</small></td>
+              <td>{{ entry.updatedAt | date: 'dd/MM/yyyy HH:mm' }}</td>
+              @if (auth.canManagePolicies()) {
+                <td class="row-actions">
+                  <button class="icon-button" type="button" title="Sửa" aria-label="Sửa entry" (click)="openEdit(entry)"><svg lucidePencil aria-hidden="true"></svg></button>
+                  <button class="icon-button danger" type="button" title="Xóa" aria-label="Xóa entry" (click)="requestDelete(entry)"><svg lucideTrash2 aria-hidden="true"></svg></button>
+                </td>
+              }
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</section>
+
+@if (editorOpen()) {
+  <button class="drawer-backdrop" type="button" aria-label="Đóng form" (click)="closeEditor()"></button>
+  <aside class="detail-drawer wide" aria-label="Form watchlist">
+    <form #entryForm="ngForm" (ngSubmit)="save()">
+      <div class="drawer-heading">
+        <div><p class="eyebrow">WATCHLIST POLICY</p><h2>{{ editingId() ? 'Sửa biển số' : 'Thêm biển số' }}</h2></div>
+        <button class="icon-button" type="button" aria-label="Đóng" (click)="closeEditor()"><svg lucideX aria-hidden="true"></svg></button>
+      </div>
+      @if (editingId()) { <div class="revision-banner">Đang sửa <span class="mono">{{ editingId() }}</span> tại revision {{ draft.revision }}. Nếu có cập nhật đồng thời, API sẽ từ chối ghi đè.</div> }
+      <div class="form-grid two-columns">
+        @if (!editingId()) {
+          <label class="full-span"><span>Entry ID (không bắt buộc)</span><input name="id" [(ngModel)]="draft.id" maxlength="128" placeholder="blocked-51h-12345"></label>
+        }
+        <label><span>Biển số</span><input name="plate" [(ngModel)]="draft.plate" minlength="4" maxlength="32" placeholder="51H12345" autocomplete="off" required></label>
+        <label><span>Danh sách</span><select name="listType" [(ngModel)]="draft.listType">@for (type of listTypes; track type) { <option [value]="type">{{ type }}</option> }</select></label>
+        <label><span>Hiệu lực từ</span><input type="datetime-local" name="validFrom" [(ngModel)]="draft.validFrom"></label>
+        <label><span>Hiệu lực đến</span><input type="datetime-local" name="validUntil" [(ngModel)]="draft.validUntil"></label>
+        <label class="checkbox-field full-span"><input type="checkbox" name="enabled" [(ngModel)]="draft.enabled"><span>Entry được bật</span></label>
+      </div>
+      @if (draftValidation(); as validation) { <div class="field-error" role="alert">{{ validation }}</div> }
+      <div class="notice neutral"><svg lucideCalendarClock aria-hidden="true"></svg> Thời gian nhập theo timezone của trình duyệt và được gửi lên API dưới dạng UTC ISO-8601.</div>
+      <div class="drawer-actions"><button class="button ghost" type="button" (click)="closeEditor()">Hủy</button><button class="button primary" type="submit" [disabled]="saving() || entryForm.invalid || !!draftValidation()">{{ saving() ? 'Đang lưu…' : (editingId() ? 'Lưu thay đổi' : 'Thêm vào danh sách') }}</button></div>
+    </form>
+  </aside>
+}
+
+@if (pendingDelete(); as entry) {
+  <button class="drawer-backdrop" type="button" aria-label="Hủy xóa" (click)="cancelDelete()"></button>
+  <section class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-watchlist-title">
+    <span class="confirm-icon danger"><svg lucideTrash2 aria-hidden="true"></svg></span>
+    <h2 id="delete-watchlist-title">Xóa {{ entry.plate }}?</h2>
+    <p>Entry <span class="mono">{{ entry.id }}</span> sẽ bị xóa khỏi <strong>{{ entry.listType }}</strong>. Thao tác được audit nhưng không thể khôi phục từ giao diện.</p>
+    <div class="drawer-actions"><button class="button secondary" type="button" (click)="cancelDelete()" [disabled]="deleting()">Hủy</button><button class="button danger" type="button" (click)="confirmDelete()" [disabled]="deleting()">{{ deleting() ? 'Đang xóa…' : 'Xóa entry' }}</button></div>
+  </section>
+}

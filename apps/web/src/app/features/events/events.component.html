@@ -1,0 +1,137 @@
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">OBSERVATION → EVENT</p>
+    <h1>Sự kiện phương tiện</h1>
+    <p>Tìm kiếm, lọc và kiểm tra evidence của từng vehicle track đã finalize.</p>
+  </div>
+  <span class="live-chip" [class.offline]="realtime.connectionState() !== 'connected'">
+    <svg lucideRadio aria-hidden="true"></svg>
+    {{ realtime.connectionState() === 'connected' ? 'Đang nhận realtime' : 'Realtime ' + realtime.connectionState() }}
+  </span>
+</div>
+
+<section class="panel filter-panel">
+  <form class="filter-grid" (ngSubmit)="applyFilters()">
+    <label>
+      <span>Biển số</span>
+      <div class="input-with-icon"><svg lucideSearch aria-hidden="true"></svg><input name="plate" [(ngModel)]="plate" placeholder="51H12345"></div>
+    </label>
+    <label>
+      <span>Camera</span>
+      <select name="cameraId" [(ngModel)]="cameraId">
+        <option value="">Tất cả camera</option>
+        @for (camera of cameras(); track camera.id) { <option [value]="camera.id">{{ camera.name }}</option> }
+      </select>
+    </label>
+    <label>
+      <span>Loại sự kiện</span>
+      <select name="eventType" [(ngModel)]="eventType">
+        <option value="">Tất cả</option><option value="VEHICLE_ENTER">Vehicle enter</option><option value="VEHICLE_EXIT">Vehicle exit</option><option value="VEHICLE_DETECTED">Vehicle detected</option>
+      </select>
+    </label>
+    <label>
+      <span>Hướng</span>
+      <select name="direction" [(ngModel)]="direction">
+        <option value="">Tất cả</option><option value="ENTER">ENTER</option><option value="EXIT">EXIT</option><option value="UNKNOWN">UNKNOWN</option>
+      </select>
+    </label>
+    <label>
+      <span>Trạng thái</span>
+      <select name="status" [(ngModel)]="status">
+        <option value="">Tất cả</option><option value="CONFIRMED">Confirmed</option><option value="LOW_CONFIDENCE">Low confidence</option><option value="NEEDS_REVIEW">Needs review</option><option value="NO_PLATE">No plate</option><option value="UNREADABLE">Unreadable</option>
+      </select>
+    </label>
+    <label>
+      <span>Từ thời điểm</span>
+      <input type="datetime-local" name="from" [(ngModel)]="fromLocal">
+    </label>
+    <label>
+      <span>Đến thời điểm</span>
+      <input type="datetime-local" name="to" [(ngModel)]="toLocal">
+    </label>
+    <div class="filter-actions">
+      <button class="button ghost" type="button" (click)="clearFilters()">Xóa lọc</button>
+      <button class="button primary" type="submit" [disabled]="loading()">
+        <svg lucideSearch aria-hidden="true"></svg> Tìm kiếm
+      </button>
+    </div>
+  </form>
+</section>
+
+@if (error()) { <div class="notice error" role="alert">{{ error() }}</div> }
+
+<section class="panel table-panel">
+  <div class="panel-heading">
+    <div>
+      <h2>Danh sách sự kiện</h2>
+      <p>{{ events().length }} bản ghi đã tải @if (liveCount()) { · {{ liveCount() }} bản ghi realtime mới }</p>
+    </div>
+    <button class="icon-button" type="button" aria-label="Làm mới sự kiện" (click)="load(true)" [disabled]="loading()">
+      <svg lucideRefreshCw aria-hidden="true" [class.spin]="loading()"></svg>
+    </button>
+  </div>
+
+  @if (loading() && !events().length) {
+    <div class="empty-state">Đang tải sự kiện…</div>
+  } @else if (!events().length) {
+    <div class="empty-state"><svg lucideActivity aria-hidden="true"></svg><strong>Không có kết quả</strong><span>Thử thay đổi bộ lọc hoặc chờ event mới.</span></div>
+  } @else {
+    <div class="table-scroll">
+      <table class="interactive-table">
+        <thead><tr><th>Thời gian</th><th>Biển số</th><th>Vehicle</th><th>Camera</th><th>Hướng</th><th>Confidence</th><th>Trạng thái</th><th></th></tr></thead>
+        <tbody>
+          @for (event of events(); track event._id) {
+            <tr (click)="showDetails(event)" tabindex="0" (keydown.enter)="showDetails(event)">
+              <td><strong>{{ event.occurredAt | date: 'dd/MM HH:mm:ss' }}</strong><small class="mono">{{ event.trackId }}</small></td>
+              <td><strong class="plate-text" [class.unknown]="!event.plate">{{ displayPlate(event) }}</strong><small>{{ event.plate?.raw || 'Không có OCR' }}</small></td>
+              <td>{{ event.vehicle.type }}<small>{{ event.vehicle.color || 'Chưa rõ màu' }}</small></td>
+              <td><strong>{{ event.camera.name }}</strong><small>{{ event.camera.zone || event.camera.id }}</small></td>
+              <td><span class="direction" [class.enter]="event.direction === 'ENTER'" [class.exit]="event.direction === 'EXIT'">{{ event.direction }}</span></td>
+              <td>{{ (event.plate?.confidence ?? event.vehicle.confidence) | percent: '1.0-0' }}</td>
+              <td><span class="status-pill" [attr.data-status]="event.status">{{ event.status }}</span></td>
+              <td><svg lucideChevronRight aria-hidden="true"></svg></td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+    @if (nextCursor()) {
+      <div class="load-more"><button class="button secondary" type="button" (click)="load(false)" [disabled]="loadingMore()">{{ loadingMore() ? 'Đang tải…' : 'Tải thêm' }}</button></div>
+    }
+  }
+</section>
+
+@if (selected(); as event) {
+  <button class="drawer-backdrop" type="button" aria-label="Đóng chi tiết" (click)="closeDetails()"></button>
+  <aside class="detail-drawer wide" aria-label="Chi tiết sự kiện">
+    <div class="drawer-heading">
+      <div><p class="eyebrow">VEHICLE EVENT</p><h2>{{ displayPlate(event) }}</h2></div>
+      <button class="icon-button" type="button" aria-label="Đóng" (click)="closeDetails()"><svg lucideX aria-hidden="true"></svg></button>
+    </div>
+    <div class="detail-hero">
+      <span class="direction" [class.enter]="event.direction === 'ENTER'" [class.exit]="event.direction === 'EXIT'">{{ event.direction }}</span>
+      <span class="status-pill" [attr.data-status]="event.status">{{ event.status }}</span>
+    </div>
+    @if (event.plate) {
+      <a class="button secondary full detail-search-link" routerLink="/vehicle-search" [queryParams]="{ plate: displayPlate(event) }"><svg lucideSearch aria-hidden="true"></svg> Tra cứu lịch sử biển số</a>
+    }
+    <dl class="detail-list">
+      <div><dt><svg lucideClock aria-hidden="true"></svg> Thời gian</dt><dd>{{ event.occurredAt | date: 'dd/MM/yyyy HH:mm:ss' }}</dd></div>
+      <div><dt>Camera</dt><dd>{{ event.camera.name }} · {{ event.camera.zone || event.camera.id }}</dd></div>
+      <div><dt>Track ID</dt><dd class="mono">{{ event.trackId }}</dd></div>
+      <div><dt>Vehicle</dt><dd>{{ event.vehicle.type }} · {{ event.vehicle.confidence | percent: '1.0-1' }}</dd></div>
+      <div><dt>OCR observations</dt><dd>{{ event.plate?.observationCount ?? 0 }}</dd></div>
+      <div><dt>Plate confidence</dt><dd>{{ event.plate ? (event.plate.confidence | percent: '1.0-1') : 'N/A' }}</dd></div>
+      @if (event.plate?.review; as review) {
+        <div><dt>AI prediction</dt><dd>{{ event.plate?.prediction?.normalized || event.plate?.normalized }}</dd></div>
+        <div><dt>Human review</dt><dd>{{ review.reviewedBy.displayName }} · rev {{ review.revision }}</dd></div>
+      }
+    </dl>
+    <app-media-evidence [event]="event"></app-media-evidence>
+    <section class="drawer-section">
+      <h3>Traceability</h3>
+      <p class="mono break-all">Event ID: {{ event._id }}</p>
+      <p class="mono break-all">Schema version: {{ event.schemaVersion }}</p>
+    </section>
+  </aside>
+}

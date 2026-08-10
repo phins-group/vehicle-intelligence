@@ -1,0 +1,109 @@
+<div class="app-layout" [class.menu-open]="menuOpen()">
+  <aside class="sidebar" aria-label="Điều hướng chính">
+    <div class="brand">
+      <span class="brand-mark"><svg lucideCar aria-hidden="true"></svg></span>
+      <span>
+        <strong>Vehicle Intelligence</strong>
+        <small>Operator Console</small>
+      </span>
+    </div>
+
+    <nav class="primary-nav">
+      <a routerLink="/dashboard" routerLinkActive="active">
+        <svg lucideLayoutDashboard aria-hidden="true"></svg>
+        <span>Tổng quan</span>
+      </a>
+      <a routerLink="/events" routerLinkActive="active">
+        <svg lucideActivity aria-hidden="true"></svg>
+        <span>Sự kiện xe</span>
+      </a>
+      <a routerLink="/live-monitor" routerLinkActive="active">
+        <svg lucideCctv aria-hidden="true"></svg>
+        <span>Live Monitor</span>
+      </a>
+      <a routerLink="/vehicle-search" routerLinkActive="active">
+        <svg lucideSearch aria-hidden="true"></svg>
+        <span>Tra cứu biển số</span>
+      </a>
+      @if (auth.canReviewPlates()) {
+        <a routerLink="/ocr-review" routerLinkActive="active">
+          <svg lucideScanText aria-hidden="true"></svg>
+          <span>Duyệt OCR</span>
+        </a>
+      }
+      <a routerLink="/cameras" routerLinkActive="active">
+        <svg lucideCamera aria-hidden="true"></svg>
+        <span>Camera</span>
+      </a>
+      <a routerLink="/alerts" routerLinkActive="active">
+        <svg lucideBell aria-hidden="true"></svg>
+        <span>Cảnh báo</span>
+      </a>
+      <a routerLink="/watchlists" routerLinkActive="active">
+        <svg lucideListChecks aria-hidden="true"></svg>
+        <span>Danh sách xe</span>
+      </a>
+      <a routerLink="/rules" routerLinkActive="active">
+        <svg lucideGitBranch aria-hidden="true"></svg>
+        <span>Luật tự động</span>
+      </a>
+      <a routerLink="/model-quality" routerLinkActive="active">
+        <svg lucideGauge aria-hidden="true"></svg>
+        <span>Chất lượng AI</span>
+      </a>
+      <a routerLink="/system-health" routerLinkActive="active">
+        <svg lucideServer aria-hidden="true"></svg>
+        <span>Sức khỏe hệ thống</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-status">
+      <span class="status-dot" [class.online]="realtime.connectionState() === 'connected'"></span>
+      <span>
+        <small>Realtime</small>
+        <strong>
+          @switch (realtime.connectionState()) {
+            @case ('connected') { Đang kết nối }
+            @case ('reconnecting') { Đang kết nối lại }
+            @case ('connecting') { Đang khởi tạo }
+            @case ('unavailable') { Không khả dụng }
+            @default { Tạm dừng }
+          }
+        </strong>
+      </span>
+    </div>
+  </aside>
+
+  @if (menuOpen()) {
+    <button class="sidebar-backdrop" type="button" aria-label="Đóng menu" (click)="toggleMenu()"></button>
+  }
+
+  <div class="workspace">
+    <header class="topbar">
+      <button class="icon-button menu-button" type="button" aria-label="Mở menu" (click)="toggleMenu()">
+        @if (menuOpen()) {
+          <svg lucideX aria-hidden="true"></svg>
+        } @else {
+          <svg lucideMenu aria-hidden="true"></svg>
+        }
+      </button>
+
+      <div class="topbar-spacer"></div>
+
+      <div class="principal">
+        <span class="avatar"><svg lucideCircleUserRound aria-hidden="true"></svg></span>
+        <span class="principal-copy">
+          <strong>{{ auth.principal()?.displayName }}</strong>
+          <small>{{ auth.principal()?.role }}</small>
+        </span>
+      </div>
+      <button class="icon-button" type="button" aria-label="Đăng xuất" title="Đăng xuất" (click)="logout()">
+        <svg lucideLogOut aria-hidden="true"></svg>
+      </button>
+    </header>
+
+    <main class="content">
+      <router-outlet />
+    </main>
+  </div>
+</div>
