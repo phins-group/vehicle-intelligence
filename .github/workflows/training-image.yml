@@ -60,7 +60,23 @@ jobs:
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER}/smart-cam-picodet-trainer@${IMAGE_DIGEST}"
-          docker pull "$IMAGE"
+          pulled=false
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if docker pull "$IMAGE"; then
+              pulled=true
+              break
+            fi
+            if [[ "$attempt" -lt 8 ]]; then
+              delay=$((attempt * 15))
+              if [[ "$delay" -gt 45 ]]; then delay=45; fi
+              echo "GHCR pull attempt ${attempt} failed; retrying in ${delay}s"
+              sleep "$delay"
+            fi
+          done
+          if [[ "$pulled" != true ]]; then
+            echo "unable to pull the published image after bounded retries" >&2
+            exit 1
+          fi
           docker run --rm "$IMAGE" python -c "import paddle; import ppdet; from vehicle_intelligence.training.config import load_training_settings; settings = load_training_settings('/workspace/configs/model-training.hf.yaml'); assert paddle.is_compiled_with_cuda(); assert settings.plate.paddledetection.repository_path.is_dir(); print('paddle=' + paddle.__version__ + ' cuda=true config=ok')"
           docker run --rm "$IMAGE" vehicle-model-training --help >/dev/null
 
