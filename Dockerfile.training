@@ -14,7 +14,7 @@ ARG PADDLE_PRETRAINED_SHA256=ffa1d4d06a3f99be1b2eb75b661934edd715e69797218aef973
 LABEL org.opencontainers.image.title="PHINS Vehicle Intelligence PicoDet Trainer" \
       org.opencontainers.image.description="Reproducible PaddleDetection/PicoDet runtime for Hugging Face Jobs" \
       org.opencontainers.image.vendor="PHINS" \
-      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.licenses="NOASSERTION" \
       org.opencontainers.image.source="https://github.com/phins-group/vehicle-intelligence" \
       org.opencontainers.image.base.name="nvidia/cuda:12.0.1-cudnn8-runtime-ubuntu22.04" \
       org.opencontainers.image.paddledetection.revision="${PADDLEDETECTION_REVISION}"
@@ -28,7 +28,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     FLAGS_call_stack_level=2 \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility \
-    PATH=/opt/python/bin:${PATH}
+    PATH=/opt/python/bin:${PATH} \
+    PYTHONPATH=/workspace/third_party/PaddleDetection
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
@@ -82,7 +83,6 @@ RUN python -m pip install '.[training]' \
        'terminaltables==3.1.10' 'Cython==3.2.4' 'pycocotools==2.0.8' \
        'Pillow==12.1.1' 'packaging==26.0' 'scikit-learn==1.8.0' \
        'paddle2onnx==1.3.1' \
-    && python -m pip install --no-deps /workspace/third_party/PaddleDetection \
     && mkdir -p /workspace/assets/pretrained /output/model-training \
     && curl --fail --location --retry 5 "${PADDLE_PRETRAINED_URL}" \
        --output /workspace/assets/pretrained/LCNet_x1_5_pretrained.pdparams \
@@ -90,6 +90,7 @@ RUN python -m pip install '.[training]' \
        | sha256sum --check --strict \
     && python -m compileall -q /workspace/src \
     && python -m pip check \
+    && python -c "import paddle; import ppdet; import ppdet.data.transform.operators; assert paddle.is_compiled_with_cuda()" \
     && test -f /workspace/third_party/PaddleDetection/tools/train.py \
     && test -f /workspace/third_party/PaddleDetection/configs/picodet/picodet_m_416_coco_lcnet.yml
 
