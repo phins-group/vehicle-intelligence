@@ -35,6 +35,7 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
        build-essential ca-certificates curl git \
        libbz2-1.0 libbz2-dev libffi8 libffi-dev libgl1 libglib2.0-0 \
+       libgomp1 \
        liblzma5 liblzma-dev libncursesw6 libncursesw5-dev \
        libreadline8 libreadline-dev libsqlite3-0 libsqlite3-dev libssl3 libssl-dev \
        tk-dev uuid-dev xz-utils zlib1g-dev \
