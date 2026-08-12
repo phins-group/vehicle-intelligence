@@ -25,6 +25,8 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    outputs:
+      image_digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -55,9 +57,33 @@ jobs:
           cache-from: type=gha,scope=picodet-trainer-v1
           cache-to: type=gha,mode=max,scope=picodet-trainer-v1
 
-      - name: Smoke-test the published runtime
+      - name: Record immutable image reference
         env:
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          echo "### Training image" >> "$GITHUB_STEP_SUMMARY"
+          echo '```text' >> "$GITHUB_STEP_SUMMARY"
+          echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/smart-cam-picodet-trainer@${IMAGE_DIGEST}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  smoke:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Authenticate to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Smoke-test the published runtime on a clean runner
+        env:
+          IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
         run: |
           IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER}/smart-cam-picodet-trainer@${IMAGE_DIGEST}"
           pulled=false
@@ -79,12 +105,3 @@ jobs:
           fi
           docker run --rm "$IMAGE" python -c "import paddle; import ppdet; from vehicle_intelligence.training.config import load_training_settings; settings = load_training_settings('/workspace/configs/model-training.hf.yaml'); assert paddle.is_compiled_with_cuda(); assert settings.plate.paddledetection.repository_path.is_dir(); print('paddle=' + paddle.__version__ + ' cuda=true config=ok')"
           docker run --rm "$IMAGE" vehicle-model-training --help >/dev/null
-
-      - name: Record immutable image reference
-        env:
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-        run: |
-          echo "### Training image" >> "$GITHUB_STEP_SUMMARY"
-          echo '```text' >> "$GITHUB_STEP_SUMMARY"
-          echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/smart-cam-picodet-trainer@${IMAGE_DIGEST}" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
