@@ -4,10 +4,13 @@ import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } fro
 import {
   LucideActivity,
   LucideBell,
+  LucideBoxes,
   LucideCamera,
   LucideCar,
   LucideCctv,
+  LucideChevronDown,
   LucideCircleUserRound,
+  LucideDatabase,
   LucideGitBranch,
   LucideGauge,
   LucideLayoutDashboard,
@@ -32,10 +35,13 @@ import { RealtimeService } from '../core/realtime/realtime.service';
     RouterLinkActive,
     LucideActivity,
     LucideBell,
+    LucideBoxes,
     LucideCamera,
     LucideCar,
     LucideCctv,
+    LucideChevronDown,
     LucideCircleUserRound,
+    LucideDatabase,
     LucideGitBranch,
     LucideGauge,
     LucideLayoutDashboard,
@@ -50,18 +56,25 @@ import { RealtimeService } from '../core/realtime/realtime.service';
   templateUrl: './app-shell.component.html'
 })
 export class AppShellComponent implements OnInit, OnDestroy {
+  private readonly router = inject(Router);
+
   readonly auth = inject(AuthService);
   readonly realtime = inject(RealtimeService);
   readonly menuOpen = signal(false);
-  private readonly router = inject(Router);
+  readonly datasetMenuOpen = signal(false);
+  readonly datasetSectionActive = signal(false);
 
   constructor() {
+    this.updateDatasetSection(this.router.url);
     this.router.events
       .pipe(
         filter((event): event is NavigationEnd => event instanceof NavigationEnd),
         takeUntilDestroyed()
       )
-      .subscribe(() => this.menuOpen.set(false));
+      .subscribe((event) => {
+        this.menuOpen.set(false);
+        this.updateDatasetSection(event.urlAfterRedirects);
+      });
     effect(() => {
       if (this.auth.state() === 'anonymous') void this.router.navigate(['/login']);
     });
@@ -79,9 +92,20 @@ export class AppShellComponent implements OnInit, OnDestroy {
     this.menuOpen.update((open) => !open);
   }
 
+  toggleDatasetMenu(): void {
+    this.datasetMenuOpen.update((open) => !open);
+  }
+
   logout(): void {
     this.realtime.disconnect();
     this.auth.logout();
     void this.router.navigate(['/login']);
+  }
+
+  private updateDatasetSection(url: string): void {
+    const path = url.split(/[?#]/, 1)[0];
+    const active = path === '/datasets' || path === '/dataset-review';
+    this.datasetSectionActive.set(active);
+    if (active) this.datasetMenuOpen.set(true);
   }
 }

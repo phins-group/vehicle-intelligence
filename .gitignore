@@ -14,8 +14,14 @@ output/
 models/*.pt
 models/*.onnx
 models/*.engine
+models/**/*.pt
+models/**/.cache/
 *.mp4
 *.avi
 .DS_Store
 outputs/
+datasets/
 
+# Local model-generated review/training staging data.
+samples/extract/
+samples/images/plate/

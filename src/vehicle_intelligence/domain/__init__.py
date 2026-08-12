@@ -2,6 +2,19 @@
 
 from vehicle_intelligence.domain.audit import AuditActor, AuditLog
 from vehicle_intelligence.domain.camera import Camera, CameraHealth, SecretUri
+from vehicle_intelligence.domain.dataset_registry import (
+    DatasetHubSyncJob,
+    DatasetHubSyncStatus,
+    DatasetRegistryCapabilities,
+    DetectorDatasetExport,
+    DetectorDatasetSampleAnnotation,
+    DetectorDatasetSampleBox,
+    DetectorDatasetSampleImage,
+    DetectorDatasetSampleKind,
+    DetectorDatasetSamplePage,
+    DetectorDatasetSamplePreview,
+    DetectorDatasetVersion,
+)
 from vehicle_intelligence.domain.detection import (
     Detection,
     ModelMetadata,
@@ -136,7 +149,18 @@ __all__ = [
     "DatasetSampleType",
     "DailyQualityPoint",
     "DatasetFeedbackMetrics",
+    "DatasetHubSyncJob",
+    "DatasetHubSyncStatus",
+    "DatasetRegistryCapabilities",
+    "DetectorDatasetSampleAnnotation",
+    "DetectorDatasetSampleBox",
+    "DetectorDatasetSampleImage",
+    "DetectorDatasetSampleKind",
+    "DetectorDatasetSamplePage",
+    "DetectorDatasetSamplePreview",
     "Detection",
+    "DetectorDatasetExport",
+    "DetectorDatasetVersion",
     "Direction",
     "EventStatus",
     "EventType",

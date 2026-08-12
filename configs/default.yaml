@@ -239,6 +239,29 @@ dataset_export:
   test_ratio: 0.1
   split_seed: camera-split-v1
 
+dataset_review:
+  enabled: true
+  sources_directory: datasets/source/plate-first-party
+  workspace_directory: datasets/reviews/detector
+  promoted_sources_directory: datasets/source/plate-first-party
+  maximum_sources: 50
+  maximum_queue_items_per_source: 100000
+  maximum_image_bytes: 20000000
+  maximum_image_pixels: 40000000
+
+dataset_registry:
+  enabled: true
+  sources_directory: datasets/source/plate-first-party
+  exports_directory: datasets/detectors/plate
+  workspace_directory: datasets/registry
+  training_config: configs/model-training.yaml
+  maximum_sources: 100
+  maximum_exports: 1000
+  maximum_jobs: 10000
+  # Restricted plate data requires both this server-side opt-in and an ADMIN
+  # confirmation for every private Hugging Face sync request.
+  restricted_private_sync_enabled: false
+
 event_bus:
   backend: direct
 

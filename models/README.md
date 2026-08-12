@@ -109,6 +109,34 @@ fine-tune and evaluate a pinned model on a licensed Vietnamese dataset and the
 actual camera distribution. Record the resulting model hash, class map, split,
 metrics, and deployment acceptance evidence below.
 
+### Annotation-assistant checkpoint
+
+The offline detector-review queue may use the larger
+[`morsetechlab/yolov11-license-plate-detection`](https://huggingface.co/morsetechlab/yolov11-license-plate-detection)
+YOLO11s checkpoint to propose boxes that a human must review. It is pinned to
+revision `251a30d7daedca065f56e04b0af04052c907c68f`:
+
+```bash
+mkdir -p models/review
+hf download morsetechlab/yolov11-license-plate-detection \
+  license-plate-finetune-v1s.pt \
+  --revision 251a30d7daedca065f56e04b0af04052c907c68f \
+  --local-dir models/review
+
+shasum -a 256 models/review/license-plate-finetune-v1s.pt
+```
+
+Expected SHA-256:
+
+```text
+95e50c25ab7066dd0ca5aec18fa80349676db08697780d1149576461174d2381
+```
+
+This upstream checkpoint is AGPL-3.0 and its model card reports contamination in
+the source train/test split. It is therefore an annotation assistant only: it is
+not the PHINS production model, does not establish production accuracy, and its
+suggestions never become training labels without a recorded human decision.
+
 Before accepting a checkpoint, record:
 
 - license and source dataset;

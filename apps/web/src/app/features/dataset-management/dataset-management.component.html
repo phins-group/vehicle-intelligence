@@ -1,0 +1,363 @@
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">IMMUTABLE SOURCE → COCO EXPORT → PRIVATE HUB COMMIT</p>
+    <h1>Quản lý Dataset</h1>
+    <p>Theo dõi version, integrity evidence và đồng bộ dataset đã duyệt lên Hugging Face private.</p>
+  </div>
+  <div class="heading-actions">
+    <button class="button secondary" type="button" (click)="scrollToSamples()">
+      <svg lucideImage aria-hidden="true"></svg> Xem mẫu
+    </button>
+    <button class="button secondary" type="button" (click)="load()" [disabled]="loading()">
+      <svg lucideRefreshCw aria-hidden="true" [class.spin]="loading()"></svg> Làm mới
+    </button>
+  </div>
+</div>
+
+@if (!auth.canReviewDatasets()) {
+  <div class="notice neutral">Tài khoản hiện tại không có quyền xem dataset.</div>
+} @else {
+  @if (error()) { <div class="notice error" role="alert">{{ error() }}</div> }
+  @if (success()) { <div class="notice success" role="status">{{ success() }}</div> }
+
+  <section class="dataset-registry-metrics" aria-label="Tổng quan dataset">
+    <div><span>Source versions</span><strong>{{ datasets().length }}</strong></div>
+    <div><span>Tổng mẫu theo version</span><strong>{{ totalSamples() | number }}</strong></div>
+    <div><span>Sẵn sàng export</span><strong>{{ readyCount() }}</strong></div>
+    <div><span>Đã sync Hub</span><strong>{{ syncedCount() }}</strong></div>
+  </section>
+
+  @if (!hub().credentialsConfigured) {
+    <div class="notice warning dataset-registry-notice">
+      <svg lucideTriangleAlert aria-hidden="true"></svg>
+      API chưa nhận Hugging Face credential. Cấu hình <span class="mono">HF_TOKEN</span> ở runtime; token không được gửi xuống trình duyệt.
+    </div>
+  }
+
+  <section class="dataset-registry-layout">
+    <aside class="panel dataset-version-list">
+      <div class="panel-heading">
+        <div><h2>Dataset versions</h2><p>Source gốc và source sau promotion</p></div>
+        <svg lucideBoxes aria-hidden="true"></svg>
+      </div>
+      @if (loading() && !datasets().length) {
+        <div class="empty-state">Đang tải danh mục…</div>
+      } @else if (!datasets().length) {
+        <div class="empty-state"><strong>Chưa có source dataset</strong></div>
+      } @else {
+        <div class="dataset-version-buttons">
+          @for (item of datasets(); track item.sourceId) {
+            <button
+              type="button"
+              [class.active]="selectedSourceId() === item.sourceId"
+              (click)="selectDataset(item.sourceId)"
+            >
+              <span>
+                <strong>{{ item.sourceId }}</strong>
+                <small>{{ item.sampleCount | number }} mẫu · {{ item.annotationCount | number }} bbox</small>
+              </span>
+              <span class="dataset-state" [attr.data-state]="readiness(item)">{{ readiness(item) }}</span>
+            </button>
+          }
+        </div>
+      }
+    </aside>
+
+    <article class="panel dataset-version-detail">
+      @if (selected(); as item) {
+        <div class="panel-heading">
+          <div><h2 class="mono">{{ item.sourceId }}</h2><p>Tạo lúc {{ item.createdAt | date: 'dd/MM/yyyy HH:mm' }}</p></div>
+          <span class="status-pill" [attr.data-status]="item.reviewQueueCount === 0 ? 'APPROVED' : 'PENDING_REVIEW'">
+            {{ item.reviewQueueCount === 0 ? 'REVIEW COMPLETE' : item.reviewQueueCount + ' PENDING' }}
+          </span>
+        </div>
+
+        <div class="dataset-facts">
+          <div><span>Samples</span><strong>{{ item.sampleCount | number }}</strong></div>
+          <div><span>Annotations</span><strong>{{ item.annotationCount | number }}</strong></div>
+          <div><span>Negatives</span><strong>{{ item.negativeSampleCount | number }}</strong></div>
+          <div><span>Privacy</span><strong>{{ item.privacyClassification }}</strong></div>
+        </div>
+
+        <div class="dataset-lineage">
+          <span>Source manifest</span><code>{{ item.sourceManifestSha256 }}</code>
+          @if (item.parentSourceId) { <span>Parent</span><code>{{ item.parentSourceId }}</code> }
+        </div>
+
+        <section class="dataset-export-summary">
+          <h3>COCO export</h3>
+          @if (item.export; as exported) {
+            <div class="dataset-export-ready">
+              <svg lucideCircleCheck aria-hidden="true"></svg>
+              <div>
+                <strong>{{ exported.exportId }}</strong>
+                <span>train {{ (exported.splitCounts['train'] || 0) | number }} · validation {{ (exported.splitCounts['validation'] || 0) | number }} · test {{ (exported.splitCounts['test'] || 0) | number }}</span>
+                <small class="mono">manifest {{ exported.manifestSha256 }}</small>
+              </div>
+            </div>
+          } @else {
+            <div class="notice neutral">Chưa có COCO export cho đúng source manifest này. Sync job sẽ build và verify trước khi upload.</div>
+          }
+        </section>
+
+        <section class="dataset-hub-panel">
+          <div>
+            <p class="eyebrow">ADMIN · PRIVATE HUGGING FACE</p>
+            <h3>Chuẩn bị và đồng bộ</h3>
+            <p>Repository đích: <strong>{{ hub().repoId || 'Chưa cấu hình' }}</strong>. Repo được kiểm tra private trước khi upload.</p>
+          </div>
+
+          <div class="dataset-sync-fields">
+            <label><span>Export ID</span><input [(ngModel)]="exportId" maxlength="128" spellcheck="false"></label>
+            <label><span>Hub revision</span><input [(ngModel)]="revision" maxlength="128" spellcheck="false"></label>
+          </div>
+
+          @if (!item.distributionEligible) {
+            <label class="restricted-transfer-confirmation">
+              <input type="checkbox" [(ngModel)]="confirmRestrictedTransfer">
+              <span>
+                <strong>Xác nhận chuyển dữ liệu định danh xe tới private Hub</strong>
+                Tôi xác nhận source là dữ liệu first-party được phép xử lý bên ngoài, repository luôn private và retention/access của tổ chức đã được phê duyệt.
+              </span>
+            </label>
+            @if (!hub().restrictedPrivateSyncEnabled) {
+              <div class="notice warning">Server chưa bật policy <span class="mono">restricted_private_sync_enabled</span>; thao tác này đang bị khóa.</div>
+            }
+          }
+
+          @if (auth.canManageDatasets()) {
+            <button class="button primary" type="button" (click)="startSync()" [disabled]="!canStartSync() || syncing()">
+              <svg lucideDatabase aria-hidden="true"></svg>{{ syncing() ? 'Đang khởi tạo…' : 'Build, verify và sync private Hub' }}
+            </button>
+          } @else {
+            <div class="notice neutral">Chỉ ADMIN có thể khởi tạo đồng bộ.</div>
+          }
+
+          @if (activeJob(); as job) {
+            <div class="dataset-sync-status" [attr.data-status]="job.status">
+              <svg lucideShieldCheck aria-hidden="true"></svg>
+              <div>
+                <strong>{{ job.status }}</strong>
+                <span>{{ job.repoId }} · {{ job.requestedRevision }}</span>
+                <small class="mono">{{ job.id }}</small>
+                @if (job.hubCommitSha) { <small class="mono">commit {{ job.hubCommitSha }}</small> }
+                @if (job.hubUrl) { <a [href]="job.hubUrl" target="_blank" rel="noopener noreferrer">Mở commit trên Hugging Face ↗</a> }
+                @if (job.errorCode) { <small>Lỗi: {{ job.errorCode }}</small> }
+              </div>
+            </div>
+          }
+        </section>
+      } @else {
+        <div class="empty-state"><strong>Chọn một dataset version</strong></div>
+      }
+    </article>
+  </section>
+
+  <section id="dataset-samples" class="panel dataset-sample-browser" aria-labelledby="dataset-sample-title">
+    <div class="dataset-sample-heading">
+      <div>
+        <p class="eyebrow">READ-ONLY · CHECKSUM VERIFIED · BOUNDING BOX OVERLAY</p>
+        <h2 id="dataset-sample-title">Xem mẫu Dataset</h2>
+        <p>
+          Chọn version ở phía trên để kiểm tra ảnh và nhãn đang thực sự nằm trong source.
+          Mỗi lần chỉ tải 12 mẫu, không tải toàn bộ dataset vào trình duyệt.
+        </p>
+      </div>
+      @if (selected(); as item) {
+        <span class="dataset-sample-source mono">{{ item.sourceId }}</span>
+      }
+    </div>
+
+    <div class="dataset-sample-toolbar">
+      <label>
+        <span>Loại mẫu</span>
+        <select [(ngModel)]="sampleKind" (ngModelChange)="reloadSamples()">
+          <option value="ALL">Tất cả</option>
+          <option value="POSITIVE">Có biển số</option>
+          <option value="NEGATIVE">Không có biển số</option>
+        </select>
+      </label>
+      <label>
+        <span>Ánh sáng</span>
+        <select [(ngModel)]="sampleLighting" (ngModelChange)="reloadSamples()">
+          <option value="">Ngày + đêm</option>
+          <option value="DAY">Ban ngày</option>
+          <option value="NIGHT">Ban đêm</option>
+          <option value="UNKNOWN">Chưa xác định</option>
+        </select>
+      </label>
+      <div class="dataset-sample-loaded">
+        <span>Đã tải</span>
+        <strong>{{ samples().length | number }}</strong>
+        @if (selected(); as item) { <small>/ {{ item.sampleCount | number }} mẫu trong version</small> }
+      </div>
+    </div>
+
+    @if (sampleError()) {
+      <div class="notice error dataset-sample-notice" role="alert">{{ sampleError() }}</div>
+    }
+
+    @if (loadingSamples() && !samples().length) {
+      <div class="empty-state dataset-sample-empty">
+        <svg lucideImage aria-hidden="true"></svg>
+        <strong>Đang đọc mẫu và xác minh ảnh…</strong>
+      </div>
+    } @else if (!selected()) {
+      <div class="empty-state dataset-sample-empty">
+        <strong>Chưa có dataset version để xem</strong>
+      </div>
+    } @else if (!samples().length) {
+      <div class="empty-state dataset-sample-empty">
+        <svg lucideImage aria-hidden="true"></svg>
+        <strong>Không có mẫu phù hợp bộ lọc</strong>
+        <span>Thử đổi loại mẫu hoặc điều kiện ánh sáng.</span>
+      </div>
+    } @else {
+      <div class="dataset-sample-layout">
+        <div class="dataset-sample-collection">
+          <div class="dataset-sample-grid" aria-label="Danh sách mẫu dataset đã tải">
+            @for (sample of samples(); track sample.imageSha256) {
+              <button
+                type="button"
+                class="dataset-sample-card"
+                [class.active]="selectedSample()?.imageSha256 === sample.imageSha256"
+                [attr.aria-label]="'Xem mẫu ' + sample.sampleId"
+                (click)="showSample(sample)"
+              >
+                <span class="dataset-sample-stage">
+                  @if (sampleImageUrl(sample); as imageUrl) {
+                    <img
+                      [src]="imageUrl"
+                      [alt]="'Ảnh dataset ' + sample.sampleId"
+                      loading="lazy"
+                      (error)="markSampleImageFailed(sample)"
+                    >
+                  } @else if (failedSampleImages().has(sample.imageSha256)) {
+                    <span class="dataset-image-state failed">Không tải được ảnh</span>
+                  } @else {
+                    <span class="dataset-image-state">Đang tải ảnh…</span>
+                  }
+                  <svg
+                    class="dataset-sample-labels"
+                    [attr.viewBox]="'0 0 ' + sample.image.width + ' ' + sample.image.height"
+                    preserveAspectRatio="xMidYMid meet"
+                    aria-hidden="true"
+                  >
+                    @for (annotation of sample.annotations; track $index) {
+                      <rect
+                        [attr.x]="annotation.bbox.x"
+                        [attr.y]="annotation.bbox.y"
+                        [attr.width]="annotation.bbox.width"
+                        [attr.height]="annotation.bbox.height"
+                        vector-effect="non-scaling-stroke"
+                      ></rect>
+                    }
+                  </svg>
+                  <span class="dataset-sample-kind" [attr.data-kind]="sample.negative ? 'NEGATIVE' : 'POSITIVE'">
+                    {{ sample.negative ? 'NEGATIVE' : sample.annotations.length + ' BBOX' }}
+                  </span>
+                </span>
+                <span class="dataset-sample-card-copy">
+                  <strong class="mono">{{ sample.sampleId }}</strong>
+                  <small>{{ sample.lighting }} · {{ sample.split || 'UNSPLIT' }} · {{ sample.image.width }}×{{ sample.image.height }}</small>
+                </span>
+              </button>
+            }
+          </div>
+
+          @if (sampleNextCursor()) {
+            <div class="dataset-sample-load-more">
+              <button
+                class="button secondary"
+                type="button"
+                (click)="loadSamples(false)"
+                [disabled]="loadingMoreSamples()"
+              >
+                {{ loadingMoreSamples() ? 'Đang tải thêm…' : 'Tải thêm 12 mẫu' }}
+                <svg lucideChevronRight aria-hidden="true"></svg>
+              </button>
+            </div>
+          } @else {
+            <p class="dataset-sample-end">Đã tới cuối danh sách theo bộ lọc hiện tại.</p>
+          }
+        </div>
+
+        <aside class="dataset-sample-inspector" aria-label="Chi tiết mẫu dataset">
+          @if (selectedSample(); as sample) {
+            <div
+              class="dataset-inspector-stage"
+              [style.aspect-ratio]="sample.image.width + ' / ' + sample.image.height"
+            >
+              @if (sampleImageUrl(sample); as imageUrl) {
+                <img
+                  [src]="imageUrl"
+                  [alt]="'Chi tiết ảnh dataset ' + sample.sampleId"
+                  (error)="markSampleImageFailed(sample)"
+                >
+                <svg
+                  [attr.viewBox]="'0 0 ' + sample.image.width + ' ' + sample.image.height"
+                  preserveAspectRatio="none"
+                  aria-label="Nhãn bounding box biển số"
+                >
+                  @for (annotation of sample.annotations; track $index; let index = $index) {
+                    <rect
+                      [attr.x]="annotation.bbox.x"
+                      [attr.y]="annotation.bbox.y"
+                      [attr.width]="annotation.bbox.width"
+                      [attr.height]="annotation.bbox.height"
+                      vector-effect="non-scaling-stroke"
+                    ></rect>
+                    <text
+                      [attr.x]="annotation.bbox.x"
+                      [attr.y]="annotation.bbox.y > 14 ? annotation.bbox.y - 4 : annotation.bbox.y + 13"
+                    >plate {{ index + 1 }}</text>
+                  }
+                </svg>
+              } @else {
+                <span class="dataset-image-state">Ảnh chưa sẵn sàng</span>
+              }
+            </div>
+
+            <div class="dataset-inspector-heading">
+              <div>
+                <span class="dataset-sample-kind" [attr.data-kind]="sample.negative ? 'NEGATIVE' : 'POSITIVE'">
+                  {{ sample.negative ? 'NEGATIVE' : 'POSITIVE' }}
+                </span>
+                <h3 class="mono">{{ sample.sampleId }}</h3>
+              </div>
+              <span>{{ sample.capturedAt | date: 'dd/MM/yyyy HH:mm:ss' }}</span>
+            </div>
+
+            <dl class="dataset-sample-facts">
+              <div><dt>Lighting</dt><dd>{{ sample.lighting }}</dd></div>
+              <div><dt>Split</dt><dd>{{ sample.split || 'UNSPLIT' }}</dd></div>
+              <div><dt>Camera</dt><dd>{{ sample.cameraId }}</dd></div>
+              <div><dt>Review</dt><dd>{{ sample.annotationStatus || 'N/A' }}</dd></div>
+              <div class="wide"><dt>Group</dt><dd class="mono">{{ sample.groupId }}</dd></div>
+              <div class="wide"><dt>Image SHA-256</dt><dd class="mono">{{ sample.imageSha256 }}</dd></div>
+            </dl>
+
+            <section class="dataset-annotation-list">
+              <div class="dataset-annotation-heading">
+                <h4>Annotations</h4><span>{{ sample.annotations.length }} bbox</span>
+              </div>
+              @if (!sample.annotations.length) {
+                <p>Đây là negative sample đã được xác nhận không có biển số.</p>
+              } @else {
+                @for (annotation of sample.annotations; track $index; let index = $index) {
+                  <div>
+                    <strong>#{{ index + 1 }} · {{ annotation.className }}</strong>
+                    <code>x {{ annotation.bbox.x | number: '1.0-1' }} · y {{ annotation.bbox.y | number: '1.0-1' }} · w {{ annotation.bbox.width | number: '1.0-1' }} · h {{ annotation.bbox.height | number: '1.0-1' }}</code>
+                  </div>
+                }
+              }
+            </section>
+            <p class="dataset-sample-readonly">
+              Đây là source bất biến nên màn hình chỉ đọc. Muốn sửa nhãn, hãy tạo review/promotion version mới.
+            </p>
+          }
+        </aside>
+      </div>
+    }
+  </section>
+}

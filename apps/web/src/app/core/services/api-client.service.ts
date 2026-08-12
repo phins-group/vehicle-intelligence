@@ -19,6 +19,16 @@ import {
   ModelQualityReport,
   OnvifDiscoveryResult,
   DatasetSample,
+  DatasetHubSyncJob,
+  DatasetRegistryResponse,
+  DetectorPromotionJob,
+  DetectorDatasetSampleKind,
+  DetectorDatasetSamplePage,
+  DetectorReviewItem,
+  DetectorReviewPage,
+  DetectorReviewRequest,
+  DetectorReviewSource,
+  DetectorReviewStatus,
   PlateReviewRequest,
   PlateReviewResponse,
   Principal,
@@ -98,6 +108,125 @@ export class ApiClientService {
     return this.http.get<{ items: DatasetSample[]; nextCursor: string | null }>(
       '/api/dataset-samples',
       { params }
+    );
+  }
+
+  detectorReviewSources(): Observable<{ items: DetectorReviewSource[] }> {
+    return this.http.get<{ items: DetectorReviewSource[] }>('/api/detector-review/sources');
+  }
+
+  detectorReviewItems(filters: {
+    sourceId: string;
+    limit?: number;
+    cursor?: string | null;
+    status?: DetectorReviewStatus | '';
+    reason?: string;
+  }): Observable<DetectorReviewPage> {
+    let params = new HttpParams();
+    for (const [key, value] of Object.entries(filters)) {
+      if (value !== undefined && value !== null && value !== '') {
+        params = params.set(key, String(value));
+      }
+    }
+    return this.http.get<DetectorReviewPage>('/api/detector-review/items', { params });
+  }
+
+  detectorReviewItem(sourceId: string, reviewId: string): Observable<DetectorReviewItem> {
+    return this.http.get<DetectorReviewItem>(this.detectorReviewItemUrl(sourceId, reviewId));
+  }
+
+  detectorReviewImage(sourceId: string, reviewId: string): Observable<Blob> {
+    return this.http.get(this.detectorReviewItemUrl(sourceId, reviewId) + '/image', {
+      responseType: 'blob'
+    });
+  }
+
+  reviewDetectorSample(
+    sourceId: string,
+    reviewId: string,
+    request: DetectorReviewRequest
+  ): Observable<DetectorReviewItem> {
+    return this.http.put<DetectorReviewItem>(
+      this.detectorReviewItemUrl(sourceId, reviewId),
+      request
+    );
+  }
+
+  detectorReviewHistory(
+    sourceId: string,
+    reviewId: string
+  ): Observable<{ items: import('../models/api.models').DetectorReviewDecision[] }> {
+    return this.http.get<{
+      items: import('../models/api.models').DetectorReviewDecision[];
+    }>(this.detectorReviewItemUrl(sourceId, reviewId) + '/history');
+  }
+
+  promoteDetectorSource(sourceId: string, targetSourceId: string): Observable<DetectorPromotionJob> {
+    return this.http.post<DetectorPromotionJob>(
+      '/api/detector-review/sources/' + encodeURIComponent(sourceId) + '/promotions',
+      { targetSourceId }
+    );
+  }
+
+  detectorPromotion(jobId: string): Observable<DetectorPromotionJob> {
+    return this.http.get<DetectorPromotionJob>(
+      '/api/detector-review/promotions/' + encodeURIComponent(jobId)
+    );
+  }
+
+  detectorDatasets(): Observable<DatasetRegistryResponse> {
+    return this.http.get<DatasetRegistryResponse>('/api/datasets');
+  }
+
+  detectorDatasetSamples(
+    sourceId: string,
+    filters: {
+      limit?: number;
+      cursor?: string | null;
+      kind?: DetectorDatasetSampleKind;
+      lighting?: '' | 'DAY' | 'NIGHT' | 'UNKNOWN';
+    } = {}
+  ): Observable<DetectorDatasetSamplePage> {
+    let params = new HttpParams();
+    for (const [key, value] of Object.entries(filters)) {
+      if (value !== undefined && value !== null && value !== '') {
+        params = params.set(key, String(value));
+      }
+    }
+    return this.http.get<DetectorDatasetSamplePage>(
+      '/api/datasets/' + encodeURIComponent(sourceId) + '/samples',
+      { params }
+    );
+  }
+
+  detectorDatasetSampleImage(sourceId: string, imageSha256: string): Observable<Blob> {
+    return this.http.get(
+      '/api/datasets/' +
+        encodeURIComponent(sourceId) +
+        '/samples/' +
+        encodeURIComponent(imageSha256) +
+        '/image',
+      { responseType: 'blob' }
+    );
+  }
+
+  syncDetectorDataset(
+    sourceId: string,
+    request: {
+      exportId: string;
+      revision: string;
+      confirmRestrictedPrivateTransfer: boolean;
+    }
+  ): Observable<DatasetHubSyncJob> {
+    return this.http.post<DatasetHubSyncJob>(
+      '/api/datasets/' + encodeURIComponent(sourceId) + '/syncs',
+      request
+    );
+  }
+
+  detectorDatasetSync(jobId: string): Observable<DatasetHubSyncJob> {
+    return this.http.get<DatasetHubSyncJob>(
+      '/api/datasets/syncs/' + encodeURIComponent(jobId)
     );
   }
 
@@ -276,5 +405,14 @@ export class ApiClientService {
 
   deleteRule(ruleId: string): Observable<void> {
     return this.http.delete<void>('/api/rules/' + encodeURIComponent(ruleId));
+  }
+
+  private detectorReviewItemUrl(sourceId: string, reviewId: string): string {
+    return (
+      '/api/detector-review/sources/' +
+      encodeURIComponent(sourceId) +
+      '/items/' +
+      encodeURIComponent(reviewId)
+    );
   }
 }

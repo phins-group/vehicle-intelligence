@@ -71,6 +71,12 @@
   review queue using signed evidence.
 - Acceptance record:
   [PHASE2_HUMAN_OCR_REVIEW_ACCEPTANCE.md](PHASE2_HUMAN_OCR_REVIEW_ACCEPTANCE.md).
+- Implemented detector-dataset review: authenticated real-image queue, source-
+  coordinate bbox editor, explicit approve/correct/negative/reject decisions,
+  immutable evidence-bound revisions, optimistic conflict handling, RBAC/audit,
+  checksummed promotion snapshots, and verified new-source promotion without
+  mutating the first-party parent dataset. Operating procedure:
+  [Detector training](DETECTOR_TRAINING.md#human-review-ui-for-detector-labels).
 - Implemented Live Monitor: model-agnostic overlay contracts, latest-only edge
   reporter, background bounded JPEG, isolated Redis Pub/Sub, bounded exact-frame
   API, health, RBAC, and configurable Angular SVG overlays.
@@ -142,5 +148,11 @@
 - Implemented a static, secret-safe production-readiness gate covering deployment
   posture and model artifact integrity. The development defaults intentionally
   fail closed; see [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md).
+- Implemented the offline vehicle/plate detector lifecycle: group-safe immutable
+  COCO builds, canonical-provider prediction evidence, detector metrics/gates,
+  subprocess-isolated PicoDet training/export, checksum model candidates, and
+  optional private Hugging Face registry/Job adapters. This is operational model
+  onboarding, not a fabricated trained checkpoint; see
+  [DETECTOR_TRAINING.md](DETECTOR_TRAINING.md).
 - Current roadmap milestones remaining: **0**. Site/model onboarding and live
   rollout validation are deployment inputs, not incomplete software milestones.

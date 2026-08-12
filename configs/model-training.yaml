@@ -1,0 +1,122 @@
+schema_version: 1
+
+corpus:
+  owner_namespace: phins-group
+  founder_id: duyhuynh
+  plate_corpus_id: phins-vn-plate-corpus-v2
+  plate_output_directory: datasets/corpora/plate
+  plate_external_sources_directory: datasets/source/plate/roboflow
+  plate_auxiliary_output_directory: datasets/corpora/plate-auxiliary
+  plate_additional_sources:
+    - datasets/source/plate
+    - datasets/source/plate/roboflow/roboflow-traffic-violation-v3
+    - datasets/source/plate/roboflow/roboflow-vietnamese-license-plate-v1
+    - datasets/source/plate/roboflow/roboflow-license-plate-detection-v1
+
+vehicle:
+  dataset:
+    role: vehicle
+    source_directory: datasets/source/vehicle
+    annotations_file: annotations.jsonl
+    output_directory: datasets/detectors/vehicle
+    classes: [car, motorcycle, bus, truck]
+    split:
+      train: 0.70
+      validation: 0.15
+      test: 0.15
+      seed: vehicle-group-split-v1
+      require_non_empty: true
+    maximum_samples: 100000
+    maximum_annotation_line_bytes: 1000000
+    maximum_image_bytes: 20000000
+    maximum_image_pixels: 40000000
+  gates:
+    minimum_map50: 0.95
+    minimum_map50_95: 0.60
+    minimum_precision: 0.97
+    minimum_recall: 0.97
+    minimum_group_recall: 0.99
+    minimum_night_recall: 0.95
+    minimum_full_bbox_coverage: null
+    minimum_per_class_recall:
+      car: 0.95
+      motorcycle: 0.95
+      bus: 0.95
+      truck: 0.95
+  paddledetection:
+    repository_path: third_party/PaddleDetection
+    base_config: configs/picodet/picodet_m_416_coco_lcnet.yml
+    output_directory: output/training/vehicle
+    python_executable: python
+    paddle2onnx_executable: paddle2onnx
+    device: gpu
+    gpus: ["0"]
+    epochs: 80
+    batch_size: 8
+    workers: 4
+    snapshot_epoch: 5
+    pretrain_weights: null
+    maximum_runtime_seconds: 86400
+    export_maximum_runtime_seconds: 3600
+    onnx_opset: 11
+    extra_overrides: {}
+  hub:
+    dataset_repo: phins-group/vehicle-dataset
+    model_repo: phins-group/vehicle-detector
+
+plate:
+  dataset:
+    role: plate
+    source_directory: datasets/source/plate-first-party/phins-vn-plate-production-source-v1
+    annotations_file: annotations.jsonl
+    output_directory: datasets/detectors/plate
+    classes: [license_plate]
+    split:
+      train: 0.70
+      validation: 0.15
+      test: 0.15
+      seed: plate-first-party-production-split-v1
+      require_non_empty: true
+    maximum_samples: 100000
+    maximum_annotation_line_bytes: 1000000
+    maximum_image_bytes: 20000000
+    maximum_image_pixels: 40000000
+  gates:
+    minimum_map50: 0.95
+    minimum_map50_95: 0.60
+    minimum_precision: 0.98
+    minimum_recall: 0.97
+    minimum_group_recall: 0.98
+    minimum_night_recall: 0.94
+    minimum_full_bbox_coverage: 0.98
+    minimum_per_class_recall:
+      license_plate: 0.97
+  paddledetection:
+    repository_path: third_party/PaddleDetection
+    base_config: configs/picodet/picodet_m_416_coco_lcnet.yml
+    output_directory: output/training/plate
+    python_executable: python
+    paddle2onnx_executable: paddle2onnx
+    device: gpu
+    gpus: ["0"]
+    epochs: 100
+    batch_size: 16
+    workers: 4
+    snapshot_epoch: 5
+    pretrain_weights: null
+    maximum_runtime_seconds: 86400
+    export_maximum_runtime_seconds: 3600
+    onnx_opset: 11
+    extra_overrides: {}
+  hub:
+    dataset_repo: phins-group/plate-dataset
+    model_repo: phins-group/plate-detector
+
+huggingface:
+  enabled: true
+  private: true
+  jobs_enabled: false
+  job_image: ""
+  job_flavor: a10g-small
+  job_namespace: null
+  job_output_bucket: null

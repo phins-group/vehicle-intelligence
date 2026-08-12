@@ -115,3 +115,13 @@ def test_yolo_plate_provider_returns_existing_canonical_plate_detection() -> Non
     assert isinstance(detections[0], PlateDetection)
     assert detections[0].bbox.as_xyxy() == (1, 2, 9, 7)
     assert detections[0].confidence == pytest.approx(0.75)
+
+    batch = detector.detect_batch(
+        [
+            np.zeros((8, 10, 3), dtype=np.uint8),
+            np.zeros((8, 10, 3), dtype=np.uint8),
+        ]
+    )
+    assert len(batch) == 2
+    assert all(len(items) == 1 for items in batch)
+    assert len(model.calls[-1]["source"]) == 2

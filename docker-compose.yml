@@ -99,8 +99,21 @@ services:
       VIP_AUTH__PRINCIPALS: ${VIP_AUTH__PRINCIPALS:-[]}
       VIP_SECURITY__CAMERA_CREDENTIAL_KEY: ${VIP_SECURITY__CAMERA_CREDENTIAL_KEY:-}
       VIP_SECURITY__CAMERA_CREDENTIAL_KEY_ID: ${VIP_SECURITY__CAMERA_CREDENTIAL_KEY_ID:-primary}
+      VIP_DATASET_REVIEW__ENABLED: ${VIP_DATASET_REVIEW__ENABLED:-true}
+      VIP_DATASET_REVIEW__SOURCES_DIRECTORY: /app/datasets/source/plate-first-party
+      VIP_DATASET_REVIEW__WORKSPACE_DIRECTORY: /app/datasets/reviews/detector
+      VIP_DATASET_REVIEW__PROMOTED_SOURCES_DIRECTORY: /app/datasets/source/plate-first-party
+      VIP_DATASET_REGISTRY__ENABLED: ${VIP_DATASET_REGISTRY__ENABLED:-true}
+      VIP_DATASET_REGISTRY__SOURCES_DIRECTORY: /app/datasets/source/plate-first-party
+      VIP_DATASET_REGISTRY__EXPORTS_DIRECTORY: /app/datasets/detectors/plate
+      VIP_DATASET_REGISTRY__WORKSPACE_DIRECTORY: /app/datasets/registry
+      VIP_DATASET_REGISTRY__TRAINING_CONFIG: /app/configs/model-training.yaml
+      VIP_DATASET_REGISTRY__RESTRICTED_PRIVATE_SYNC_ENABLED: ${VIP_DATASET_REGISTRY__RESTRICTED_PRIVATE_SYNC_ENABLED:-false}
+      HF_TOKEN: ${HF_TOKEN:-}
     ports:
       - "${API_HOST_PORT:-8000}:8000"
+    volumes:
+      - ./datasets:/app/datasets
     depends_on:
       mongodb-init:
         condition: service_completed_successfully

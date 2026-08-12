@@ -35,10 +35,15 @@ vision = [
   "ultralytics>=8.3,<9",
 ]
 minio = ["minio>=7.2,<8"]
+hub = ["huggingface-hub>=0.35,<2"]
 reid = ["torch>=2.2,<3"]
 optimization = [
   "onnx>=1.17,<2",
   "onnxruntime>=1.20,<2",
+]
+training = [
+  "huggingface-hub>=0.35,<2",
+  "onnx>=1.17,<2",
 ]
 dev = [
   "pytest>=8.3,<9",
@@ -55,6 +60,7 @@ vehicle-retention-worker = "vehicle_intelligence.interfaces.retention_cli:main"
 vehicle-credential-rotation = "vehicle_intelligence.interfaces.credential_rotation_cli:main"
 vehicle-edge-entrypoint = "vehicle_intelligence.interfaces.edge_entrypoint:main"
 vehicle-dataset-export = "vehicle_intelligence.interfaces.dataset_export_cli:main"
+vehicle-model-training = "vehicle_intelligence.training.cli:main"
 vehicle-production-readiness = "vehicle_intelligence.interfaces.readiness_cli:main"
 vehicle-api = "vehicle_intelligence.interfaces.api:main"
 

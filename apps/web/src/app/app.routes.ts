@@ -62,6 +62,22 @@ export const routes: Routes = [
           )
       },
       {
+        path: 'dataset-review',
+        title: 'Duyệt detector dataset | Vehicle Intelligence',
+        loadComponent: () =>
+          import('./features/dataset-review/dataset-review.component').then(
+            (module) => module.DatasetReviewComponent
+          )
+      },
+      {
+        path: 'datasets',
+        title: 'Quản lý Dataset | Vehicle Intelligence',
+        loadComponent: () =>
+          import('./features/dataset-management/dataset-management.component').then(
+            (module) => module.DatasetManagementComponent
+          )
+      },
+      {
         path: 'cameras',
         title: 'Camera | Vehicle Intelligence',
         loadComponent: () =>

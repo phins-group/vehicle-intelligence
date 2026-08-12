@@ -19,6 +19,8 @@ from pydantic import BaseModel
 
 from vehicle_intelligence.application.audit import AuditRecord, AuditService
 from vehicle_intelligence.application.cameras import CameraService
+from vehicle_intelligence.application.dataset_registry import DatasetRegistryService
+from vehicle_intelligence.application.dataset_review import DetectorDatasetReviewService
 from vehicle_intelligence.application.discovery import OnvifDiscoveryService
 from vehicle_intelligence.application.journeys import VehicleJourneyService
 from vehicle_intelligence.application.live_monitor import LiveMonitorService
@@ -139,6 +141,12 @@ from vehicle_intelligence.infrastructure.security.oidc import OIDCAuthenticator
 from vehicle_intelligence.infrastructure.serialization import event_to_jsonable
 from vehicle_intelligence.infrastructure.storage.local import LocalMediaStorage
 from vehicle_intelligence.infrastructure.storage.minio import MinioMediaStorage
+from vehicle_intelligence.infrastructure.training.dataset_registry_files import (
+    FileDatasetRegistryRepository,
+)
+from vehicle_intelligence.infrastructure.training.dataset_review_files import (
+    FileDetectorReviewRepository,
+)
 from vehicle_intelligence.infrastructure.vision.connection_test import (
     OpenCVCameraConnectionTester,
 )
@@ -158,6 +166,8 @@ from vehicle_intelligence.interfaces.camera_schemas import (
     OnvifDevicePublic,
     OnvifDiscoveryPublic,
 )
+from vehicle_intelligence.interfaces.dataset_registry_api import build_dataset_registry_router
+from vehicle_intelligence.interfaces.dataset_review_api import build_dataset_review_router
 from vehicle_intelligence.interfaces.journey_api import build_journey_router
 from vehicle_intelligence.interfaces.live_monitor_api import build_live_monitor_router
 from vehicle_intelligence.interfaces.media_api import build_media_router
@@ -370,6 +380,8 @@ def create_app(
     topology_repository: CameraTopologyRepository | None = None,
     vector_repository: VectorRepository | None = None,
     model_quality_service: ModelQualityService | None = None,
+    detector_review_service: DetectorDatasetReviewService | None = None,
+    dataset_registry_service: DatasetRegistryService | None = None,
 ) -> FastAPI:
     settings = settings or load_settings()
     camera_credentials_configured = (
@@ -397,6 +409,7 @@ def create_app(
         MongoRuntime(settings.mongodb) if requires_composed_mongo else None
     )
     owns_mongo_runtime = mongo_runtime is None and managed_mongo is not None
+    mongo_to_close = managed_mongo if owns_mongo_runtime else None
     event_repository = repository or _repository(settings, managed_mongo)
     managed_identities = vehicle_identity_repository or (
         MongoVehicleIdentityRepository(managed_mongo)
@@ -465,6 +478,16 @@ def create_app(
         managed_samples,
         managed_mongo,
     )
+    managed_detector_reviews = detector_review_service or (
+        DetectorDatasetReviewService(FileDetectorReviewRepository(settings.dataset_review))
+        if settings.dataset_review.enabled
+        else None
+    )
+    managed_dataset_registry = dataset_registry_service or (
+        DatasetRegistryService(FileDatasetRegistryRepository(settings.dataset_registry))
+        if settings.dataset_registry.enabled
+        else None
+    )
     event_codec = JsonEventEnvelopeCodec()
     managed_metrics = prometheus_metrics or PrometheusMetrics()
     managed_tracing = tracing_runtime or build_tracing_runtime(settings.observability)
@@ -483,6 +506,10 @@ def create_app(
             await managed_policies.initialize()
             await managed_audits.initialize()
             await managed_reviews.initialize()
+            if managed_detector_reviews is not None:
+                await managed_detector_reviews.initialize()
+            if managed_dataset_registry is not None:
+                await managed_dataset_registry.initialize()
             if managed_realtime is not None:
                 await managed_realtime.initialize()
             if managed_live_monitor is not None:
@@ -490,50 +517,55 @@ def create_app(
             yield
         finally:
             try:
-                if managed_live_monitor is not None:
-                    await managed_live_monitor.close()
+                if managed_dataset_registry is not None:
+                    await managed_dataset_registry.close()
             finally:
                 try:
-                    if managed_realtime is not None:
-                        await managed_realtime.close()
+                    if managed_detector_reviews is not None:
+                        await managed_detector_reviews.close()
                 finally:
                     try:
-                        await managed_quality.close()
+                        if managed_live_monitor is not None:
+                            await managed_live_monitor.close()
                     finally:
                         try:
-                            await managed_reviews.close()
+                            if managed_realtime is not None:
+                                await managed_realtime.close()
                         finally:
                             try:
-                                await managed_audits.close()
+                                await managed_quality.close()
                             finally:
                                 try:
-                                    await managed_policies.close()
+                                    await managed_reviews.close()
                                 finally:
                                     try:
-                                        if managed_cameras is not None:
-                                            await managed_cameras.close()
+                                        await managed_audits.close()
                                     finally:
                                         try:
-                                            await managed_reid_scoring.close()
+                                            await managed_policies.close()
                                         finally:
                                             try:
-                                                await managed_topology.close()
+                                                if managed_cameras is not None:
+                                                    await managed_cameras.close()
                                             finally:
                                                 try:
-                                                    await managed_identities.close()
+                                                    await managed_reid_scoring.close()
                                                 finally:
                                                     try:
-                                                        await event_repository.close()
+                                                        await managed_topology.close()
                                                     finally:
                                                         try:
-                                                            if managed_tracing is not None:
-                                                                managed_tracing.shutdown()
+                                                            await managed_identities.close()
                                                         finally:
-                                                            if (
-                                                                owns_mongo_runtime
-                                                                and managed_mongo is not None
-                                                            ):
-                                                                await managed_mongo.close()
+                                                            try:
+                                                                await event_repository.close()
+                                                            finally:
+                                                                try:
+                                                                    if managed_tracing is not None:
+                                                                        managed_tracing.shutdown()
+                                                                finally:
+                                                                    if mongo_to_close is not None:
+                                                                        await mongo_to_close.close()
 
     async def mutation_transaction() -> AsyncIterator[None]:
         if managed_mongo is None:
@@ -586,6 +618,22 @@ def create_app(
             mutation_transaction,
         )
     )
+    if managed_detector_reviews is not None:
+        app.include_router(
+            build_dataset_review_router(
+                managed_detector_reviews,
+                api_security,
+                managed_audits,
+            )
+        )
+    if managed_dataset_registry is not None:
+        app.include_router(
+            build_dataset_registry_router(
+                managed_dataset_registry,
+                api_security,
+                managed_audits,
+            )
+        )
     app.include_router(build_media_router(managed_media_access, api_security))
     app.include_router(
         build_live_monitor_router(
@@ -660,6 +708,12 @@ def create_app(
             "auditLog": "available",
             "mediaAccess": "available" if managed_media_access is not None else "unavailable",
             "humanReview": "available",
+            "datasetReview": (
+                "available" if managed_detector_reviews is not None else "disabled"
+            ),
+            "datasetRegistry": (
+                "available" if managed_dataset_registry is not None else "disabled"
+            ),
             "modelQuality": "available",
             "liveMonitor": (
                 managed_live_monitor.stats.source_state.value

@@ -15,6 +15,8 @@ Implemented routes:
 | /events | Combined filters, cursor pagination, live prepend, event evidence drawer |
 | /vehicle-search | Exact canonical plate search, loaded-evidence summary, cursor timeline |
 | /ocr-review | OPERATOR/ADMIN queue, signed evidence, revisioned confirmation/correction |
+| /dataset-review | OPERATOR/ADMIN detector-label queue, bbox editor, revision history, immutable promotion |
+| /datasets | Immutable catalog, paged sample/bbox viewer, lineage evidence, private Hugging Face sync |
 | /cameras | Latest health, create, enable/disable, and connection test |
 | /live-monitor | Low-rate exact-frame preview with configurable AI overlays |
 | /alerts | Cursor listing, filters, acknowledge, and resolve workflow |
@@ -65,8 +67,8 @@ only a usability measure. FastAPI remains the authorization boundary:
 | Role | Dashboard behavior |
 |---|---|
 | VIEWER | Read-only pages |
-| OPERATOR | Read, camera connection test, alert workflow, OCR review/dataset feedback |
-| ADMIN | All operator actions plus camera and watchlist/rule mutations |
+| OPERATOR | Read, camera connection test, alert workflow, OCR review, and detector-label review |
+| ADMIN | All operator actions plus camera/watchlist/rule mutations, dataset promotion, and private Hub sync |
 
 ## Policy authoring
 
@@ -121,6 +123,67 @@ local queue and reports whether a deterministic dataset sample was created.
 There is no browser-side normalization authority, image upload, object-key
 signing, or direct database access. The backend derives the actor from the
 authenticated principal and preserves the prediction.
+
+## Human detector-dataset review
+
+The `/dataset-review` lazy route is deliberately separate from OCR review. It
+loads immutable first-party detector sources, filters the queue by state and
+reason, fetches image evidence with the authenticated API client, and draws SVG
+boxes in source-image pixel coordinates. Operators can confirm an unchanged
+model suggestion, save corrected `license_plate` boxes, mark a verified hard
+negative, or reject an unusable image with a required explanation.
+
+Every write carries the last observed revision. FastAPI revalidates box bounds
+and action semantics, returns `409` for concurrent edits, and writes a new
+no-overwrite decision revision bound to the source manifest, queue checksum,
+image checksum, actor, and UTC time. The source queue and original image remain
+unchanged. Images are exposed as short-lived in-memory Blob URLs in the browser;
+the Nginx policy allows `blob:` only for `img-src`, while scripts remain limited
+to `'self'`.
+
+ADMIN can start an asynchronous promotion that creates a new immutable source
+ID. Confirmed/corrected/negative decisions are included, rejected samples are
+excluded, and unresolved samples remain in the next review queue. Promotion
+does not mutate the parent source and emits a verifiable manifest plus review
+evidence. See [Detector training](DETECTOR_TRAINING.md#human-review-ui-for-detector-labels)
+for the source layout and operating procedure.
+
+## Dataset management and private Hub sync
+
+The `/datasets` lazy route is the post-promotion operations screen. It shows
+source versions and parent lineage, exact source/export manifest hashes,
+sample/annotation/negative counts, review readiness, COCO split counts, and the
+latest durable synchronization job. It does not upload the mutable review
+workspace or raw source tree directly: the API first creates or reuses an
+immutable COCO export bound to the selected source manifest and verifies every
+recorded byte.
+
+The same page contains **Xem mẫu Dataset**, a read-only gallery for the selected
+source version. It loads 12 records at a time using a source-manifest-bound
+cursor, can filter positive/negative and day/night samples, and overlays the
+canonical `license_plate` boxes in source-image coordinates. Selecting a card
+shows image identity, split, camera/group evidence, review state, checksum, and
+exact bbox values. This viewer is for quality inspection only; edits still go
+through `/dataset-review` and an immutable promotion.
+
+Sample images are fetched as authenticated Blob responses and exposed only by
+source ID plus SHA-256, never by a filesystem path. The backend checks manifest
+membership, file size, checksum, image decoding, pixel limits, and bbox bounds
+before returning metadata or image bytes. The browser revokes object URLs when
+the source/filter changes or the component closes.
+
+Only ADMIN sees the sync action. A restricted first-party source also requires
+an explicit per-request confirmation and the server-side
+`restricted_private_sync_enabled` policy. The UI exposes whether Hub support,
+the destination repository, server policy, and credentials are available, but
+never receives the credential itself. Job polling renders `QUEUED`,
+`PREPARING_EXPORT`, `UPLOADING`, `COMPLETED`, or `FAILED`; a successful job links
+to the exact private Hub commit returned by the backend.
+
+FastAPI remains authoritative for validation, RBAC, idempotency, audit ordering,
+source/export checksum binding, and the remote-private check. See
+[Detector training](DETECTOR_TRAINING.md#dataset-catalog-and-private-hub-sync-after-promotion)
+and [PHINS governance](PHINS_DATASET_GOVERNANCE.md#reviewed-first-party-versions-and-private-hub-processing).
 
 ## Media evidence
 

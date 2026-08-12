@@ -30,6 +30,7 @@
       <div><span><svg lucideActivity aria-hidden="true"></svg> Audit log</span><b>{{ system()?.auditLog || 'UNKNOWN' }}</b></div>
       <div><span><svg lucideActivity aria-hidden="true"></svg> Signed media</span><b>{{ system()?.mediaAccess || 'UNKNOWN' }}</b></div>
       <div><span><svg lucideActivity aria-hidden="true"></svg> Human OCR review</span><b>{{ system()?.humanReview || 'UNKNOWN' }}</b></div>
+      <div><span><svg lucideActivity aria-hidden="true"></svg> Detector dataset review</span><b>{{ system()?.datasetReview || 'UNKNOWN' }}</b></div>
       <div><span><svg lucideGauge aria-hidden="true"></svg> Model quality</span><b>{{ system()?.modelQuality || 'UNKNOWN' }}</b></div>
       <div><span><svg lucideCamera aria-hidden="true"></svg> Live monitor</span><b>{{ liveMonitor()?.status || system()?.liveMonitor || 'UNKNOWN' }} · {{ liveMonitor()?.camerasBuffered ?? 0 }} camera(s)</b></div>
       <div><span><svg lucideRadio aria-hidden="true"></svg> Realtime</span><b>{{ realtime()?.status || system()?.realtime || 'UNKNOWN' }}</b></div>

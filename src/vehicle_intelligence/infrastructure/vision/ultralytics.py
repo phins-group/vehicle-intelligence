@@ -192,7 +192,17 @@ class UltralyticsVehicleDetector(_UltralyticsAdapter):
 
 class UltralyticsPlateDetector(_UltralyticsAdapter):
     def detect(self, image: NDArray[np.uint8]) -> list[PlateDetection]:
-        result = self._predict(image)
+        return self._detections(self._predict(image), image)
+
+    def detect_batch(self, images: Sequence[NDArray[np.uint8]]) -> list[list[PlateDetection]]:
+        results = self._predict_many(images)
+        if len(results) != len(images):
+            raise InferenceError("Ultralytics result count does not match input count")
+        return [
+            self._detections(result, image) for result, image in zip(results, images, strict=True)
+        ]
+
+    def _detections(self, result: Any, image: NDArray[np.uint8]) -> list[PlateDetection]:
         if result is None:
             return []
         if getattr(result, "obb", None) is not None:

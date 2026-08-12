@@ -707,6 +707,31 @@ class DatasetExportConfig(BaseModel):
         return self
 
 
+class DatasetReviewConfig(BaseModel):
+    enabled: bool = True
+    sources_directory: Path = Path("datasets/source/plate-first-party")
+    workspace_directory: Path = Path("datasets/reviews/detector")
+    promoted_sources_directory: Path = Path("datasets/source/plate-first-party")
+    maximum_sources: int = Field(default=50, ge=1, le=1000)
+    maximum_queue_items_per_source: int = Field(default=100_000, ge=1, le=1_000_000)
+    maximum_image_bytes: int = Field(default=20_000_000, ge=1024, le=100_000_000)
+    maximum_image_pixels: int = Field(default=40_000_000, ge=1, le=200_000_000)
+
+
+class DatasetRegistryConfig(BaseModel):
+    """Local immutable dataset catalog and private Hub synchronization settings."""
+
+    enabled: bool = True
+    sources_directory: Path = Path("datasets/source/plate-first-party")
+    exports_directory: Path = Path("datasets/detectors/plate")
+    workspace_directory: Path = Path("datasets/registry")
+    training_config: Path = Path("configs/model-training.yaml")
+    maximum_sources: int = Field(default=100, ge=1, le=1000)
+    maximum_exports: int = Field(default=1000, ge=1, le=10_000)
+    maximum_jobs: int = Field(default=10_000, ge=1, le=100_000)
+    restricted_private_sync_enabled: bool = False
+
+
 class EventBusConfig(BaseModel):
     backend: Literal["direct", "redis"] = "direct"
 
@@ -1057,6 +1082,8 @@ class Settings(BaseSettings):
     gpu_scheduler: GPUSchedulerConfig = Field(default_factory=GPUSchedulerConfig)
     model_quality: ModelQualityConfig = Field(default_factory=ModelQualityConfig)
     dataset_export: DatasetExportConfig = Field(default_factory=DatasetExportConfig)
+    dataset_review: DatasetReviewConfig = Field(default_factory=DatasetReviewConfig)
+    dataset_registry: DatasetRegistryConfig = Field(default_factory=DatasetRegistryConfig)
     event_bus: EventBusConfig = Field(default_factory=EventBusConfig)
     rule_engine: RuleEngineConfig = Field(default_factory=RuleEngineConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)

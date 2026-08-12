@@ -222,6 +222,13 @@ class PlateDetector(Detector[PlateDetection], Protocol):
 
 
 @runtime_checkable
+class BatchPlateDetector(Protocol):
+    def detect_batch(
+        self, images: Sequence[NDArray[np.uint8]]
+    ) -> list[list[PlateDetection]]: ...
+
+
+@runtime_checkable
 class VehicleTracker(Protocol):
     def update(
         self, detections: Sequence[Detection], image: NDArray[np.uint8]

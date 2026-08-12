@@ -31,6 +31,8 @@ export class AuthService {
   readonly canTestCameras = computed(() => this.hasAnyRole('ADMIN', 'OPERATOR'));
   readonly canManageAlerts = computed(() => this.hasAnyRole('ADMIN', 'OPERATOR'));
   readonly canReviewPlates = computed(() => this.hasAnyRole('ADMIN', 'OPERATOR'));
+  readonly canReviewDatasets = computed(() => this.hasAnyRole('ADMIN', 'OPERATOR'));
+  readonly canManageDatasets = computed(() => this.principal()?.role === 'ADMIN');
 
   async initialize(): Promise<void> {
     this.authState.set('checking');

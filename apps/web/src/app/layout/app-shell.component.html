@@ -31,6 +31,34 @@
           <span>Duyệt OCR</span>
         </a>
       }
+      @if (auth.canReviewDatasets()) {
+        <div class="nav-group">
+          <button
+            class="nav-group-toggle"
+            type="button"
+            [class.active]="datasetSectionActive()"
+            [attr.aria-expanded]="datasetMenuOpen()"
+            aria-controls="datasets-submenu"
+            (click)="toggleDatasetMenu()"
+          >
+            <svg lucideDatabase aria-hidden="true"></svg>
+            <span>Datasets</span>
+            <svg class="nav-chevron" lucideChevronDown aria-hidden="true"></svg>
+          </button>
+          @if (datasetMenuOpen()) {
+            <div id="datasets-submenu" class="nav-submenu" aria-label="Datasets">
+              <a routerLink="/dataset-review" routerLinkActive="active">
+                <svg lucideBoxes aria-hidden="true"></svg>
+                <span>Duyệt Dataset</span>
+              </a>
+              <a routerLink="/datasets" routerLinkActive="active">
+                <svg lucideDatabase aria-hidden="true"></svg>
+                <span>Quản lý Dataset</span>
+              </a>
+            </div>
+          }
+        </div>
+      }
       <a routerLink="/cameras" routerLinkActive="active">
         <svg lucideCamera aria-hidden="true"></svg>
         <span>Camera</span>

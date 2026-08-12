@@ -53,6 +53,8 @@ export interface SystemHealth {
   auditLog: string;
   mediaAccess: 'available' | 'unavailable';
   humanReview: 'available' | 'unavailable';
+  datasetReview: 'available' | 'disabled';
+  datasetRegistry: 'available' | 'disabled';
   modelQuality: 'available' | 'unavailable';
   liveMonitor: 'STARTING' | 'ONLINE' | 'OFFLINE' | 'STOPPED' | 'DISABLED';
   realtime: string;
@@ -419,6 +421,196 @@ export interface DatasetSample {
     errorCode: string | null;
   } | null;
   createdAt: string;
+}
+
+export type DetectorReviewStatus =
+  | 'PENDING_REVIEW'
+  | 'APPROVED'
+  | 'CORRECTED'
+  | 'NEGATIVE'
+  | 'REJECTED';
+export type DetectorReviewAction = 'APPROVE' | 'CORRECT' | 'MARK_NEGATIVE' | 'REJECT';
+
+export interface DetectorReviewBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface DetectorReviewAnnotation {
+  className: 'license_plate';
+  bbox: DetectorReviewBox;
+  attributes: Record<string, unknown>;
+}
+
+export interface DetectorReviewDecision {
+  action: DetectorReviewAction;
+  status: DetectorReviewStatus;
+  annotations: DetectorReviewAnnotation[];
+  revision: number;
+  reviewedBy: {
+    id: string;
+    displayName: string;
+  };
+  reviewedAt: string;
+  note: string | null;
+}
+
+export interface DetectorReviewItem {
+  sourceId: string;
+  reviewId: string;
+  sourceImageSha256: string;
+  sourceFilenameSha256: string;
+  reason: string;
+  status: DetectorReviewStatus;
+  revision: number;
+  suggestions: DetectorReviewAnnotation[];
+  decision: DetectorReviewDecision | null;
+  imageUrl: string;
+  image?: {
+    width: number;
+    height: number;
+  };
+}
+
+export interface DetectorReviewSource {
+  sourceId: string;
+  sourceManifestSha256: string;
+  queueCount: number;
+  statusCounts: Partial<Record<DetectorReviewStatus, number>>;
+  reasonCounts: Record<string, number>;
+  reviewedCount: number;
+  pendingCount: number;
+}
+
+export interface DetectorReviewPage {
+  items: DetectorReviewItem[];
+  nextCursor: string | null;
+}
+
+export interface DetectorReviewRequest {
+  action: DetectorReviewAction;
+  expectedRevision: number;
+  annotations: DetectorReviewBox[];
+  note?: string | null;
+}
+
+export interface DetectorPromotionJob {
+  id: string;
+  sourceId: string;
+  targetSourceId: string;
+  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+  createdAt: string;
+  updatedAt: string;
+  requestedBy: string;
+  reviewedSampleCount: number;
+  pendingSampleCount: number;
+  decisionSnapshotSha256: string;
+  outputDirectory: string | null;
+  manifestSha256: string | null;
+  errorCode: string | null;
+}
+
+export type DatasetHubSyncStatus =
+  | 'QUEUED'
+  | 'PREPARING_EXPORT'
+  | 'UPLOADING'
+  | 'COMPLETED'
+  | 'FAILED';
+
+export interface DatasetHubSyncJob {
+  id: string;
+  sourceId: string;
+  sourceManifestSha256: string;
+  exportId: string;
+  repoId: string;
+  requestedRevision: string;
+  status: DatasetHubSyncStatus;
+  requestedBy: string;
+  restrictedTransferConfirmed: boolean;
+  createdAt: string;
+  updatedAt: string;
+  exportManifestSha256: string | null;
+  hubCommitSha: string | null;
+  hubUrl: string | null;
+  reusedExport: boolean;
+  errorCode: string | null;
+}
+
+export interface DetectorDatasetExport {
+  exportId: string;
+  manifestSha256: string;
+  createdAt: string;
+  sampleCount: number;
+  annotationCount: number;
+  negativeSampleCount: number;
+  splitCounts: Record<string, number>;
+  releaseEligible: boolean;
+  distributionEligible: boolean;
+  sourceManifestSha256: string;
+}
+
+export interface DetectorDatasetVersion {
+  sourceId: string;
+  sourceManifestSha256: string;
+  createdAt: string;
+  sampleCount: number;
+  annotationCount: number;
+  negativeSampleCount: number;
+  reviewQueueCount: number;
+  releaseEligible: boolean;
+  distributionEligible: boolean;
+  privacyClassification: string;
+  parentSourceId: string | null;
+  export: DetectorDatasetExport | null;
+  latestSync: DatasetHubSyncJob | null;
+}
+
+export interface DatasetRegistryResponse {
+  items: DetectorDatasetVersion[];
+  hub: {
+    enabled: boolean;
+    hubEnabled: boolean;
+    repoId: string | null;
+    credentialsConfigured: boolean;
+    restrictedPrivateSyncEnabled: boolean;
+  };
+}
+
+export type DetectorDatasetSampleKind = 'ALL' | 'POSITIVE' | 'NEGATIVE';
+
+export interface DetectorDatasetSampleBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface DetectorDatasetSampleAnnotation {
+  className: string;
+  bbox: DetectorDatasetSampleBox;
+}
+
+export interface DetectorDatasetSamplePreview {
+  sourceId: string;
+  sampleId: string;
+  imageSha256: string;
+  cameraId: string;
+  groupId: string;
+  capturedAt: string;
+  split: string | null;
+  lighting: string;
+  annotationStatus: string | null;
+  negative: boolean;
+  image: { width: number; height: number };
+  annotations: DetectorDatasetSampleAnnotation[];
+  imageUrl: string;
+}
+
+export interface DetectorDatasetSamplePage {
+  items: DetectorDatasetSamplePreview[];
+  nextCursor: string | null;
 }
 
 export interface ModelQualityMetrics {
