@@ -332,6 +332,12 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
 
   async startPromotion(): Promise<void> {
     if (!this.auth.canManageDatasets() || !this.sourceId || this.promoting()) return;
+    if (!this.selectedSource()?.promotionEligible) {
+      this.error.set(
+        'Source này chỉ dành cho kiểm duyệt; cần xác minh quyền dữ liệu trước khi tạo source production.'
+      );
+      return;
+    }
     if ((this.selectedSource()?.reviewedCount ?? 0) === 0) {
       this.error.set('Cần hoàn tất ít nhất một quyết định review trước khi promote.');
       return;

@@ -477,6 +477,12 @@ export interface DetectorReviewItem {
 export interface DetectorReviewSource {
   sourceId: string;
   sourceManifestSha256: string;
+  sourceType: string;
+  collectionMethod: string;
+  rightsStatus: string;
+  promotionEligible: boolean;
+  releaseEligible: boolean;
+  distributionEligible: boolean;
   queueCount: number;
   statusCounts: Partial<Record<DetectorReviewStatus, number>>;
   reasonCounts: Record<string, number>;

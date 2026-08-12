@@ -55,6 +55,7 @@ from vehicle_intelligence.training.dataset import (
 )
 from vehicle_intelligence.training.domain import DetectorRole, DetectorSample, HubUploadResult
 from vehicle_intelligence.training.huggingface import HuggingFacePrivateRegistry
+from vehicle_intelligence.training.video_review_source import VIDEO_REVIEW_SOURCE_TYPE
 
 logger = logging.getLogger(__name__)
 
@@ -505,6 +506,21 @@ class FileDatasetRegistryRepository:
                 continue
             raw, manifest = _read_manifest(manifest_path, "dataset source")
             source_id = manifest.get("sourceId")
+            if manifest.get("type") == VIDEO_REVIEW_SOURCE_TYPE:
+                if (
+                    manifest.get("schemaVersion") != 1
+                    or manifest.get("role") != "plate"
+                    or not isinstance(source_id, str)
+                    or not _IDENTIFIER.fullmatch(source_id)
+                    or root.name != source_id
+                    or manifest.get("releaseEligible") is not False
+                    or manifest.get("distributionEligible") is not False
+                    or manifest.get("promotionEligible") is not False
+                ):
+                    raise DatasetRegistryStorageError(
+                        "review-only dataset source manifest is invalid"
+                    )
+                continue
             if (
                 manifest.get("schemaVersion") != 1
                 or manifest.get("type") != "FIRST_PARTY_DETECTOR_SOURCE"

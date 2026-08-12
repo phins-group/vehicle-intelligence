@@ -42,6 +42,7 @@ from vehicle_intelligence.exceptions import (
     DatasetReviewValidationError,
     InvalidCursorError,
 )
+from vehicle_intelligence.training.video_review_source import VIDEO_REVIEW_SOURCE_TYPE
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -56,6 +57,12 @@ class _SourceState:
     manifest_sha256: str
     queue_sha256: str
     items: dict[str, DetectorReviewItem]
+    source_type: str
+    collection_method: str
+    rights_status: str
+    promotion_eligible: bool
+    release_eligible: bool
+    distribution_eligible: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +189,10 @@ class FileDetectorReviewRepository:
         requested_by: str,
     ) -> DetectorPromotionJob:
         source = self._source(source_id)
+        if not source.promotion_eligible:
+            raise DatasetReviewValidationError(
+                "detector review source is not eligible for promotion"
+            )
         if not _IDENTIFIER.fullmatch(target_source_id):
             raise DatasetReviewValidationError("target source id is not path-safe")
         if target_source_id == source_id:
@@ -349,14 +360,23 @@ class FileDetectorReviewRepository:
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise DatasetReviewStorageError("detector source manifest is invalid") from exc
         source_id = manifest.get("sourceId") if isinstance(manifest, dict) else None
+        source_type = manifest.get("type") if isinstance(manifest, dict) else None
         if (
             not isinstance(source_id, str)
             or not _IDENTIFIER.fullmatch(source_id)
-            or manifest.get("type") != "FIRST_PARTY_DETECTOR_SOURCE"
+            or source_type not in {"FIRST_PARTY_DETECTOR_SOURCE", VIDEO_REVIEW_SOURCE_TYPE}
             or manifest.get("role") != "plate"
             or not isinstance(manifest.get("files"), list)
         ):
             raise DatasetReviewStorageError("detector source is not a reviewable plate source")
+        if source_type == VIDEO_REVIEW_SOURCE_TYPE and (
+            manifest.get("licenseStatus") != "REVIEW_REQUIRED"
+            or manifest.get("acceptanceEligible") is not False
+            or manifest.get("releaseEligible") is not False
+            or manifest.get("distributionEligible") is not False
+            or manifest.get("promotionEligible") is not False
+        ):
+            raise DatasetReviewStorageError("video detector review source eligibility is invalid")
         file_entries = {
             entry.get("path"): entry
             for entry in manifest["files"]
@@ -387,6 +407,18 @@ class FileDetectorReviewRepository:
             _sha256(manifest_raw),
             queue_sha,
             items,
+            str(source_type),
+            str(manifest.get("collectionMethod", "UNKNOWN")),
+            str(manifest.get("licenseStatus", "UNKNOWN")),
+            (
+                manifest.get(
+                    "promotionEligible",
+                    manifest.get("releaseEligible") is True,
+                )
+                is True
+            ),
+            manifest.get("releaseEligible") is True,
+            manifest.get("distributionEligible") is True,
         )
 
     def _parse_queue_item(
@@ -449,6 +481,12 @@ class FileDetectorReviewRepository:
         return DetectorReviewSourceSummary(
             source_id=source.source_id,
             source_manifest_sha256=source.manifest_sha256,
+            source_type=source.source_type,
+            collection_method=source.collection_method,
+            rights_status=source.rights_status,
+            promotion_eligible=source.promotion_eligible,
+            release_eligible=source.release_eligible,
+            distribution_eligible=source.distribution_eligible,
             queue_count=len(items),
             status_counts=dict(sorted(statuses.items())),
             reason_counts=dict(sorted(reasons.items())),

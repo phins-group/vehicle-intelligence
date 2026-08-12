@@ -4,6 +4,7 @@ import {
   boxFromPoints,
   boxesMatchSuggestions,
   clampBox,
+  detectorReviewReason,
   editableBoxes,
   pointerToImage
 } from './dataset-review-utils';
@@ -41,5 +42,11 @@ describe('dataset review geometry', () => {
     const suggestion = [{ className: 'license_plate' as const, bbox: { x: 1, y: 2, width: 3, height: 4 }, attributes: {} }];
     expect(boxesMatchSuggestions([{ x: 1, y: 2, width: 3, height: 4 }], suggestion)).toBe(true);
     expect(boxesMatchSuggestions([{ x: 1, y: 2, width: 4, height: 4 }], suggestion)).toBe(false);
+  });
+
+  it('labels video extraction suggestions as human-review work', () => {
+    expect(detectorReviewReason('VIDEO_MODEL_SUGGESTION_REQUIRES_HUMAN_REVIEW')).toBe(
+      'Video mới — model đề xuất, cần duyệt'
+    );
   });
 });

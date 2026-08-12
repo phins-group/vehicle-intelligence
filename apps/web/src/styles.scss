@@ -3632,6 +3632,28 @@ textarea {
   padding: 19px;
 }
 
+.dataset-review-source-guard {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.dataset-review-source-guard > div {
+  display: grid;
+  gap: 3px;
+}
+
+.dataset-review-source-guard span,
+.dataset-review-source-guard small {
+  color: inherit;
+}
+
+.dataset-review-source-guard small {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
 .detector-promotion-panel p {
   margin-bottom: 0;
   color: var(--slate-600);

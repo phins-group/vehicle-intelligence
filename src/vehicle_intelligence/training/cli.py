@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import json
 import os
@@ -11,11 +12,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from vehicle_intelligence.application.dataset_review import DetectorReviewQuery
 from vehicle_intelligence.config import DetectorConfig, VehicleDetectorConfig, load_settings
+from vehicle_intelligence.domain.dataset_review import DetectorReviewDecision
 from vehicle_intelligence.exceptions import (
     ModelEvaluationError,
     ModelRegistryError,
     VehicleIntelligenceError,
+)
+from vehicle_intelligence.infrastructure.training.dataset_review_files import (
+    FileDetectorReviewRepository,
 )
 from vehicle_intelligence.infrastructure.vision.factory import (
     create_plate_detector,
@@ -68,6 +74,13 @@ from vehicle_intelligence.training.roboflow import (
 from vehicle_intelligence.training.video_extraction import (
     VideoExtractionOptions,
     VideoTrainingImageExtractor,
+)
+from vehicle_intelligence.training.video_review_promotion import (
+    AttestedVideoReviewPromotionBuilder,
+)
+from vehicle_intelligence.training.video_review_source import (
+    VideoPlateReviewSourceBuilder,
+    verify_video_plate_review_source,
 )
 
 _DEFAULT_CONFIG = Path("configs/model-training.yaml")
@@ -137,6 +150,9 @@ def build_parser() -> argparse.ArgumentParser:
     verify_first_party = commands.add_parser("verify-first-party-source")
     verify_first_party.add_argument("source", type=Path)
 
+    verify_video_review = commands.add_parser("verify-video-review-source")
+    verify_video_review.add_argument("source", type=Path)
+
     extract_videos = commands.add_parser(
         "extract-video-samples",
         help="Extract reviewable vehicle and plate suggestions from local videos",
@@ -167,6 +183,47 @@ def build_parser() -> argparse.ArgumentParser:
     extract_videos.add_argument("--batch-size", type=int, default=8)
     extract_videos.add_argument("--maximum-vehicles-per-frame", type=int, default=24)
     extract_videos.add_argument("--maximum-plate-contexts-per-frame", type=int, default=12)
+
+    stage_video_reviews = commands.add_parser(
+        "stage-video-plate-review-source",
+        help="Package extracted plate suggestions for the Dataset Review UI",
+    )
+    stage_video_reviews.add_argument("input", type=Path)
+    stage_video_reviews.add_argument(
+        "--source-id",
+        default="phins-video-plate-review-v1",
+    )
+    stage_video_reviews.add_argument("--output", type=Path)
+
+    promote_video_reviews = commands.add_parser(
+        "promote-attested-video-review",
+        help="Create a production source from a fully reviewed first-party video source",
+    )
+    promote_video_reviews.add_argument("source_id")
+    promote_video_reviews.add_argument(
+        "--base-source",
+        type=Path,
+        default=Path(
+            "datasets/source/plate-first-party/phins-vn-plate-production-source-v2"
+        ),
+    )
+    promote_video_reviews.add_argument(
+        "--target-source-id",
+        default="phins-vn-plate-production-source-v3",
+    )
+    promote_video_reviews.add_argument("--output", type=Path)
+    promote_video_reviews.add_argument(
+        "--runtime-config",
+        type=Path,
+        default=Path("configs/default.yaml"),
+    )
+    promote_video_reviews.add_argument("--rights-holder")
+    promote_video_reviews.add_argument("--attested-by")
+    promote_video_reviews.add_argument(
+        "--confirm-first-party-rights",
+        action="store_true",
+        help="Explicitly attest that the video was first-party collected",
+    )
 
     suggest_reviews = commands.add_parser(
         "suggest-review-labels",
@@ -280,6 +337,10 @@ def run(args: argparse.Namespace) -> int:
         manifest, digest = verify_first_party_detector_source(args.source)
         _print({"manifestSha256": digest, "manifest": manifest})
         return 0
+    if args.command_name == "verify-video-review-source":
+        manifest, digest = verify_video_plate_review_source(args.source)
+        _print({"manifestSha256": digest, "manifest": manifest})
+        return 0
     if args.command_name == "verify-corpus":
         manifest, digest = verify_plate_corpus(args.corpus)
         _print({"manifestSha256": digest, "manifest": manifest})
@@ -325,6 +386,74 @@ def run(args: argparse.Namespace) -> int:
         return 0
     if args.command_name == "extract-video-samples":
         return _extract_video_samples(args, settings)
+    if args.command_name == "stage-video-plate-review-source":
+        output = args.output or (
+            Path("datasets/source/plate-first-party") / args.source_id
+        )
+        result = VideoPlateReviewSourceBuilder(
+            extraction_directory=args.input,
+            output_directory=output,
+            source_id=args.source_id,
+            owner_namespace=settings.corpus.owner_namespace,
+            founder_id=settings.corpus.founder_id,
+        ).build()
+        _print(
+            {
+                "sourceId": result.source_id,
+                "directory": str(result.directory),
+                "manifestSha256": result.manifest_sha256,
+                "sourceRecordCount": result.source_record_count,
+                "reviewQueueCount": result.review_queue_count,
+                "suggestionCount": result.suggestion_count,
+                "exactDuplicateImagesMerged": result.exact_duplicate_images_merged,
+                "promotionEligible": False,
+                "releaseEligible": False,
+                "reused": result.reused,
+            }
+        )
+        return 0
+    if args.command_name == "promote-attested-video-review":
+        if not args.confirm_first_party_rights:
+            raise ModelRegistryError(
+                "attested video promotion requires --confirm-first-party-rights"
+            )
+        runtime_settings = load_settings(args.runtime_config)
+        review_source, decisions = asyncio.run(
+            _completed_review_decisions(runtime_settings, args.source_id)
+        )
+        output = args.output or (
+            runtime_settings.dataset_review.promoted_sources_directory
+            / args.target_source_id
+        )
+        rights_holder = args.rights_holder or settings.corpus.founder_id
+        attested_by = args.attested_by or settings.corpus.founder_id
+        result = AttestedVideoReviewPromotionBuilder(
+            base_source_directory=args.base_source,
+            review_source_directory=review_source,
+            output_directory=output,
+            target_source_id=args.target_source_id,
+            decisions=decisions,
+            rights_holder=rights_holder,
+            attested_by=attested_by,
+        ).build()
+        _print(
+            {
+                "sourceId": result.source_id,
+                "directory": str(result.directory),
+                "manifestSha256": result.manifest_sha256,
+                "sampleCount": result.sample_count,
+                "annotationCount": result.annotation_count,
+                "negativeSampleCount": result.negative_sample_count,
+                "promotedReviewCount": result.promoted_review_count,
+                "promotedPositiveCount": result.promoted_positive_count,
+                "promotedNegativeCount": result.promoted_negative_count,
+                "rejectedCount": result.rejected_count,
+                "releaseEligible": True,
+                "distributionEligible": False,
+                "reused": result.reused,
+            }
+        )
+        return 0
     if args.command_name == "suggest-review-labels":
         return _suggest_review_labels(args)
     if args.command_name == "ingest-roboflow-plate-archives":
@@ -584,6 +713,50 @@ def _extract_video_samples(args: argparse.Namespace, training_settings: Any) -> 
         }
     )
     return 0 if not result.failed_videos else 3
+
+
+async def _completed_review_decisions(
+    runtime_settings: Any,
+    source_id: str,
+) -> tuple[Path, dict[str, DetectorReviewDecision]]:
+    config = runtime_settings.dataset_review
+    repository = FileDetectorReviewRepository(config)
+    await repository.initialize()
+    try:
+        summaries = await repository.list_sources()
+        summary = next((item for item in summaries if item.source_id == source_id), None)
+        if summary is None:
+            raise ModelRegistryError(f"video review source not found: {source_id}")
+        if summary.pending_count or summary.reviewed_count != summary.queue_count:
+            raise ModelRegistryError(
+                "video review source must have a terminal decision for every queue item"
+            )
+        decisions: dict[str, DetectorReviewDecision] = {}
+        cursor: str | None = None
+        while True:
+            page = await repository.list_items(
+                DetectorReviewQuery(
+                    source_id=source_id,
+                    limit=200,
+                    cursor=cursor,
+                )
+            )
+            for item in page.items:
+                history = await repository.decision_history(source_id, item.review_id)
+                if not history:
+                    raise ModelRegistryError(
+                        f"review decision history is missing: {item.review_id}"
+                    )
+                decisions[item.review_id] = history[-1]
+            cursor = page.next_cursor
+            if cursor is None:
+                break
+        if len(decisions) != summary.queue_count:
+            raise ModelRegistryError("video review decision snapshot is incomplete")
+        source = (config.sources_directory / source_id).expanduser().resolve()
+        return source, decisions
+    finally:
+        await repository.close()
 
 
 def _suggest_review_labels(args: argparse.Namespace) -> int:

@@ -433,7 +433,11 @@ async def test_detector_review_http_contract_serves_authenticated_evidence_and_c
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         sources = await client.get("/api/detector-review/sources")
         assert sources.status_code == 200
-        assert sources.json()["items"][0]["pendingCount"] == 2
+        source_summary = sources.json()["items"][0]
+        assert source_summary["pendingCount"] == 2
+        assert source_summary["sourceType"] == "FIRST_PARTY_DETECTOR_SOURCE"
+        assert source_summary["promotionEligible"] is True
+        assert source_summary["rightsStatus"] == "PROPRIETARY_FIRST_PARTY_USER_CONFIRMED"
 
         queue = await client.get(
             "/api/detector-review/items",

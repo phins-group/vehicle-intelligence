@@ -61,6 +61,12 @@ def build_dataset_review_router(
                     {
                         "sourceId": item.source_id,
                         "sourceManifestSha256": item.source_manifest_sha256,
+                        "sourceType": item.source_type,
+                        "collectionMethod": item.collection_method,
+                        "rightsStatus": item.rights_status,
+                        "promotionEligible": item.promotion_eligible,
+                        "releaseEligible": item.release_eligible,
+                        "distributionEligible": item.distribution_eligible,
                         "queueCount": item.queue_count,
                         "statusCounts": item.status_counts,
                         "reasonCounts": item.reason_counts,

@@ -137,6 +137,40 @@ async def test_registry_builds_verified_export_and_idempotently_syncs_private_so
 
 
 @pytest.mark.asyncio
+async def test_registry_ignores_review_only_video_sources(tmp_path: Path) -> None:
+    _ready_source(tmp_path)
+    review_id = "phins-video-review-only-v1"
+    review = tmp_path / "sources" / review_id
+    review.mkdir()
+    (review / "source-manifest.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "type": "VIDEO_DETECTOR_REVIEW_SOURCE",
+                "role": "plate",
+                "sourceId": review_id,
+                "releaseEligible": False,
+                "distributionEligible": False,
+                "promotionEligible": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    repository = FileDatasetRegistryRepository(
+        _registry_config(tmp_path),
+        dataset_config=_dataset_config(tmp_path, "phins-first-party-ready-v2"),
+        hub_repo_id="phins-group/plate-dataset",
+        hub_enabled=True,
+        uploader=_FakeUploader(),
+    )
+    await repository.initialize()
+    assert [item.source_id for item in await repository.list_datasets()] == [
+        "phins-first-party-ready-v2"
+    ]
+    await repository.close()
+
+
+@pytest.mark.asyncio
 async def test_dataset_registry_http_contract_requires_confirmation_and_tracks_job(
     tmp_path: Path,
 ) -> None:

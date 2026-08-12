@@ -85,6 +85,7 @@ export function detectorReviewReason(reason: string): string {
   return (
     {
       MODEL_SUGGESTION_REQUIRES_HUMAN_REVIEW: 'Model đề xuất — cần xác nhận',
+      VIDEO_MODEL_SUGGESTION_REQUIRES_HUMAN_REVIEW: 'Video mới — model đề xuất, cần duyệt',
       AUTO_LABEL_CONFLICT_REQUIRES_HUMAN_REVIEW: 'Nhãn model xung đột',
       MISSING_VERIFIED_ANNOTATION: 'Chưa có nhãn được xác minh'
     }[reason] ?? reason

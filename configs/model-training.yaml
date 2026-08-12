@@ -67,7 +67,7 @@ vehicle:
 plate:
   dataset:
     role: plate
-    source_directory: datasets/source/plate-first-party/phins-vn-plate-production-source-v1
+    source_directory: datasets/source/plate-first-party/phins-vn-plate-production-source-v3
     annotations_file: annotations.jsonl
     output_directory: datasets/detectors/plate
     classes: [license_plate]
@@ -75,7 +75,7 @@ plate:
       train: 0.70
       validation: 0.15
       test: 0.15
-      seed: plate-first-party-production-split-v1
+      seed: plate-first-party-production-split-v3
       require_non_empty: true
     maximum_samples: 100000
     maximum_annotation_line_bytes: 1000000

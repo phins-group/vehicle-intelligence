@@ -95,6 +95,12 @@ class DetectorReviewPage:
 class DetectorReviewSourceSummary:
     source_id: str
     source_manifest_sha256: str
+    source_type: str
+    collection_method: str
+    rights_status: str
+    promotion_eligible: bool
+    release_eligible: bool
+    distribution_eligible: bool
     queue_count: int
     status_counts: dict[str, int]
     reason_counts: dict[str, int]

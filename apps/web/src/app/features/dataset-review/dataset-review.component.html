@@ -22,7 +22,7 @@
         <span>Source dataset</span>
         <select [(ngModel)]="sourceId" (ngModelChange)="sourceChanged()" [disabled]="loading()">
           @for (source of sources(); track source.sourceId) {
-            <option [value]="source.sourceId">{{ source.sourceId }}</option>
+            <option [value]="source.sourceId">{{ source.sourceId }}{{ source.promotionEligible ? '' : ' · chỉ duyệt' }}</option>
           }
         </select>
       </label>
@@ -62,6 +62,15 @@
       <div class="corrected"><span>Đã sửa</span><strong>{{ count('CORRECTED') }}</strong></div>
       <div class="negative"><span>Negative / Reject</span><strong>{{ count('NEGATIVE') + count('REJECTED') }}</strong></div>
     </section>
+    @if (!source.promotionEligible) {
+      <div class="notice warning dataset-review-source-guard" role="status">
+        <div>
+          <strong>Nguồn chỉ dành cho kiểm duyệt</strong>
+          <span>Bạn vẫn có thể xác nhận, sửa bbox hoặc loại ảnh. Promote đang khóa vì quyền dữ liệu là {{ source.rightsStatus }}; các quyết định review vẫn được lưu revision và không đi vào dataset production.</span>
+        </div>
+        <small>{{ source.collectionMethod }} · phát hành {{ source.releaseEligible ? 'được phép' : 'đang khóa' }}</small>
+      </div>
+    }
   }
 
   <section class="dataset-review-layout">
@@ -208,17 +217,19 @@
   </section>
 
   @if (auth.canManageDatasets() && selectedSource(); as source) {
-    <section class="panel detector-promotion-panel">
-      <div>
-        <p class="eyebrow">ADMIN · IMMUTABLE PROMOTION</p>
-        <h2>Tạo source version mới</h2>
-        <p>Đóng gói {{ source.reviewedCount }} quyết định đã duyệt vào source mới. {{ source.pendingCount }} mẫu pending tiếp tục nằm trong queue; source hiện tại không bị sửa.</p>
-      </div>
-      <label><span>Target source ID</span><input [(ngModel)]="targetSourceId" maxlength="128" spellcheck="false"></label>
-      <button class="button primary" type="button" (click)="startPromotion()" [disabled]="promoting() || !targetSourceId.trim() || source.reviewedCount === 0"><svg lucideDatabase aria-hidden="true"></svg>{{ promoting() ? 'Đang đóng gói…' : 'Promote source' }}</button>
-      @if (promotionJob(); as job) {
-        <div class="promotion-status" [attr.data-status]="job.status"><strong>{{ job.status }}</strong><span>{{ job.id }}</span>@if (job.manifestSha256) { <small class="mono">manifest {{ job.manifestSha256 }}</small> }@if (job.errorCode) { <small>Lỗi: {{ job.errorCode }}</small> }</div>
-      }
-    </section>
+    @if (source.promotionEligible) {
+      <section class="panel detector-promotion-panel">
+        <div>
+          <p class="eyebrow">ADMIN · IMMUTABLE PROMOTION</p>
+          <h2>Tạo source version mới</h2>
+          <p>Đóng gói {{ source.reviewedCount }} quyết định đã duyệt vào source mới. {{ source.pendingCount }} mẫu pending tiếp tục nằm trong queue; source hiện tại không bị sửa.</p>
+        </div>
+        <label><span>Target source ID</span><input [(ngModel)]="targetSourceId" maxlength="128" spellcheck="false"></label>
+        <button class="button primary" type="button" (click)="startPromotion()" [disabled]="promoting() || !targetSourceId.trim() || source.reviewedCount === 0"><svg lucideDatabase aria-hidden="true"></svg>{{ promoting() ? 'Đang đóng gói…' : 'Promote source' }}</button>
+        @if (promotionJob(); as job) {
+          <div class="promotion-status" [attr.data-status]="job.status"><strong>{{ job.status }}</strong><span>{{ job.id }}</span>@if (job.manifestSha256) { <small class="mono">manifest {{ job.manifestSha256 }}</small> }@if (job.errorCode) { <small>Lỗi: {{ job.errorCode }}</small> }</div>
+        }
+      </section>
+    }
   }
 }
