@@ -2,6 +2,19 @@
 
 from vehicle_intelligence.domain.audit import AuditActor, AuditLog
 from vehicle_intelligence.domain.camera import Camera, CameraHealth, SecretUri
+from vehicle_intelligence.domain.dataset_registry import (
+    DatasetHubSyncJob,
+    DatasetHubSyncStatus,
+    DatasetRegistryCapabilities,
+    DetectorDatasetExport,
+    DetectorDatasetSampleAnnotation,
+    DetectorDatasetSampleBox,
+    DetectorDatasetSampleImage,
+    DetectorDatasetSampleKind,
+    DetectorDatasetSamplePage,
+    DetectorDatasetSamplePreview,
+    DetectorDatasetVersion,
+)
 from vehicle_intelligence.domain.detection import (
     Detection,
     ModelMetadata,
@@ -65,6 +78,16 @@ from vehicle_intelligence.domain.live import (
     LiveFramePacket,
     LivePlateOverlay,
     LiveVehicleOverlay,
+)
+from vehicle_intelligence.domain.model_training import (
+    ModelTrainingCapabilities,
+    ModelTrainingDefaults,
+    ModelTrainingLog,
+    ModelTrainingParameters,
+    ModelTrainingRun,
+    ModelTrainingRunStatus,
+    RemoteTrainingJob,
+    RemoteTrainingSubmission,
 )
 from vehicle_intelligence.domain.plate import (
     CharacterCorrection,
@@ -136,7 +159,18 @@ __all__ = [
     "DatasetSampleType",
     "DailyQualityPoint",
     "DatasetFeedbackMetrics",
+    "DatasetHubSyncJob",
+    "DatasetHubSyncStatus",
+    "DatasetRegistryCapabilities",
+    "DetectorDatasetSampleAnnotation",
+    "DetectorDatasetSampleBox",
+    "DetectorDatasetSampleImage",
+    "DetectorDatasetSampleKind",
+    "DetectorDatasetSamplePage",
+    "DetectorDatasetSamplePreview",
     "Detection",
+    "DetectorDatasetExport",
+    "DetectorDatasetVersion",
     "Direction",
     "EventStatus",
     "EventType",
@@ -160,6 +194,12 @@ __all__ = [
     "MediaReferences",
     "MediaRetentionClaim",
     "ModelMetadata",
+    "ModelTrainingCapabilities",
+    "ModelTrainingDefaults",
+    "ModelTrainingLog",
+    "ModelTrainingParameters",
+    "ModelTrainingRun",
+    "ModelTrainingRunStatus",
     "ModelQualityReport",
     "ModelQualitySlice",
     "OCRCharacter",
@@ -186,6 +226,8 @@ __all__ = [
     "ReIDScore",
     "ReIDSignals",
     "ReIDVerdict",
+    "RemoteTrainingJob",
+    "RemoteTrainingSubmission",
     "SecretUri",
     "TrackedDetection",
     "TrackStatus",

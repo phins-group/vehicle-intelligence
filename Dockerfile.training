@@ -1,0 +1,102 @@
+# syntax=docker/dockerfile:1.7
+
+# Hugging Face Jobs execute this image on linux/amd64 NVIDIA workers. External
+# sources are pinned so an image digest describes one reproducible environment.
+ARG CUDA_BASE_IMAGE=nvidia/cuda:12.0.1-cudnn8-runtime-ubuntu22.04@sha256:b4df7e42942ecd84f8ee5d5ad346f42b66fb31d4c6c920b40a257bdb311db074
+FROM ${CUDA_BASE_IMAGE}
+
+ARG PYTHON_VERSION=3.12.12
+ARG PYTHON_SHA256=487c908ddf4097a1b9ba859f25fe46d22ccaabfb335880faac305ac62bffb79b
+ARG PADDLEDETECTION_REVISION=b25522a0f4bde8c80603f3ba5e3472059972e3b5
+ARG PADDLE_PRETRAINED_URL=https://paddledet.bj.bcebos.com/models/pretrained/LCNet_x1_5_pretrained.pdparams
+ARG PADDLE_PRETRAINED_SHA256=ffa1d4d06a3f99be1b2eb75b661934edd715e69797218aef973679d3ffebb732
+
+LABEL org.opencontainers.image.title="PHINS Vehicle Intelligence PicoDet Trainer" \
+      org.opencontainers.image.description="Reproducible PaddleDetection/PicoDet runtime for Hugging Face Jobs" \
+      org.opencontainers.image.vendor="PHINS" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.source="https://github.com/phins-group/vehicle-intelligence" \
+      org.opencontainers.image.base.name="nvidia/cuda:12.0.1-cudnn8-runtime-ubuntu22.04" \
+      org.opencontainers.image.paddledetection.revision="${PADDLEDETECTION_REVISION}"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PADDLE_TRAINERS_NUM=1 \
+    FLAGS_call_stack_level=2 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    PATH=/opt/python/bin:${PATH}
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends \
+       build-essential ca-certificates curl git \
+       libbz2-1.0 libbz2-dev libffi8 libffi-dev libgl1 libglib2.0-0 \
+       liblzma5 liblzma-dev libncursesw6 libncursesw5-dev \
+       libreadline8 libreadline-dev libsqlite3-0 libsqlite3-dev libssl3 libssl-dev \
+       tk-dev uuid-dev xz-utils zlib1g-dev \
+    && curl --fail --location --retry 5 \
+       "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz" \
+       --output /tmp/python.tgz \
+    && echo "${PYTHON_SHA256}  /tmp/python.tgz" | sha256sum --check --strict \
+    && mkdir /tmp/python-source \
+    && tar --extract --gzip --file /tmp/python.tgz \
+       --directory /tmp/python-source --strip-components=1 \
+    && cd /tmp/python-source \
+    && ./configure --prefix=/opt/python --with-ensurepip=install \
+    && make --jobs="$(nproc)" \
+    && make install \
+    && /opt/python/bin/python3.12 -m pip install --upgrade \
+       pip==25.2 setuptools==80.9.0 wheel==0.45.1 \
+    && ln -s /opt/python/bin/python3.12 /opt/python/bin/python \
+    && ln -s /opt/python/bin/pip3.12 /opt/python/bin/pip \
+    && apt-get purge --yes --auto-remove \
+       build-essential libbz2-dev libffi-dev liblzma-dev libncursesw5-dev \
+       libreadline-dev libsqlite3-dev libssl-dev tk-dev uuid-dev xz-utils zlib1g-dev \
+    && apt-get clean \
+    && find /var/lib/apt/lists /tmp -mindepth 1 -delete
+
+WORKDIR /workspace
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+COPY configs/model-training.hf.yaml ./configs/model-training.hf.yaml
+
+RUN python -m pip install '.[training]' \
+    && python -m pip install \
+       --index-url https://www.paddlepaddle.org.cn/packages/stable/cu120/ \
+       paddlepaddle-gpu==2.6.2.post120 \
+    && git clone --filter=blob:none --no-checkout \
+       https://github.com/PaddlePaddle/PaddleDetection.git \
+       /workspace/third_party/PaddleDetection \
+    && git -C /workspace/third_party/PaddleDetection fetch --depth 1 origin \
+       "${PADDLEDETECTION_REVISION}" \
+    && git -C /workspace/third_party/PaddleDetection checkout --detach FETCH_HEAD \
+    && test "$(git -C /workspace/third_party/PaddleDetection rev-parse HEAD)" \
+       = "${PADDLEDETECTION_REVISION}" \
+    && python -m pip install \
+       'numpy==1.26.4' 'opencv-python-headless==4.10.0.84' \
+       'tqdm==4.67.1' 'typeguard==2.13.3' 'visualdl==2.5.3' \
+       'PyYAML==6.0.3' 'shapely==2.1.2' 'scipy==1.17.1' \
+       'terminaltables==3.1.10' 'Cython==3.2.4' 'pycocotools==2.0.8' \
+       'Pillow==12.1.1' 'packaging==26.0' 'scikit-learn==1.8.0' \
+       'paddle2onnx==1.3.1' \
+    && python -m pip install --no-deps /workspace/third_party/PaddleDetection \
+    && mkdir -p /workspace/assets/pretrained /output/model-training \
+    && curl --fail --location --retry 5 "${PADDLE_PRETRAINED_URL}" \
+       --output /workspace/assets/pretrained/LCNet_x1_5_pretrained.pdparams \
+    && echo "${PADDLE_PRETRAINED_SHA256}  /workspace/assets/pretrained/LCNet_x1_5_pretrained.pdparams" \
+       | sha256sum --check --strict \
+    && python -m compileall -q /workspace/src \
+    && python -m pip check \
+    && test -f /workspace/third_party/PaddleDetection/tools/train.py \
+    && test -f /workspace/third_party/PaddleDetection/configs/picodet/picodet_m_416_coco_lcnet.yml
+
+ENV PHINS_TRAINING_IMAGE=1 \
+    PHINS_PADDLEDETECTION_REVISION=${PADDLEDETECTION_REVISION}
+
+EXPOSE 7860
+ENTRYPOINT []
+CMD ["python", "-m", "vehicle_intelligence.training.image_health"]

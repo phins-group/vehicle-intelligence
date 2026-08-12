@@ -20,6 +20,8 @@ class Permission(StrEnum):
     READ_AUDIT_LOGS = "READ_AUDIT_LOGS"
     MANAGE_TOPOLOGY = "MANAGE_TOPOLOGY"
     REVIEW_IDENTITIES = "REVIEW_IDENTITIES"
+    REVIEW_DATASETS = "REVIEW_DATASETS"
+    MANAGE_DATASETS = "MANAGE_DATASETS"
 
 
 _ROLE_PERMISSIONS: dict[UserRole, frozenset[Permission]] = {
@@ -31,6 +33,7 @@ _ROLE_PERMISSIONS: dict[UserRole, frozenset[Permission]] = {
             Permission.MANAGE_ALERTS,
             Permission.REVIEW_PLATES,
             Permission.REVIEW_IDENTITIES,
+            Permission.REVIEW_DATASETS,
         }
     ),
     UserRole.ADMIN: frozenset(Permission),

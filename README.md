@@ -115,6 +115,35 @@ not ship an unverified checkpoint or fabricate recognition output. See
 [model requirements and the optional pinned local-demo checkpoint](models/README.md#local-demo-checkpoint)
 for download, checksum, compatibility, and Vietnamese evaluation limitations.
 
+## Offline vehicle and plate model training
+
+Vehicle and plate model training is isolated from the online camera runtime.
+The repository now provides group-safe immutable COCO dataset builds,
+provider-neutral detector evaluation, PaddleDetection/PicoDet subprocess
+orchestration, ONNX candidate packaging, and optional private Hugging Face
+dataset/model/Job adapters:
+
+```bash
+python -m pip install -e '.[dev,training,optimization]'
+python run_model_training.py --config configs/model-training.yaml --help
+```
+
+No model binary or claimed accuracy is generated without real labeled data and
+a completed training/evaluation run. See the complete source annotation
+contract and workflow in [Detector training](docs/DETECTOR_TRAINING.md).
+The authenticated operator workflow is available at `/dataset-review`: it
+supports visual bbox review, immutable decision revisions, and ADMIN-only
+promotion into a new source version without modifying the original dataset.
+After promotion, `/datasets` catalogs immutable source/export lineage and lets
+ADMIN build, verify, and synchronize the selected export to the configured
+private Hugging Face dataset repository. Restricted plate data requires both a
+server-side policy opt-in and explicit per-request confirmation; the Hub token
+never enters browser state. `/model-training` then pins that reviewed source,
+COCO manifest and private Hub commit into an auditable GPU training run, with
+preflight blockers, status/log polling and ADMIN-only cancellation. It does not
+mark a checkpoint production-ready before ONNX evaluation and release gates. See
+[Detector training](docs/DETECTOR_TRAINING.md#build-model-operator-screen).
+
 On Linux or Apple Silicon, select the current PaddlePaddle CPU/GPU command from
 the [official installation guide](https://www.paddlepaddle.org.cn/documentation/docs/en/install/index_en.html)
 instead of the Intel macOS compatibility command above. Model downloads can be
@@ -484,6 +513,7 @@ and drive `/vehicles/:vehicleId` in the operator console. See
 - [Fair scheduling and edge deployment](docs/EDGE_DEPLOYMENT.md)
 - [Phase 4 edge scheduler acceptance](docs/PHASE4_EDGE_SCHEDULER_ACCEPTANCE.md)
 - [Model quality and retraining feedback](docs/MODEL_QUALITY_AND_RETRAINING.md)
+- [PHINS detector dataset governance](docs/PHINS_DATASET_GOVERNANCE.md)
 - [Production readiness gate](docs/PRODUCTION_READINESS.md)
 - [Final Phase 4/platform acceptance](docs/PHASE4_FINAL_ACCEPTANCE.md)
 - [Model requirements](models/README.md)

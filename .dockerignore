@@ -10,3 +10,4 @@ models/
 tests/
 docs/
 scripts/
+!scripts/build_training_image.sh

@@ -155,3 +155,79 @@ class PlateReviewValidationError(VehicleIntelligenceError):
 
 class DatasetExportError(VehicleIntelligenceError):
     """A dataset export could not be produced or verified safely."""
+
+
+class DetectorDatasetError(VehicleIntelligenceError):
+    """A vehicle or plate detector dataset is invalid or cannot be built."""
+
+
+class DatasetReviewNotFoundError(VehicleIntelligenceError):
+    """A detector review source, item, or promotion job does not exist."""
+
+
+class DatasetReviewConflictError(VehicleIntelligenceError):
+    """A detector review write conflicts with a newer immutable revision."""
+
+
+class DatasetReviewValidationError(VehicleIntelligenceError):
+    """A detector review decision or promotion request is invalid."""
+
+
+class DatasetReviewStorageError(VehicleIntelligenceError):
+    """Detector review evidence could not be read or persisted safely."""
+
+
+class DatasetRegistryNotFoundError(VehicleIntelligenceError):
+    """An immutable dataset source or Hub synchronization job does not exist."""
+
+
+class DatasetRegistryConflictError(VehicleIntelligenceError):
+    """A dataset export or synchronization conflicts with existing immutable state."""
+
+
+class DatasetRegistryValidationError(VehicleIntelligenceError):
+    """A dataset is not eligible for the requested registry operation."""
+
+
+class DatasetRegistryStorageError(VehicleIntelligenceError):
+    """Dataset catalog or synchronization evidence could not be persisted safely."""
+
+
+class DetectorCorpusError(VehicleIntelligenceError):
+    """A curated detector corpus cannot be imported or verified safely."""
+
+
+class SampleDataAcquisitionError(VehicleIntelligenceError):
+    """External bootstrap detector data could not be acquired or verified safely."""
+
+
+class ModelTrainingError(VehicleIntelligenceError):
+    """An offline detector training run could not be completed safely."""
+
+
+class ModelTrainingNotFoundError(ModelTrainingError):
+    """A persisted or remote detector training run does not exist."""
+
+
+class ModelTrainingConflictError(ModelTrainingError):
+    """A detector training operation conflicts with current run state."""
+
+
+class ModelTrainingValidationError(ModelTrainingError):
+    """A detector training request is not eligible or safely configured."""
+
+
+class ModelTrainingStorageError(ModelTrainingError):
+    """Detector training evidence could not be read or persisted safely."""
+
+
+class ModelEvaluationError(VehicleIntelligenceError):
+    """Detector predictions or release-gate evidence are invalid."""
+
+
+class ModelArtifactError(VehicleIntelligenceError):
+    """A promoted model artifact is incomplete, invalid, or tampered with."""
+
+
+class ModelRegistryError(VehicleIntelligenceError):
+    """A private remote dataset/model registry operation failed."""
