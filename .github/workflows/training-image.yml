@@ -55,6 +55,15 @@ jobs:
           cache-from: type=gha,scope=picodet-trainer-v1
           cache-to: type=gha,mode=max,scope=picodet-trainer-v1
 
+      - name: Smoke-test the published runtime
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER}/smart-cam-picodet-trainer@${IMAGE_DIGEST}"
+          docker pull "$IMAGE"
+          docker run --rm "$IMAGE" python -c "import paddle; import ppdet; from vehicle_intelligence.training.config import load_training_settings; settings = load_training_settings('/workspace/configs/model-training.hf.yaml'); assert paddle.is_compiled_with_cuda(); assert settings.plate.paddledetection.repository_path.is_dir(); print('paddle=' + paddle.__version__ + ' cuda=true config=ok')"
+          docker run --rm "$IMAGE" vehicle-model-training --help >/dev/null
+
       - name: Record immutable image reference
         env:
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}

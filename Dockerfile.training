@@ -51,7 +51,6 @@ RUN apt-get update \
     && /opt/python/bin/python3.12 -m pip install --upgrade \
        pip==25.2 setuptools==80.9.0 wheel==0.45.1 \
     && ln -s /opt/python/bin/python3.12 /opt/python/bin/python \
-    && ln -s /opt/python/bin/pip3.12 /opt/python/bin/pip \
     && apt-get purge --yes --auto-remove \
        build-essential libbz2-dev libffi-dev liblzma-dev libncursesw5-dev \
        libreadline-dev libsqlite3-dev libssl-dev tk-dev uuid-dev xz-utils zlib1g-dev \
