@@ -26,6 +26,7 @@ from vehicle_intelligence.application.journeys import VehicleJourneyService
 from vehicle_intelligence.application.live_monitor import LiveMonitorService
 from vehicle_intelligence.application.media_access import VehicleEventMediaService
 from vehicle_intelligence.application.model_quality import ModelQualityService
+from vehicle_intelligence.application.model_training import ModelTrainingService
 from vehicle_intelligence.application.normalization import VietnamPlateNormalizer
 from vehicle_intelligence.application.policies import (
     AlertService,
@@ -147,6 +148,12 @@ from vehicle_intelligence.infrastructure.training.dataset_registry_files import 
 from vehicle_intelligence.infrastructure.training.dataset_review_files import (
     FileDetectorReviewRepository,
 )
+from vehicle_intelligence.infrastructure.training.huggingface_jobs import (
+    HuggingFaceTrainingJobGateway,
+)
+from vehicle_intelligence.infrastructure.training.model_training_files import (
+    FileModelTrainingRunRepository,
+)
 from vehicle_intelligence.infrastructure.vision.connection_test import (
     OpenCVCameraConnectionTester,
 )
@@ -171,6 +178,7 @@ from vehicle_intelligence.interfaces.dataset_review_api import build_dataset_rev
 from vehicle_intelligence.interfaces.journey_api import build_journey_router
 from vehicle_intelligence.interfaces.live_monitor_api import build_live_monitor_router
 from vehicle_intelligence.interfaces.media_api import build_media_router
+from vehicle_intelligence.interfaces.model_training_api import build_model_training_router
 from vehicle_intelligence.interfaces.policy_api import build_policy_router
 from vehicle_intelligence.interfaces.quality_api import build_quality_router
 from vehicle_intelligence.interfaces.realtime_api import build_realtime_router
@@ -179,6 +187,7 @@ from vehicle_intelligence.interfaces.request_context import request_id, resolve_
 from vehicle_intelligence.interfaces.review_api import build_review_router
 from vehicle_intelligence.interfaces.security import APISecurity, build_auth_router
 from vehicle_intelligence.interfaces.topology_api import build_topology_router
+from vehicle_intelligence.training.config import load_training_settings
 
 logger = logging.getLogger(__name__)
 
@@ -382,6 +391,7 @@ def create_app(
     model_quality_service: ModelQualityService | None = None,
     detector_review_service: DetectorDatasetReviewService | None = None,
     dataset_registry_service: DatasetRegistryService | None = None,
+    model_training_service: ModelTrainingService | None = None,
 ) -> FastAPI:
     settings = settings or load_settings()
     camera_credentials_configured = (
@@ -488,6 +498,17 @@ def create_app(
         if settings.dataset_registry.enabled
         else None
     )
+    managed_model_training = model_training_service or (
+        ModelTrainingService(
+            FileModelTrainingRunRepository(settings.model_training),
+            managed_dataset_registry,
+            HuggingFaceTrainingJobGateway(),
+            settings.model_training,
+            load_training_settings(settings.model_training.training_config),
+        )
+        if settings.model_training.enabled and managed_dataset_registry is not None
+        else None
+    )
     event_codec = JsonEventEnvelopeCodec()
     managed_metrics = prometheus_metrics or PrometheusMetrics()
     managed_tracing = tracing_runtime or build_tracing_runtime(settings.observability)
@@ -510,62 +531,66 @@ def create_app(
                 await managed_detector_reviews.initialize()
             if managed_dataset_registry is not None:
                 await managed_dataset_registry.initialize()
+            if managed_model_training is not None:
+                await managed_model_training.initialize()
             if managed_realtime is not None:
                 await managed_realtime.initialize()
             if managed_live_monitor is not None:
                 await managed_live_monitor.initialize()
             yield
         finally:
-            try:
-                if managed_dataset_registry is not None:
-                    await managed_dataset_registry.close()
-            finally:
+            cleanup_error: BaseException | None = None
+            closers = []
+            if managed_model_training is not None:
+                closers.append(("model training", managed_model_training.close))
+            closers.extend(
+                (name, component.close)
+                for name, component in (
+                    ("dataset registry", managed_dataset_registry),
+                    ("dataset review", managed_detector_reviews),
+                    ("live monitor", managed_live_monitor),
+                    ("realtime", managed_realtime),
+                )
+                if component is not None
+            )
+            closers.extend(
+                (
+                    ("model quality", managed_quality.close),
+                    ("human review", managed_reviews.close),
+                    ("audit", managed_audits.close),
+                    ("policies", managed_policies.close),
+                )
+            )
+            if managed_cameras is not None:
+                closers.append(("cameras", managed_cameras.close))
+            closers.extend(
+                (
+                    ("reid scoring", managed_reid_scoring.close),
+                    ("topology", managed_topology.close),
+                    ("identities", managed_identities.close),
+                    ("events", event_repository.close),
+                )
+            )
+            for component_name, close_component in closers:
                 try:
-                    if managed_detector_reviews is not None:
-                        await managed_detector_reviews.close()
-                finally:
-                    try:
-                        if managed_live_monitor is not None:
-                            await managed_live_monitor.close()
-                    finally:
-                        try:
-                            if managed_realtime is not None:
-                                await managed_realtime.close()
-                        finally:
-                            try:
-                                await managed_quality.close()
-                            finally:
-                                try:
-                                    await managed_reviews.close()
-                                finally:
-                                    try:
-                                        await managed_audits.close()
-                                    finally:
-                                        try:
-                                            await managed_policies.close()
-                                        finally:
-                                            try:
-                                                if managed_cameras is not None:
-                                                    await managed_cameras.close()
-                                            finally:
-                                                try:
-                                                    await managed_reid_scoring.close()
-                                                finally:
-                                                    try:
-                                                        await managed_topology.close()
-                                                    finally:
-                                                        try:
-                                                            await managed_identities.close()
-                                                        finally:
-                                                            try:
-                                                                await event_repository.close()
-                                                            finally:
-                                                                try:
-                                                                    if managed_tracing is not None:
-                                                                        managed_tracing.shutdown()
-                                                                finally:
-                                                                    if mongo_to_close is not None:
-                                                                        await mongo_to_close.close()
+                    await close_component()
+                except BaseException as exc:
+                    cleanup_error = cleanup_error or exc
+                    logger.exception("application component cleanup failed: %s", component_name)
+            try:
+                if managed_tracing is not None:
+                    managed_tracing.shutdown()
+            except BaseException as exc:
+                cleanup_error = cleanup_error or exc
+                logger.exception("tracing cleanup failed")
+            try:
+                if mongo_to_close is not None:
+                    await mongo_to_close.close()
+            except BaseException as exc:
+                cleanup_error = cleanup_error or exc
+                logger.exception("MongoDB cleanup failed")
+            if cleanup_error is not None:
+                raise cleanup_error
 
     async def mutation_transaction() -> AsyncIterator[None]:
         if managed_mongo is None:
@@ -630,6 +655,14 @@ def create_app(
         app.include_router(
             build_dataset_registry_router(
                 managed_dataset_registry,
+                api_security,
+                managed_audits,
+            )
+        )
+    if managed_model_training is not None:
+        app.include_router(
+            build_model_training_router(
+                managed_model_training,
                 api_security,
                 managed_audits,
             )
@@ -713,6 +746,9 @@ def create_app(
             ),
             "datasetRegistry": (
                 "available" if managed_dataset_registry is not None else "disabled"
+            ),
+            "modelTraining": (
+                "available" if managed_model_training is not None else "disabled"
             ),
             "modelQuality": "available",
             "liveMonitor": (

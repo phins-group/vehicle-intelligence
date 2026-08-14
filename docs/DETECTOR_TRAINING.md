@@ -337,7 +337,7 @@ VIP_DATASET_REGISTRY__RESTRICTED_PRIVATE_SYNC_ENABLED=true
 docker compose up -d --build api web
 ```
 
-Then open `/datasets`, select the promoted `v2` source, keep the suggested new
+Then open `/datasets`, select the current promoted source, keep the suggested new
 export ID, tick the restricted-transfer confirmation, and start the job. The
 remote repository configured in `configs/model-training.yaml` must belong to
 the authenticated namespace and is checked as private immediately before any
@@ -640,12 +640,90 @@ python run_model_training.py --config configs/model-training.yaml \
   datasets/detectors/vehicle/warehouse-vehicle-v1
 ```
 
+To replace every obsolete file in the private plate repository with the current
+rights-attested first-party export, use both explicit safety switches:
+
+```bash
+python run_model_training.py --config configs/model-training.yaml \
+  hf-upload-dataset --role plate \
+  datasets/detectors/plate/phins-vn-plate \
+  --allow-restricted-private \
+  --replace-remote
+```
+
+`--replace-remote` deletes remote files that are absent locally in the same
+resumable upload operation; Hugging Face commit history remains available for
+rollback. It is intentionally not the default.
+
 Every uploadable dataset export contains a manifest-hashed `README.md`,
 `ATTRIBUTION.csv`, and, for acceptance-ineligible data, `BOOTSTRAP_ONLY.md`.
 The Hub card deliberately declares `license: other`; the source-code
 Apache-2.0 license does not relicense third-party training images. The uploader
 rejects older exports that lack these verified provenance files, so rebuild an
 old export under a new immutable export ID before uploading it.
+
+### Build and publish the training image
+
+[`Dockerfile.training`](../Dockerfile.training) is the reproducible
+`linux/amd64` CUDA 12.0 runtime used by remote GPU jobs. It pins the CUDA base
+digest, Python source checksum, Paddle GPU version, PaddleDetection revision,
+and PicoDet LCNet checkpoint checksum. It copies no dataset, Hub token, model
+candidate, or training output into the image. The remote filesystem contract is
+defined separately in
+[`configs/model-training.hf.yaml`](../configs/model-training.hf.yaml): reviewed
+data is mounted read-only at `/data`, while checkpoints/logs are written below
+`/output/model-training`.
+
+Build and smoke-test locally through the checked-in wrapper:
+
+```bash
+./scripts/build_training_image.sh
+
+docker run --rm \
+  ghcr.io/phins-group/smart-cam-picodet-trainer:v1 \
+  vehicle-model-training --help
+```
+
+The default platform is `linux/amd64`, matching the Hugging Face GPU worker.
+Building that platform on Apple Silicon uses Docker Desktop emulation and is
+substantially slower than the GitHub runner. To publish manually, authenticate
+Docker with a token that has package-write permission and request the explicit
+push path:
+
+```bash
+docker login ghcr.io
+./scripts/build_training_image.sh --push
+```
+
+The pinned GitHub Actions workflow
+[`training-image.yml`](../.github/workflows/training-image.yml) is the preferred
+publisher. It authenticates with the repository `GITHUB_TOKEN`, builds only
+`linux/amd64`, pushes both `v1` and `git-<commit>` tags, generates provenance and
+an SBOM, pulls the result by immutable digest, and smoke-tests Paddle CUDA,
+PaddleDetection, the HF config, and the training CLI. Read the digest from the
+workflow summary and use the digest form for a Job, never the mutable tag:
+
+```text
+ghcr.io/phins-group/smart-cam-picodet-trainer@sha256:<digest>
+```
+
+GHCR packages are kept private by default. Do not change a training package to
+public merely to make a remote pull work: image layers contain the application
+training code, and making a GitHub package public is a release/security
+decision. The current Jobs adapter does not transmit private-registry
+credentials. Leave `huggingface.jobs_enabled=false` until either a private
+Docker Space that Hugging Face Jobs can access is available, or a separately
+reviewed minimal runtime image is explicitly approved for public distribution.
+
+The persistent private output bucket is:
+
+```text
+hf://buckets/phins-group/model-training-output
+```
+
+Creating an image does not submit a GPU job and therefore does not start paid
+training. Enabling Jobs is a later, explicit operation after the digest and
+private image access route are both verified.
 
 A Job receives the dataset read-only at `/data` and a bucket read-write at
 `/output`. Jobs remain disabled until `huggingface.jobs_enabled=true`, a pinned
@@ -663,6 +741,51 @@ python run_model_training.py --config configs/model-training.yaml \
   -- vehicle-model-training --config /workspace/configs/model-training.hf.yaml \
      train --role vehicle /data --run-id vehicle-picodet-v1
 ```
+
+### Build Model operator screen
+
+After the selected dataset shows a completed private Hub commit, open
+`Datasets → Build Model` (`/model-training`). The screen is the authenticated
+composition root for one remote detector training run; it does not accept an
+arbitrary shell command from the browser.
+
+Before enabling the start button, the API verifies all of the following:
+
+- the source has no pending reviews and is release-eligible;
+- source SHA-256, COCO export SHA-256 and latest Hub sync reference one revision;
+- the Hub commit belongs to the configured private plate dataset repository;
+- `HF_TOKEN`, Hugging Face Jobs, a digest-pinned training image and a persistent
+  private output bucket are configured;
+- the ADMIN explicitly confirms dataset rights, restricted-data processing and
+  pay-as-you-go GPU billing;
+- the configured concurrent-run limit is not already reached.
+
+The server then writes an audit record before submitting the Job. Each durable
+record under `datasets/model-training/runs` freezes the dataset commit, and the
+read-only `/data` volume is mounted at that exact commit rather than mutable
+`main`. The record also freezes the model
+name/version, effective epochs/batch/workers/checkpoint interval, hardware,
+requesting actor and output path. The UI polls remote status and the last 300 log
+lines and can cancel an active run. `HF_TOKEN` and provider-specific Job objects
+never enter browser state or the run JSON.
+
+```text
+GET  /api/model-training
+POST /api/model-training/runs
+GET  /api/model-training/runs/{runId}
+GET  /api/model-training/runs/{runId}/logs?tail=300
+POST /api/model-training/runs/{runId}/cancel
+```
+
+Active states are `QUEUED`, `SUBMITTING`, `SCHEDULING`, and `RUNNING`; terminal
+states are `COMPLETED`, `FAILED`, and `CANCELED`. API/container restart preserves
+remote Job IDs so active jobs can be reconciled instead of silently resubmitted.
+The default concurrency limit is one to avoid accidental duplicate GPU spend.
+
+The UI intentionally stops at a completed training checkpoint. A `COMPLETED`
+training run is not production-ready: export ONNX, run the immutable test split,
+enforce release gates, package the candidate, and shadow-test it before changing
+the detector provider configuration.
 
 Secrets are read by name from the local environment and sent through the Jobs
 secret channel; they are not accepted as command arguments or written to model

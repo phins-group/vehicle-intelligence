@@ -55,6 +55,7 @@ export interface SystemHealth {
   humanReview: 'available' | 'unavailable';
   datasetReview: 'available' | 'disabled';
   datasetRegistry: 'available' | 'disabled';
+  modelTraining: 'available' | 'disabled';
   modelQuality: 'available' | 'unavailable';
   liveMonitor: 'STARTING' | 'ONLINE' | 'OFFLINE' | 'STOPPED' | 'DISABLED';
   realtime: string;
@@ -582,6 +583,106 @@ export interface DatasetRegistryResponse {
     credentialsConfigured: boolean;
     restrictedPrivateSyncEnabled: boolean;
   };
+}
+
+export type ModelTrainingRunStatus =
+  | 'QUEUED'
+  | 'SUBMITTING'
+  | 'SCHEDULING'
+  | 'RUNNING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELED';
+
+export interface ModelTrainingRun {
+  id: string;
+  role: 'plate' | 'vehicle';
+  status: ModelTrainingRunStatus;
+  sourceId: string;
+  sourceManifestSha256: string;
+  exportId: string;
+  exportManifestSha256: string;
+  datasetRepoId: string;
+  datasetRevision: string;
+  datasetCommitSha: string;
+  modelRepoId: string;
+  modelName: string;
+  modelVersion: string;
+  architecture: string;
+  parameters: {
+    epochs: number;
+    batchSize: number;
+    workers: number;
+    snapshotEpoch: number;
+    timeoutSeconds: number;
+    hardwareFlavor: string;
+  };
+  requestedBy: string;
+  confirmations: {
+    datasetRights: boolean;
+    computeCost: boolean;
+    restrictedData: boolean;
+  };
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  outputBucket: string;
+  outputPath: string;
+  remoteJobId: string | null;
+  remoteJobUrl: string | null;
+  remoteMessage: string | null;
+  errorCode: string | null;
+}
+
+export interface ModelTrainingCapabilities {
+  enabled: boolean;
+  jobsEnabled: boolean;
+  credentialsConfigured: boolean;
+  imageConfigured: boolean;
+  outputBucketConfigured: boolean;
+  submissionsEnabled: boolean;
+  jobImage: string | null;
+  outputBucket: string | null;
+  namespace: string | null;
+  defaults: {
+    role: 'plate' | 'vehicle';
+    architecture: string;
+    baseConfig: string;
+    modelRepoId: string;
+    datasetRepoId: string;
+    epochs: number;
+    batchSize: number;
+    workers: number;
+    snapshotEpoch: number;
+    timeoutSeconds: number;
+    hardwareFlavor: string;
+  };
+  blockers: string[];
+}
+
+export interface ModelTrainingOverview {
+  capabilities: ModelTrainingCapabilities;
+  items: ModelTrainingRun[];
+}
+
+export interface StartModelTrainingRequest {
+  sourceId: string;
+  modelName: string;
+  modelVersion: string;
+  epochs: number;
+  batchSize: number;
+  workers: number;
+  snapshotEpoch: number;
+  confirmDatasetRights: boolean;
+  confirmComputeCost: boolean;
+  confirmRestrictedData: boolean;
+}
+
+export interface ModelTrainingLog {
+  runId: string;
+  lines: string[];
+  available: boolean;
 }
 
 export type DetectorDatasetSampleKind = 'ALL' | 'POSITIVE' | 'NEGATIVE';

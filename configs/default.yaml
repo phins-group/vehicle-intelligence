@@ -262,6 +262,18 @@ dataset_registry:
   # confirmation for every private Hugging Face sync request.
   restricted_private_sync_enabled: false
 
+model_training:
+  enabled: true
+  workspace_directory: datasets/model-training
+  training_config: configs/model-training.yaml
+  maximum_runs: 10000
+  maximum_concurrent_runs: 1
+  maximum_log_lines: 500
+  # These paths must exist inside the pinned Hugging Face training image.
+  container_training_config: /workspace/configs/model-training.hf.yaml
+  # The HF bucket is mounted read/write at /output; every run gets its own child.
+  container_output_directory: /output/model-training
+
 event_bus:
   backend: direct
 

@@ -12,12 +12,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from vehicle_intelligence.application.dataset_review import DetectorReviewQuery
 from vehicle_intelligence.config import DetectorConfig, VehicleDetectorConfig, load_settings
 from vehicle_intelligence.domain.dataset_review import DetectorReviewDecision
 from vehicle_intelligence.exceptions import (
     ModelEvaluationError,
     ModelRegistryError,
+    ModelTrainingError,
     VehicleIntelligenceError,
 )
 from vehicle_intelligence.infrastructure.training.dataset_review_files import (
@@ -258,6 +261,11 @@ def build_parser() -> argparse.ArgumentParser:
     _role_argument(train)
     train.add_argument("dataset", type=Path)
     train.add_argument("--run-id", required=True)
+    train.add_argument("--epochs", type=int)
+    train.add_argument("--batch-size", type=int)
+    train.add_argument("--workers", type=int)
+    train.add_argument("--snapshot-epoch", type=int)
+    train.add_argument("--output-directory", type=Path)
     train.add_argument("--dry-run", action="store_true")
 
     export = commands.add_parser("export-onnx", help="Export trained Paddle weights to ONNX")
@@ -310,6 +318,16 @@ def build_parser() -> argparse.ArgumentParser:
     _role_argument(upload_dataset)
     upload_dataset.add_argument("dataset", type=Path)
     upload_dataset.add_argument("--revision", default="main")
+    upload_dataset.add_argument(
+        "--allow-restricted-private",
+        action="store_true",
+        help="Allow an attested first-party restricted dataset in a private repository",
+    )
+    upload_dataset.add_argument(
+        "--replace-remote",
+        action="store_true",
+        help="Delete remote files not present in this verified dataset during upload",
+    )
 
     upload_model = commands.add_parser("hf-upload-model")
     _role_argument(upload_model)
@@ -543,8 +561,27 @@ def run(args: argparse.Namespace) -> int:
         )
         return 0
 
+    training_config = target.paddledetection
+    if args.command_name == "train":
+        updates = {
+            key: value
+            for key, value in {
+                "epochs": args.epochs,
+                "batch_size": args.batch_size,
+                "workers": args.workers,
+                "snapshot_epoch": args.snapshot_epoch,
+                "output_directory": args.output_directory,
+            }.items()
+            if value is not None
+        }
+        try:
+            training_config = type(training_config).model_validate(
+                {**training_config.model_dump(), **updates}
+            )
+        except ValidationError as exc:
+            raise ModelTrainingError("invalid detector training overrides") from exc
     trainer = PaddleDetectionTrainer(
-        target.paddledetection,
+        training_config,
         role,
         target.dataset.classes,
     )
@@ -595,6 +632,8 @@ def run(args: argparse.Namespace) -> int:
             args.dataset,
             target.hub.dataset_repo,
             revision=args.revision,
+            allow_restricted_private=args.allow_restricted_private,
+            replace_remote=args.replace_remote,
         )
         _print(result.model_dump(mode="json"))
         return 0

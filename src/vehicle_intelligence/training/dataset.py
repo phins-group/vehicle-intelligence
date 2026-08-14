@@ -177,7 +177,7 @@ class DetectorDatasetBuilder:
 
             suffix = source_path.suffix.lower().replace(".jpeg", ".jpg")
             filename = f"{hashlib.sha256(sample.sample_id.encode()).hexdigest()[:24]}{suffix}"
-            relative = PurePosixPath("images", split.value, filename)
+            relative = _sharded_image_path(split, filename)
             destination = temporary.joinpath(*relative.parts)
             destination.parent.mkdir(parents=True, exist_ok=True)
             _write_new(destination, data)
@@ -286,6 +286,11 @@ class DetectorDatasetBuilder:
             "splitAnnotationCounts": annotation_counts,
             "splitGroupCounts": {split.value: len(group_ids[split]) for split in _SPLITS},
             "categoryCounts": dict(sorted(category_counts.items())),
+            "imageLayout": {
+                "type": "HASH_PREFIX_SHARD",
+                "prefixLength": 2,
+                "maximumFilesPerDirectory": 10_000,
+            },
             "splitStrategy": {
                 "type": "EXPLICIT_OR_GROUP_HASH",
                 "seed": self._config.split.seed,
@@ -329,6 +334,13 @@ def verify_detector_dataset(directory: Path) -> tuple[dict[str, Any], str]:
         or len(manifest["files"]) > 1_000_000
     ):
         raise DetectorDatasetError("detector dataset manifest contract is invalid")
+    image_layout = manifest.get("imageLayout")
+    if image_layout is not None and image_layout != {
+        "type": "HASH_PREFIX_SHARD",
+        "prefixLength": 2,
+        "maximumFilesPerDirectory": 10_000,
+    }:
+        raise DetectorDatasetError("detector dataset image layout is invalid")
 
     recorded_paths: set[str] = set()
     for item in manifest["files"]:
@@ -402,6 +414,15 @@ def verify_detector_dataset(directory: Path) -> tuple[dict[str, Any], str]:
     if total_annotations != int(manifest.get("annotationCount", -1)):
         raise DetectorDatasetError("detector dataset annotation count does not match manifest")
     return manifest, _sha256(raw)
+
+
+def _sharded_image_path(split: DatasetSplit, filename: str) -> PurePosixPath:
+    """Keep Hub directories below its hard 10,000-file limit."""
+
+    prefix = filename[:2]
+    if len(prefix) != 2 or any(character not in "0123456789abcdef" for character in prefix):
+        raise DetectorDatasetError("detector dataset image filename is not hash-prefixed")
+    return PurePosixPath("images", split.value, prefix, filename)
 
 
 def _load_samples(

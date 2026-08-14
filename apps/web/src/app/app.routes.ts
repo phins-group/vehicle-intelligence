@@ -78,6 +78,14 @@ export const routes: Routes = [
           )
       },
       {
+        path: 'model-training',
+        title: 'Build Model | Vehicle Intelligence',
+        loadComponent: () =>
+          import('./features/model-training/model-training.component').then(
+            (module) => module.ModelTrainingComponent
+          )
+      },
+      {
         path: 'cameras',
         title: 'Camera | Vehicle Intelligence',
         loadComponent: () =>

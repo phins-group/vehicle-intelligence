@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
 from vehicle_intelligence.training.config import HuggingFaceConfig
+from vehicle_intelligence.training.domain import DetectorRole
 from vehicle_intelligence.training.huggingface import (
     HuggingFaceJobRunner,
     HuggingFacePrivateRegistry,
@@ -46,6 +48,35 @@ def test_huggingface_dataset_upload_is_forced_private_and_verified(tmp_path) -> 
     assert result.revision == "commit123"
 
 
+def test_huggingface_replaces_remote_with_attested_video_dataset(tmp_path) -> None:
+    dataset, _ = build_detector_dataset(tmp_path, DetectorRole.PLATE)
+    manifest_path = dataset / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.update(
+        {
+            "distributionEligible": False,
+            "releaseEligible": True,
+            "source": {
+                "type": "FIRST_PARTY_SOURCE",
+                "rightsAssertion": "USER_CONFIRMED_FIRST_PARTY_VIDEO_COLLECTION",
+                "licenseReviewStatus": "PROPRIETARY_FIRST_PARTY_USER_CONFIRMED",
+            },
+        }
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    api = _FakeApi()
+
+    result = HuggingFacePrivateRegistry(api=api).upload_dataset(
+        dataset,
+        "phins-group/plate-dataset",
+        allow_restricted_private=True,
+        replace_remote=True,
+    )
+
+    assert api.uploaded["delete_patterns"] == "*"
+    assert result.revision == "commit123"
+
+
 def test_huggingface_job_mounts_private_dataset_read_only(tmp_path) -> None:
     captured = {}
 
@@ -69,12 +100,14 @@ def test_huggingface_job_mounts_private_dataset_read_only(tmp_path) -> None:
         command=["python", "train.py"],
         flavor="a10g-small",
         dataset_repo="company/warehouse-vehicle-dataset",
+        dataset_revision="a" * 40,
         output_bucket="company/warehouse-training-output",
         secrets={"HF_TOKEN": "not-logged"},
     )
 
     assert captured["volumes"][0]["read_only"] is True
     assert captured["volumes"][0]["mount_path"] == "/data"
+    assert captured["volumes"][0]["revision"] == "a" * 40
     assert captured["volumes"][1]["read_only"] is False
     assert captured["volumes"][1]["mount_path"] == "/output"
     assert captured["job"]["volumes"] == captured["volumes"]

@@ -1,0 +1,312 @@
+<div class="page-heading">
+  <div>
+    <h1 class="page-title">Build Model</h1>
+    <p>Khởi tạo, theo dõi và kiểm soát chi phí training detector biển số từ một dataset revision bất biến.</p>
+  </div>
+  <div class="heading-actions">
+    <button class="button secondary" type="button" (click)="load()" [disabled]="loading()">
+      <svg lucideRefreshCw aria-hidden="true" [class.spin]="loading()"></svg>
+      Làm mới
+    </button>
+  </div>
+</div>
+
+@if (!auth.canReviewDatasets()) {
+  <div class="notice neutral">Tài khoản hiện tại không có quyền xem model training.</div>
+} @else {
+  @if (error()) { <div class="notice error" role="alert">{{ error() }}</div> }
+  @if (success()) { <div class="notice success" role="status">{{ success() }}</div> }
+
+  <section class="model-training-metrics" aria-label="Tổng quan training">
+    <div>
+      <span>Dataset đã chọn</span>
+      <strong>{{ selectedDataset()?.sampleCount || 0 | number }}</strong>
+      <small>mẫu ảnh</small>
+    </div>
+    <div>
+      <span>Training runs</span>
+      <strong>{{ runs().length }}</strong>
+      <small>lịch sử bất biến</small>
+    </div>
+    <div>
+      <span>GPU job đang chạy</span>
+      <strong>{{ activeRunCount() }}</strong>
+      <small>giới hạn 1 job mặc định</small>
+    </div>
+    <div>
+      <span>Train hoàn tất</span>
+      <strong>{{ completedRunCount() }}</strong>
+      <small>chưa đồng nghĩa production-ready</small>
+    </div>
+  </section>
+
+  @if (capabilities(); as capability) {
+    <section class="model-training-preflight" aria-label="Training preflight">
+      <div [class.ready]="selectedReadiness().ready">
+        <span class="preflight-icon">
+          @if (selectedReadiness().ready) { <svg lucideCheck aria-hidden="true"></svg> }
+          @else { <span>1</span> }
+        </span>
+        <div><strong>Dataset revision</strong><small>Review + COCO + Hub commit</small></div>
+      </div>
+      <div [class.ready]="capability.credentialsConfigured">
+        <span class="preflight-icon">
+          @if (capability.credentialsConfigured) { <svg lucideCheck aria-hidden="true"></svg> }
+          @else { <span>2</span> }
+        </span>
+        <div><strong>Private Hub</strong><small>Credential chỉ nằm ở API</small></div>
+      </div>
+      <div [class.ready]="capability.imageConfigured && capability.outputBucketConfigured">
+        <span class="preflight-icon">
+          @if (capability.imageConfigured && capability.outputBucketConfigured) { <svg lucideCheck aria-hidden="true"></svg> }
+          @else { <span>3</span> }
+        </span>
+        <div><strong>Training runtime</strong><small>Image pin + persistent bucket</small></div>
+      </div>
+      <div [class.ready]="capability.submissionsEnabled">
+        <span class="preflight-icon">
+          @if (capability.submissionsEnabled) { <svg lucideCheck aria-hidden="true"></svg> }
+          @else { <span>4</span> }
+        </span>
+        <div><strong>Ready to train</strong><small>Audit + billing confirmation</small></div>
+      </div>
+    </section>
+
+    @if (capability.blockers.length || selectedReadiness().blockers.length) {
+      <div class="notice warning model-training-blockers">
+        <svg lucideTriangleAlert aria-hidden="true"></svg>
+        <div>
+          <strong>Chưa thể tạo GPU job</strong>
+          <ul>
+            @for (code of capability.blockers; track code) {
+              <li>{{ blockerMessage(code) }}</li>
+            }
+            @for (code of selectedReadiness().blockers; track code) {
+              <li>{{ blockerMessage(code) }}</li>
+            }
+          </ul>
+        </div>
+      </div>
+    }
+
+    <section class="model-training-workspace">
+      <article class="panel model-training-builder">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">ADMIN · REMOTE GPU</p>
+            <h2>Cấu hình training run</h2>
+          </div>
+          <svg lucideBrainCircuit aria-hidden="true"></svg>
+        </div>
+
+        <div class="model-training-form">
+          <label class="wide">
+            <span>Dataset version</span>
+            <select [ngModel]="selectedSourceId()" (ngModelChange)="selectDataset($event)">
+              @for (dataset of datasets(); track dataset.sourceId) {
+                <option [value]="dataset.sourceId">
+                  {{ dataset.sourceId }} · {{ dataset.sampleCount }} samples · {{ dataset.latestSync?.status || 'NOT SYNCED' }}
+                </option>
+              }
+            </select>
+          </label>
+
+          @if (selectedDataset(); as dataset) {
+            <div class="model-training-dataset-proof wide" [class.ready]="selectedReadiness().ready">
+              <svg lucideShieldCheck aria-hidden="true"></svg>
+              <div>
+                <strong>{{ dataset.sourceId }}</strong>
+                <span>{{ dataset.sampleCount | number }} samples · {{ dataset.annotationCount | number }} bbox · {{ dataset.privacyClassification }}</span>
+                <small class="mono">source {{ dataset.sourceManifestSha256 }}</small>
+                @if (dataset.export) {
+                  <small class="mono">export {{ dataset.export.manifestSha256 }}</small>
+                }
+                @if (dataset.latestSync?.hubCommitSha) {
+                  <small class="mono">Hub commit {{ dataset.latestSync?.hubCommitSha }}</small>
+                }
+              </div>
+            </div>
+          }
+
+          <label>
+            <span>Model name</span>
+            <input [(ngModel)]="modelName" maxlength="128" spellcheck="false">
+          </label>
+          <label>
+            <span>Model version</span>
+            <input [(ngModel)]="modelVersion" maxlength="128" spellcheck="false">
+          </label>
+
+          <fieldset class="model-training-parameters wide">
+            <legend>Hyperparameters có hiệu lực trong Job</legend>
+            <label><span>Epochs</span><input type="number" [(ngModel)]="epochs" min="1" max="10000"></label>
+            <label><span>Batch size</span><input type="number" [(ngModel)]="batchSize" min="1" max="1024"></label>
+            <label><span>Workers</span><input type="number" [(ngModel)]="workers" min="0" max="128"></label>
+            <label><span>Checkpoint mỗi</span><input type="number" [(ngModel)]="snapshotEpoch" min="1" [max]="epochs"></label>
+          </fieldset>
+
+          <dl class="model-training-runtime wide">
+            <div><dt>Architecture</dt><dd>{{ capability.defaults.architecture }}</dd></div>
+            <div><dt>GPU flavor</dt><dd>{{ capability.defaults.hardwareFlavor }}</dd></div>
+            <div><dt>Max runtime</dt><dd>{{ capability.defaults.timeoutSeconds / 3600 | number: '1.0-1' }} giờ</dd></div>
+            <div><dt>Model repo</dt><dd>{{ capability.defaults.modelRepoId }}</dd></div>
+            <div class="wide"><dt>Base config</dt><dd class="mono">{{ capability.defaults.baseConfig }}</dd></div>
+            <div class="wide"><dt>Training image</dt><dd class="mono">{{ capability.jobImage || 'CHƯA CẤU HÌNH' }}</dd></div>
+            <div class="wide"><dt>Output bucket</dt><dd class="mono">{{ capability.outputBucket || 'CHƯA CẤU HÌNH' }}</dd></div>
+          </dl>
+
+          <div class="model-training-confirmations wide">
+            <label>
+              <input type="checkbox" [(ngModel)]="confirmDatasetRights">
+              <span><strong>Xác nhận quyền xử lý dataset</strong>Tôi đã kiểm tra nguồn, consent/notice và phạm vi sử dụng nội bộ cho training.</span>
+            </label>
+            @if (selectedDataset() && !selectedDataset()!.distributionEligible) {
+              <label>
+                <input type="checkbox" [(ngModel)]="confirmRestrictedData">
+                <span><strong>Xác nhận dữ liệu restricted trên private Hub</strong>Dataset first-party chỉ được mount read-only vào Job và output vào private bucket.</span>
+              </label>
+            }
+            <label>
+              <input type="checkbox" [(ngModel)]="confirmComputeCost">
+              <span><strong>Xác nhận chi phí GPU pay-as-you-go</strong>Job có thể phát sinh phí tới khi hoàn tất, lỗi, timeout hoặc được hủy.</span>
+            </label>
+          </div>
+
+          @if (auth.canManageDatasets()) {
+            <button class="button primary model-training-start wide" type="button" (click)="startRun()" [disabled]="!canStart()">
+              <svg lucidePlay aria-hidden="true"></svg>
+              {{ starting() ? 'Đang ghi audit và gửi Job…' : 'Bắt đầu training model' }}
+            </button>
+          } @else {
+            <div class="notice neutral wide">Chỉ ADMIN có thể tạo training run và xác nhận billing.</div>
+          }
+        </div>
+
+        <div class="model-training-boundary">
+          <strong>Ranh giới tự động hóa hiện tại</strong>
+          <span>Màn hình này chạy train và lưu checkpoint vào bucket. ONNX export → test-set evaluation → release gates → package candidate vẫn là các gate tiếp theo; hệ thống không tự gắn nhãn “production-ready”.</span>
+        </div>
+      </article>
+
+      <aside class="panel model-training-history">
+        <div class="panel-heading">
+          <div><h2>Training runs</h2><p>Run gần nhất trước</p></div>
+          <svg lucideClock3 aria-hidden="true"></svg>
+        </div>
+        @if (loading() && !runs().length) {
+          <div class="empty-state">Đang tải lịch sử…</div>
+        } @else if (!runs().length) {
+          <div class="empty-state">
+            <svg lucideBrainCircuit aria-hidden="true"></svg>
+            <strong>Chưa có training run</strong>
+            <span>Hoàn tất preflight để tạo run đầu tiên.</span>
+          </div>
+        } @else {
+          <div class="model-training-run-list">
+            @for (run of runs(); track run.id) {
+              <button type="button" [class.active]="selectedRunId() === run.id" (click)="selectRun(run.id)">
+                <span class="run-list-heading">
+                  <strong>{{ run.modelName }}</strong>
+                  <span class="model-training-status" [attr.data-status]="run.status">{{ statusLabel(run) }}</span>
+                </span>
+                <span>{{ run.modelVersion }} · {{ run.parameters.hardwareFlavor }}</span>
+                <small>{{ run.createdAt | date: 'dd/MM/yyyy HH:mm' }} · {{ run.sourceId }}</small>
+              </button>
+            }
+          </div>
+        }
+      </aside>
+    </section>
+
+    @if (selectedRun(); as run) {
+      <section class="panel model-training-run-detail">
+        <div class="model-training-run-heading">
+          <div>
+            <p class="eyebrow">TRACEABLE TRAINING EVIDENCE</p>
+            <h2>{{ run.modelName }} <span>{{ run.modelVersion }}</span></h2>
+            <code>{{ run.id }}</code>
+          </div>
+          <div class="heading-actions">
+            <span class="model-training-status large" [attr.data-status]="run.status">{{ statusLabel(run) }}</span>
+            <button class="button secondary" type="button" (click)="refreshSelectedRun()" [disabled]="refreshingRun()">
+              <svg lucideRefreshCw aria-hidden="true" [class.spin]="refreshingRun()"></svg> Cập nhật
+            </button>
+            @if (run.remoteJobUrl) {
+              <a class="button secondary" [href]="run.remoteJobUrl" target="_blank" rel="noopener noreferrer">
+                <svg lucideExternalLink aria-hidden="true"></svg> Hugging Face Job
+              </a>
+            }
+            @if (auth.canManageDatasets() && isActive(run)) {
+              <button class="button danger" type="button" (click)="cancelSelectedRun()" [disabled]="canceling()">
+                <svg lucideSquare aria-hidden="true"></svg> {{ canceling() ? 'Đang hủy…' : 'Hủy Job' }}
+              </button>
+            }
+          </div>
+        </div>
+
+        <ol class="model-training-progress" aria-label="Tiến trình training run">
+          <li [class.reached]="stageReached(run, 1)"><span>1</span><div><strong>Audit & submit</strong><small>Run evidence đã lưu</small></div></li>
+          <li [class.reached]="stageReached(run, 2)"><span>2</span><div><strong>GPU scheduling</strong><small>{{ run.remoteJobId || 'Chưa có Job ID' }}</small></div></li>
+          <li [class.reached]="stageReached(run, 3)"><span>3</span><div><strong>PicoDet training</strong><small>{{ run.parameters.epochs }} epochs</small></div></li>
+          <li [class.reached]="stageReached(run, 4)"><span>4</span><div><strong>Checkpoint output</strong><small>Chờ evaluation gate</small></div></li>
+        </ol>
+
+        @if (run.remoteMessage) {
+          <div class="notice neutral model-training-remote-message">{{ run.remoteMessage }}</div>
+        }
+        @if (run.errorCode) {
+          <div class="notice error">Training thất bại với mã <span class="mono">{{ run.errorCode }}</span>. Xem remote log trước khi retry bằng model version mới.</div>
+        }
+
+        <div class="model-training-run-grid">
+          <section>
+            <h3>Run configuration</h3>
+            <dl class="model-training-run-facts">
+              <div><dt>Architecture</dt><dd>{{ run.architecture }}</dd></div>
+              <div><dt>GPU</dt><dd>{{ run.parameters.hardwareFlavor }}</dd></div>
+              <div><dt>Epochs</dt><dd>{{ run.parameters.epochs }}</dd></div>
+              <div><dt>Batch / workers</dt><dd>{{ run.parameters.batchSize }} / {{ run.parameters.workers }}</dd></div>
+              <div><dt>Created</dt><dd>{{ run.createdAt | date: 'dd/MM/yyyy HH:mm:ss' }}</dd></div>
+              <div><dt>Requested by</dt><dd>{{ run.requestedBy }}</dd></div>
+              <div class="wide"><dt>Output</dt><dd class="mono">{{ run.outputBucket }}:{{ run.outputPath }}</dd></div>
+            </dl>
+          </section>
+          <section>
+            <h3>Dataset provenance</h3>
+            <dl class="model-training-provenance">
+              <div><dt>Source</dt><dd>{{ run.sourceId }}</dd></div>
+              <div><dt>Hub repo</dt><dd>{{ run.datasetRepoId }}@{{ run.datasetRevision }}</dd></div>
+              <div><dt>Source SHA-256</dt><dd class="mono">{{ run.sourceManifestSha256 }}</dd></div>
+              <div><dt>Export SHA-256</dt><dd class="mono">{{ run.exportManifestSha256 }}</dd></div>
+              <div><dt>Hub commit</dt><dd class="mono">{{ run.datasetCommitSha }}</dd></div>
+            </dl>
+          </section>
+        </div>
+
+        <section class="model-training-logs">
+          <div>
+            <span><svg lucideScrollText aria-hidden="true"></svg></span>
+            <div><h3>Remote training log</h3><p>300 dòng cuối, tự cập nhật khi run còn active.</p></div>
+          </div>
+          @if (logError()) { <div class="notice warning">{{ logError() }}</div> }
+          @if (logsAvailable() && logLines().length) {
+            <pre aria-live="polite">@for (line of logLines(); track $index) {{{ line }}
+}</pre>
+          } @else {
+            <div class="model-training-log-empty">Log xuất hiện sau khi Hugging Face cấp Job ID và container bắt đầu chạy.</div>
+          }
+        </section>
+
+        @if (run.status === 'COMPLETED') {
+          <div class="model-training-next-gate">
+            <svg lucideCircleCheck aria-hidden="true"></svg>
+            <div>
+              <strong>Training hoàn tất — model chưa tự động vào production</strong>
+              <span>Bước kế tiếp: chọn checkpoint tốt nhất → export ONNX → predict trên test split → kiểm tra precision/recall/night recall → package candidate → shadow test tại kho.</span>
+            </div>
+          </div>
+        }
+      </section>
+    }
+  }
+}

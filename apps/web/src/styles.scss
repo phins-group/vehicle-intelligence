@@ -473,6 +473,16 @@ h3 {
   margin-bottom: 24px;
 }
 
+.page-heading .page-title {
+  margin-bottom: 7px;
+  color: var(--teal-700);
+  font-size: clamp(17px, 1.35vw, 20px);
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+
 .page-heading p:last-child {
   max-width: 720px;
   margin-bottom: 0;
@@ -4391,6 +4401,667 @@ textarea {
 
 .dataset-sample-empty {
   min-height: 220px;
+}
+
+.model-training-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.model-training-metrics > div {
+  display: grid;
+  gap: 4px;
+  padding: 15px 17px;
+  border: 1px solid var(--slate-200);
+  border-top: 3px solid var(--teal-600);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.model-training-metrics span,
+.model-training-metrics small {
+  color: var(--slate-500);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.model-training-metrics span {
+  color: var(--slate-600);
+  font-size: 11px;
+}
+
+.model-training-metrics strong {
+  color: var(--navy-900);
+  font-size: 25px;
+}
+
+.model-training-preflight {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 16px;
+  overflow: hidden;
+  border: 1px solid var(--slate-200);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.model-training-preflight > div {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 72px;
+  padding: 12px 16px;
+  border-right: 1px solid var(--slate-200);
+}
+
+.model-training-preflight > div:last-child {
+  border-right: 0;
+}
+
+.model-training-preflight > div.ready {
+  background: #f4fbf7;
+}
+
+.preflight-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--slate-200);
+  color: var(--slate-600);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.ready .preflight-icon {
+  background: var(--green-100);
+  color: #17633e;
+}
+
+.preflight-icon svg {
+  width: 15px;
+}
+
+.model-training-preflight strong,
+.model-training-preflight small {
+  display: block;
+}
+
+.model-training-preflight strong {
+  color: var(--navy-900);
+  font-size: 11px;
+}
+
+.model-training-preflight small {
+  margin-top: 3px;
+  color: var(--slate-500);
+  font-size: 9px;
+}
+
+.model-training-blockers {
+  align-items: flex-start;
+}
+
+.model-training-blockers > svg {
+  width: 18px;
+  flex: 0 0 auto;
+}
+
+.model-training-blockers > div {
+  display: grid;
+  gap: 4px;
+}
+
+.model-training-blockers ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.model-training-workspace {
+  display: grid;
+  grid-template-columns: minmax(560px, 1.35fr) minmax(310px, 0.65fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.model-training-builder {
+  overflow: hidden;
+}
+
+.model-training-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 0 22px 20px;
+}
+
+.model-training-form > label,
+.model-training-parameters label {
+  display: grid;
+  gap: 6px;
+}
+
+.model-training-form label > span,
+.model-training-parameters label > span {
+  color: var(--slate-600);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.model-training-form .wide,
+.model-training-runtime .wide,
+.model-training-run-facts .wide {
+  grid-column: 1 / -1;
+}
+
+.model-training-dataset-proof {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 11px;
+  padding: 12px;
+  border: 1px solid var(--slate-200);
+  border-radius: 9px;
+  background: var(--slate-100);
+  color: var(--slate-700);
+}
+
+.model-training-dataset-proof.ready {
+  border-color: #b8e1ca;
+  background: #effaf3;
+  color: #17643f;
+}
+
+.model-training-dataset-proof > svg {
+  width: 21px;
+}
+
+.model-training-dataset-proof > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.model-training-dataset-proof small {
+  overflow-wrap: anywhere;
+  font-size: 9px;
+}
+
+.model-training-parameters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 13px;
+  border: 1px solid var(--slate-200);
+  border-radius: 9px;
+}
+
+.model-training-parameters legend {
+  padding: 0 6px;
+  color: var(--slate-600);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.model-training-runtime {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.model-training-runtime > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: var(--slate-100);
+}
+
+.model-training-runtime dt,
+.model-training-run-facts dt,
+.model-training-provenance dt {
+  color: var(--slate-500);
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.model-training-runtime dd,
+.model-training-run-facts dd,
+.model-training-provenance dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--slate-800);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.model-training-confirmations {
+  display: grid;
+  gap: 8px;
+}
+
+.model-training-confirmations label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 11px 12px;
+  border: 1px solid var(--slate-200);
+  border-radius: 9px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.model-training-confirmations input {
+  margin-top: 3px;
+}
+
+.model-training-confirmations span {
+  display: grid;
+  gap: 2px;
+  color: var(--slate-600);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.model-training-confirmations strong {
+  color: var(--slate-800);
+  font-size: 11px;
+}
+
+.model-training-start {
+  justify-self: stretch;
+  min-height: 44px;
+}
+
+.model-training-boundary {
+  display: grid;
+  gap: 4px;
+  padding: 13px 22px;
+  border-top: 1px solid var(--slate-200);
+  background: var(--blue-100);
+  color: #2859b1;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.model-training-history {
+  position: sticky;
+  top: 82px;
+  overflow: hidden;
+}
+
+.model-training-run-list {
+  display: grid;
+  gap: 7px;
+  max-height: 725px;
+  padding: 0 14px 14px;
+  overflow: auto;
+}
+
+.model-training-run-list > button {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 11px;
+  border: 1px solid var(--slate-200);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--slate-700);
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-training-run-list > button:hover,
+.model-training-run-list > button.active {
+  border-color: var(--teal-600);
+  background: #f3fbfa;
+}
+
+.model-training-run-list > button > span,
+.model-training-run-list > button > small {
+  overflow: hidden;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.run-list-heading strong {
+  overflow: hidden;
+  color: var(--navy-900);
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.model-training-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: var(--slate-100);
+  color: var(--slate-600);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+.model-training-status.large {
+  padding: 7px 10px;
+  font-size: 9px;
+}
+
+.model-training-status[data-status="QUEUED"],
+.model-training-status[data-status="SUBMITTING"],
+.model-training-status[data-status="SCHEDULING"] {
+  background: var(--amber-100);
+  color: #8c5208;
+}
+
+.model-training-status[data-status="RUNNING"] {
+  background: var(--blue-100);
+  color: #2859b1;
+}
+
+.model-training-status[data-status="COMPLETED"] {
+  background: var(--green-100);
+  color: #17633e;
+}
+
+.model-training-status[data-status="FAILED"] {
+  background: var(--red-100);
+  color: #9b2d38;
+}
+
+.model-training-run-detail {
+  display: grid;
+  gap: 18px;
+  margin-top: 16px;
+  padding: 21px;
+}
+
+.model-training-run-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.model-training-run-heading h2 {
+  margin-bottom: 4px;
+}
+
+.model-training-run-heading h2 span {
+  color: var(--teal-700);
+  font-weight: 500;
+}
+
+.model-training-run-heading code {
+  color: var(--slate-500);
+  font-size: 9px;
+}
+
+.model-training-progress {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--slate-200);
+  border-radius: 10px;
+  list-style: none;
+}
+
+.model-training-progress li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  padding: 12px;
+  border-right: 1px solid var(--slate-200);
+  color: var(--slate-500);
+}
+
+.model-training-progress li:last-child {
+  border-right: 0;
+}
+
+.model-training-progress li > span {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--slate-200);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.model-training-progress li.reached {
+  background: #f4fbf7;
+  color: #17633e;
+}
+
+.model-training-progress li.reached > span {
+  background: var(--green-100);
+}
+
+.model-training-progress strong,
+.model-training-progress small {
+  display: block;
+}
+
+.model-training-progress strong {
+  color: inherit;
+  font-size: 10px;
+}
+
+.model-training-progress small {
+  margin-top: 2px;
+  overflow: hidden;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-training-remote-message {
+  margin: 0;
+}
+
+.model-training-run-grid {
+  display: grid;
+  grid-template-columns: 0.8fr 1.2fr;
+  gap: 16px;
+}
+
+.model-training-run-grid > section {
+  padding: 14px;
+  border: 1px solid var(--slate-200);
+  border-radius: 10px;
+}
+
+.model-training-run-grid h3,
+.model-training-logs h3 {
+  margin: 0 0 10px;
+  color: var(--navy-900);
+  font-size: 13px;
+}
+
+.model-training-run-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.model-training-run-facts > div,
+.model-training-provenance > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px;
+  border-radius: 7px;
+  background: var(--slate-100);
+}
+
+.model-training-provenance {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.model-training-logs {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--slate-200);
+  border-radius: 10px;
+  background: #0d1726;
+  color: #d9e5f3;
+}
+
+.model-training-logs > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.model-training-logs > div:first-child > span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 8px;
+  background: #1c2b3e;
+  color: #70d7d1;
+}
+
+.model-training-logs svg {
+  width: 17px;
+}
+
+.model-training-logs h3 {
+  margin: 0;
+  color: #fff;
+}
+
+.model-training-logs p {
+  margin: 2px 0 0;
+  color: #93a8bf;
+  font-size: 9px;
+}
+
+.model-training-logs pre {
+  max-height: 410px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid #263b52;
+  border-radius: 8px;
+  background: #08111e;
+  color: #b8d7ce;
+  font: 10px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.model-training-log-empty {
+  padding: 24px;
+  border: 1px dashed #344c66;
+  border-radius: 8px;
+  color: #93a8bf;
+  font-size: 10px;
+  text-align: center;
+}
+
+.model-training-next-gate {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 11px;
+  padding: 14px;
+  border: 1px solid #b8e1ca;
+  border-radius: 10px;
+  background: #effaf3;
+  color: #17643f;
+}
+
+.model-training-next-gate > svg {
+  width: 22px;
+}
+
+.model-training-next-gate > div {
+  display: grid;
+  gap: 3px;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+@media (max-width: 1180px) {
+  .model-training-workspace,
+  .model-training-run-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .model-training-history {
+    position: static;
+  }
+
+  .model-training-run-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .model-training-metrics,
+  .model-training-preflight,
+  .model-training-progress,
+  .model-training-form,
+  .model-training-parameters,
+  .model-training-runtime,
+  .model-training-run-facts,
+  .model-training-run-list {
+    grid-template-columns: 1fr;
+  }
+
+  .model-training-preflight > div,
+  .model-training-progress li {
+    border-right: 0;
+    border-bottom: 1px solid var(--slate-200);
+  }
+
+  .model-training-preflight > div:last-child,
+  .model-training-progress li:last-child {
+    border-bottom: 0;
+  }
+
+  .model-training-run-heading {
+    flex-direction: column;
+  }
+
+  .model-training-run-heading .heading-actions {
+    flex-wrap: wrap;
+  }
 }
 
 @media (max-width: 1260px) {

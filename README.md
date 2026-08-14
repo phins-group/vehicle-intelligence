@@ -138,8 +138,11 @@ After promotion, `/datasets` catalogs immutable source/export lineage and lets
 ADMIN build, verify, and synchronize the selected export to the configured
 private Hugging Face dataset repository. Restricted plate data requires both a
 server-side policy opt-in and explicit per-request confirmation; the Hub token
-never enters browser state. See
-[Detector training](docs/DETECTOR_TRAINING.md#dataset-catalog-and-private-hub-sync-after-promotion).
+never enters browser state. `/model-training` then pins that reviewed source,
+COCO manifest and private Hub commit into an auditable GPU training run, with
+preflight blockers, status/log polling and ADMIN-only cancellation. It does not
+mark a checkpoint production-ready before ONNX evaluation and release gates. See
+[Detector training](docs/DETECTOR_TRAINING.md#build-model-operator-screen).
 
 On Linux or Apple Silicon, select the current PaddlePaddle CPU/GPU command from
 the [official installation guide](https://www.paddlepaddle.org.cn/documentation/docs/en/install/index_en.html)

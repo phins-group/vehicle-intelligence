@@ -79,6 +79,16 @@ from vehicle_intelligence.domain.live import (
     LivePlateOverlay,
     LiveVehicleOverlay,
 )
+from vehicle_intelligence.domain.model_training import (
+    ModelTrainingCapabilities,
+    ModelTrainingDefaults,
+    ModelTrainingLog,
+    ModelTrainingParameters,
+    ModelTrainingRun,
+    ModelTrainingRunStatus,
+    RemoteTrainingJob,
+    RemoteTrainingSubmission,
+)
 from vehicle_intelligence.domain.plate import (
     CharacterCorrection,
     PlateCandidate,
@@ -184,6 +194,12 @@ __all__ = [
     "MediaReferences",
     "MediaRetentionClaim",
     "ModelMetadata",
+    "ModelTrainingCapabilities",
+    "ModelTrainingDefaults",
+    "ModelTrainingLog",
+    "ModelTrainingParameters",
+    "ModelTrainingRun",
+    "ModelTrainingRunStatus",
     "ModelQualityReport",
     "ModelQualitySlice",
     "OCRCharacter",
@@ -210,6 +226,8 @@ __all__ = [
     "ReIDScore",
     "ReIDSignals",
     "ReIDVerdict",
+    "RemoteTrainingJob",
+    "RemoteTrainingSubmission",
     "SecretUri",
     "TrackedDetection",
     "TrackStatus",

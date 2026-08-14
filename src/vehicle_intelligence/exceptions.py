@@ -205,6 +205,22 @@ class ModelTrainingError(VehicleIntelligenceError):
     """An offline detector training run could not be completed safely."""
 
 
+class ModelTrainingNotFoundError(ModelTrainingError):
+    """A persisted or remote detector training run does not exist."""
+
+
+class ModelTrainingConflictError(ModelTrainingError):
+    """A detector training operation conflicts with current run state."""
+
+
+class ModelTrainingValidationError(ModelTrainingError):
+    """A detector training request is not eligible or safely configured."""
+
+
+class ModelTrainingStorageError(ModelTrainingError):
+    """Detector training evidence could not be read or persisted safely."""
+
+
 class ModelEvaluationError(VehicleIntelligenceError):
     """Detector predictions or release-gate evidence are invalid."""
 

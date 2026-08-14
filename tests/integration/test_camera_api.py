@@ -282,7 +282,10 @@ def test_invalid_camera_url_validation_does_not_echo_secret() -> None:
 def test_persistent_camera_api_fails_closed_without_encryption_key() -> None:
     base = load_settings()
     settings = base.model_copy(
-        update={"mongodb": base.mongodb.model_copy(update={"enabled": True})}
+        update={
+            "mongodb": base.mongodb.model_copy(update={"enabled": True}),
+            "security": SecurityConfig(),
+        }
     )
     app = create_app(
         settings,

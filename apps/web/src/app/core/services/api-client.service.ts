@@ -16,6 +16,9 @@ import {
   EventPage,
   LiveMonitorHealth,
   LiveMonitorState,
+  ModelTrainingLog,
+  ModelTrainingOverview,
+  ModelTrainingRun,
   ModelQualityReport,
   OnvifDiscoveryResult,
   DatasetSample,
@@ -36,6 +39,7 @@ import {
   Rule,
   RuleUpdateRequest,
   RuleWriteRequest,
+  StartModelTrainingRequest,
   SystemHealth,
   VehicleSearchPage,
   VehicleIdentity,
@@ -227,6 +231,36 @@ export class ApiClientService {
   detectorDatasetSync(jobId: string): Observable<DatasetHubSyncJob> {
     return this.http.get<DatasetHubSyncJob>(
       '/api/datasets/syncs/' + encodeURIComponent(jobId)
+    );
+  }
+
+  modelTrainingOverview(limit = 100): Observable<ModelTrainingOverview> {
+    return this.http.get<ModelTrainingOverview>('/api/model-training', {
+      params: { limit }
+    });
+  }
+
+  startModelTraining(request: StartModelTrainingRequest): Observable<ModelTrainingRun> {
+    return this.http.post<ModelTrainingRun>('/api/model-training/runs', request);
+  }
+
+  modelTrainingRun(runId: string): Observable<ModelTrainingRun> {
+    return this.http.get<ModelTrainingRun>(
+      '/api/model-training/runs/' + encodeURIComponent(runId)
+    );
+  }
+
+  modelTrainingLogs(runId: string, tail = 300): Observable<ModelTrainingLog> {
+    return this.http.get<ModelTrainingLog>(
+      '/api/model-training/runs/' + encodeURIComponent(runId) + '/logs',
+      { params: { tail } }
+    );
+  }
+
+  cancelModelTrainingRun(runId: string): Observable<ModelTrainingRun> {
+    return this.http.post<ModelTrainingRun>(
+      '/api/model-training/runs/' + encodeURIComponent(runId) + '/cancel',
+      {}
     );
   }
 

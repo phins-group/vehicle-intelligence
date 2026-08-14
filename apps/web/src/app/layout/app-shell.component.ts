@@ -4,6 +4,7 @@ import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } fro
 import {
   LucideActivity,
   LucideBell,
+  LucideBrainCircuit,
   LucideBoxes,
   LucideCamera,
   LucideCar,
@@ -35,6 +36,7 @@ import { RealtimeService } from '../core/realtime/realtime.service';
     RouterLinkActive,
     LucideActivity,
     LucideBell,
+    LucideBrainCircuit,
     LucideBoxes,
     LucideCamera,
     LucideCar,
@@ -104,7 +106,8 @@ export class AppShellComponent implements OnInit, OnDestroy {
 
   private updateDatasetSection(url: string): void {
     const path = url.split(/[?#]/, 1)[0];
-    const active = path === '/datasets' || path === '/dataset-review';
+    const active =
+      path === '/datasets' || path === '/dataset-review' || path === '/model-training';
     this.datasetSectionActive.set(active);
     if (active) this.datasetMenuOpen.set(true);
   }

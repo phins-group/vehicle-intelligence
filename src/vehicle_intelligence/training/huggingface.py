@@ -26,6 +26,7 @@ class HuggingFacePrivateRegistry:
         *,
         revision: str = "main",
         allow_restricted_private: bool = False,
+        replace_remote: bool = False,
     ) -> HubUploadResult:
         folder = directory.expanduser().resolve()
         manifest, _ = verify_detector_dataset(folder)
@@ -34,7 +35,13 @@ class HuggingFacePrivateRegistry:
             manifest,
             allow_restricted_private=allow_restricted_private,
         )
-        return self._upload(folder, repo_id, "dataset", revision)
+        return self._upload(
+            folder,
+            repo_id,
+            "dataset",
+            revision,
+            replace_remote=replace_remote,
+        )
 
     def upload_model(
         self,
@@ -53,6 +60,8 @@ class HuggingFacePrivateRegistry:
         repo_id: str,
         repo_type: str,
         revision: str,
+        *,
+        replace_remote: bool = False,
     ) -> HubUploadResult:
         _validate_repo_id(repo_id)
         if not revision.strip() or len(revision) > 128:
@@ -72,13 +81,18 @@ class HuggingFacePrivateRegistry:
             )
             if getattr(info, "private", None) is not True:
                 raise ModelRegistryError("refusing to upload into a non-private Hugging Face repo")
+            upload_options: dict[str, Any] = {
+                "folder_path": str(folder),
+                "repo_id": repo_id,
+                "repo_type": repo_type,
+                "revision": revision,
+                "commit_message": f"Upload verified {folder.name}",
+                "token": self._token,
+            }
+            if replace_remote:
+                upload_options["delete_patterns"] = "*"
             commit = self._api.upload_folder(
-                folder_path=str(folder),
-                repo_id=repo_id,
-                repo_type=repo_type,
-                revision=revision,
-                commit_message=f"Upload verified {folder.name}",
-                token=self._token,
+                **upload_options,
             )
         except ModelRegistryError:
             raise
@@ -115,12 +129,14 @@ class HuggingFaceJobRunner:
         command: Sequence[str],
         flavor: str,
         dataset_repo: str,
+        dataset_revision: str | None = None,
         output_bucket: str,
         namespace: str | None = None,
         timeout_seconds: int = 86_400,
         environment: Mapping[str, str] | None = None,
         secrets: Mapping[str, str] | None = None,
         name: str | None = None,
+        labels: Mapping[str, str] | None = None,
     ) -> HubJobResult:
         _validate_repo_id(dataset_repo)
         _validate_repo_id(output_bucket)
@@ -137,6 +153,7 @@ class HuggingFaceJobRunner:
             type="dataset",
             source=dataset_repo,
             mount_path="/data",
+            revision=dataset_revision,
             read_only=True,
         )
         output_volume = self._volume(
@@ -156,6 +173,7 @@ class HuggingFaceJobRunner:
                 secrets=dict(secrets or {}),
                 volumes=[dataset_volume, output_volume],
                 name=name,
+                labels=dict(labels or {}),
             )
         except Exception as exc:
             raise ModelRegistryError("Hugging Face training Job submission failed") from exc
@@ -211,7 +229,11 @@ def _validate_dataset_hub_metadata(
             not isinstance(source, Mapping)
             or manifest.get("releaseEligible") is not True
             or source.get("type") != "FIRST_PARTY_SOURCE"
-            or source.get("rightsAssertion") != "USER_CONFIRMED_FIRST_PARTY_COLLECTION"
+            or source.get("rightsAssertion")
+            not in {
+                "USER_CONFIRMED_FIRST_PARTY_COLLECTION",
+                "USER_CONFIRMED_FIRST_PARTY_VIDEO_COLLECTION",
+            }
             or source.get("licenseReviewStatus")
             != "PROPRIETARY_FIRST_PARTY_USER_CONFIRMED"
         ):

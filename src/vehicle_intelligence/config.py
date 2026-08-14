@@ -732,6 +732,32 @@ class DatasetRegistryConfig(BaseModel):
     restricted_private_sync_enabled: bool = False
 
 
+class ModelTrainingRuntimeConfig(BaseModel):
+    """Durable remote training-run orchestration exposed to authenticated operators."""
+
+    enabled: bool = True
+    workspace_directory: Path = Path("datasets/model-training")
+    training_config: Path = Path("configs/model-training.yaml")
+    maximum_runs: int = Field(default=10_000, ge=1, le=100_000)
+    maximum_concurrent_runs: int = Field(default=1, ge=1, le=32)
+    maximum_log_lines: int = Field(default=500, ge=10, le=5000)
+    container_training_config: str = "/workspace/configs/model-training.hf.yaml"
+    container_output_directory: str = "/output/model-training"
+
+    @field_validator("container_training_config", "container_output_directory")
+    @classmethod
+    def validate_container_path(cls, value: str) -> str:
+        stripped = value.strip()
+        if (
+            not stripped.startswith("/")
+            or "\x00" in stripped
+            or ".." in Path(stripped).parts
+            or len(stripped) > 512
+        ):
+            raise ValueError("model training container path is invalid")
+        return stripped.rstrip("/") or "/"
+
+
 class EventBusConfig(BaseModel):
     backend: Literal["direct", "redis"] = "direct"
 
@@ -1084,6 +1110,9 @@ class Settings(BaseSettings):
     dataset_export: DatasetExportConfig = Field(default_factory=DatasetExportConfig)
     dataset_review: DatasetReviewConfig = Field(default_factory=DatasetReviewConfig)
     dataset_registry: DatasetRegistryConfig = Field(default_factory=DatasetRegistryConfig)
+    model_training: ModelTrainingRuntimeConfig = Field(
+        default_factory=ModelTrainingRuntimeConfig
+    )
     event_bus: EventBusConfig = Field(default_factory=EventBusConfig)
     rule_engine: RuleEngineConfig = Field(default_factory=RuleEngineConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)

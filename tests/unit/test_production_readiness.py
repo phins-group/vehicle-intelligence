@@ -2,6 +2,7 @@ import argparse
 import base64
 import hashlib
 import json
+from pathlib import Path
 
 from pydantic import SecretStr
 
@@ -108,8 +109,13 @@ def _production_settings(tmp_path):
     )
 
 
-def test_default_configuration_fails_closed_and_report_is_secret_safe(tmp_path) -> None:
-    settings = load_settings()
+def test_default_configuration_fails_closed_and_report_is_secret_safe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config_path = Path("configs/default.yaml").resolve()
+    monkeypatch.chdir(tmp_path)
+    settings = load_settings(config_path)
 
     report = assess_production_readiness(settings, base_directory=tmp_path)
     document = report.to_document()

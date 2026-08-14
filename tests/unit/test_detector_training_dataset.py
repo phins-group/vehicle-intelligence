@@ -32,10 +32,17 @@ def test_grouped_coco_dataset_is_immutable_and_has_no_split_leakage(tmp_path) ->
     assert {image["group_id"] for image in test["images"]} == {"group-test"}
     assert train["categories"][0]["name"] == "car"
     assert manifest["licenseStatus"] == "UNSPECIFIED"
+    assert manifest["imageLayout"] == {
+        "type": "HASH_PREFIX_SHARD",
+        "prefixLength": 2,
+        "maximumFilesPerDirectory": 10_000,
+    }
     assert (directory / "ATTRIBUTION.csv").is_file()
     assert "license: other" in (directory / "README.md").read_text()
 
-    image_path = directory / train["images"][0]["file_name"]
+    image_file_name = train["images"][0]["file_name"]
+    assert len(image_file_name.split("/")) == 4
+    image_path = directory / image_file_name
     image_path.write_bytes(b"tampered")
     with pytest.raises(DetectorDatasetError, match="verification failed"):
         verify_detector_dataset(directory)
