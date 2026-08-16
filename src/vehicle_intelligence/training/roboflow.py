@@ -82,8 +82,7 @@ ROBOFLOW_PLATE_ARCHIVES: tuple[RoboflowArchiveSpec, ...] = (
         title="YOLOv8 and Vision transformer",
         author="ComputerVision Project",
         dataset_url=(
-            "https://universe.roboflow.com/computervision-project/"
-            "yolov8-and-vision-transformer"
+            "https://universe.roboflow.com/computervision-project/yolov8-and-vision-transformer"
         ),
         workspace="computervision-project",
         project="yolov8-and-vision-transformer",
@@ -105,8 +104,7 @@ ROBOFLOW_PLATE_ARCHIVES: tuple[RoboflowArchiveSpec, ...] = (
         title="traffic_violation",
         author="TrafficManagement",
         dataset_url=(
-            "https://universe.roboflow.com/trafficmanagement/"
-            "traffic_violation-2nycm/dataset/3"
+            "https://universe.roboflow.com/trafficmanagement/traffic_violation-2nycm/dataset/3"
         ),
         workspace="trafficmanagement",
         project="traffic_violation-2nycm",
@@ -125,8 +123,7 @@ ROBOFLOW_PLATE_ARCHIVES: tuple[RoboflowArchiveSpec, ...] = (
         title="vietnamese license plate",
         author="school",
         dataset_url=(
-            "https://universe.roboflow.com/school-fuhih/"
-            "vietnamese-license-plate-tptd0/dataset/1"
+            "https://universe.roboflow.com/school-fuhih/vietnamese-license-plate-tptd0/dataset/1"
         ),
         workspace="school-fuhih",
         project="vietnamese-license-plate-tptd0",
@@ -143,8 +140,7 @@ ROBOFLOW_PLATE_ARCHIVES: tuple[RoboflowArchiveSpec, ...] = (
         title="License Plate Detection",
         author="cao phong",
         dataset_url=(
-            "https://universe.roboflow.com/cao-phong-3qbun/"
-            "license-plate-detection-dhfxl/dataset/1"
+            "https://universe.roboflow.com/cao-phong-3qbun/license-plate-detection-dhfxl/dataset/1"
         ),
         workspace="cao-phong-3qbun",
         project="license-plate-detection-dhfxl",

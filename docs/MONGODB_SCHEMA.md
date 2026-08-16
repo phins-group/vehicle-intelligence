@@ -129,6 +129,16 @@ db.cameras.createIndex({updatedAt: -1}, {name: "ix_updated_at"})
 
 Updates replace the bounded document only when `_id` and the expected `revision`
 match. A fresh encryption nonce is used even when the RTSP value is retained.
+Configured-camera admission also owns one bounded `system_config` document:
+
+```javascript
+{_id: "camera-capacity", reservedCount: 12}
+```
+
+Create reserves a slot with a conditional `findOneAndUpdate` before inserting;
+delete releases it. In production both writes share the request transaction, so
+concurrent API replicas cannot exceed the configured limit. The counter is not a
+public camera statistic and must not be edited independently of `cameras`.
 
 ### `camera_health`
 
@@ -579,9 +589,7 @@ candidate generation by `(toCameraId, enabled, fromCameraId)`;
 generator uses `ix_fingerprint_camera_time` with a bounded time range and limit.
 It never scans all fingerprints and never assumes the reverse edge exists.
 
-### Other planned collections
-
-`system_config` is introduced only by the phase that owns its lifecycle.
+### Additional identity collections
 
 ### `identity_reviews`
 

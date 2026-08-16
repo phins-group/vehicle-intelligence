@@ -154,9 +154,7 @@ class CrossCameraCandidateGenerator:
     ) -> tuple[CrossCameraCandidate, ...]:
         requested = self._candidate_limit if limit is None else limit
         if not 1 <= requested <= self._candidate_limit:
-            raise ValueError(
-                f"candidate limit must be in [1, {self._candidate_limit}]"
-            )
+            raise ValueError(f"candidate limit must be in [1, {self._candidate_limit}]")
         source = await self._identities.get_fingerprint(fingerprint_id)
         if source is None:
             raise TopologyNotFoundError(f"vehicle fingerprint not found: {fingerprint_id}")
@@ -167,12 +165,8 @@ class CrossCameraCandidateGenerator:
         )
         candidates: list[CrossCameraCandidate] = []
         for edge in edges:
-            earliest = source.observed_at - timedelta(
-                seconds=edge.maximum_travel_seconds
-            )
-            latest = source.observed_at - timedelta(
-                seconds=edge.minimum_travel_seconds
-            )
+            earliest = source.observed_at - timedelta(seconds=edge.maximum_travel_seconds)
+            latest = source.observed_at - timedelta(seconds=edge.minimum_travel_seconds)
             observations = await self._identities.find_fingerprints_by_camera_time(
                 edge.from_camera_id,
                 earliest,
@@ -180,14 +174,9 @@ class CrossCameraCandidateGenerator:
                 self._per_edge_limit,
             )
             for observation in observations:
-                if (
-                    observation.id == source.id
-                    or observation.vehicle_id == source.vehicle_id
-                ):
+                if observation.id == source.id or observation.vehicle_id == source.vehicle_id:
                     continue
-                travel_seconds = (
-                    source.observed_at - observation.observed_at
-                ).total_seconds()
+                travel_seconds = (source.observed_at - observation.observed_at).total_seconds()
                 candidates.append(
                     CrossCameraCandidate(
                         fingerprint_id=observation.id,

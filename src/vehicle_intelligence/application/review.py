@@ -175,9 +175,7 @@ class HumanPlateReviewService:
         )
         if event.media.plate_crop_key is None:
             return None, reason
-        if self._media is not None and not await self._media.exists(
-            event.media.plate_crop_key
-        ):
+        if self._media is not None and not await self._media.exists(event.media.plate_crop_key):
             return None, reason
         sample_id = _dataset_sample_id(event.id, event.plate.review.revision)
         sample = DatasetSample(

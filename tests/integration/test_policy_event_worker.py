@@ -217,9 +217,7 @@ async def test_partial_policy_failure_reclaims_without_repeating_completed_actio
         name="Retry without duplicate side effect",
         enabled=True,
         priority=100,
-        conditions=(
-            RuleCondition("camera.id", RuleConditionOperator.EQ, sample_event.camera.id),
-        ),
+        conditions=(RuleCondition("camera.id", RuleConditionOperator.EQ, sample_event.camera.id),),
         actions=(alert_action, webhook_action),
         created_at=sample_event.occurred_at,
         updated_at=sample_event.occurred_at,
@@ -245,9 +243,7 @@ async def test_partial_policy_failure_reclaims_without_repeating_completed_actio
     )
     worker = VehicleEventWorker(consumer, events, codec, post_processor=processor)
     admin = Redis.from_url(os.environ["TEST_REDIS_URL"], decode_responses=True)
-    execution_ids = [
-        action_execution_id(event.id, rule.id, action.id) for action in rule.actions
-    ]
+    execution_ids = [action_execution_id(event.id, rule.id, action.id) for action in rule.actions]
     try:
         await publisher.initialize()
         await worker.initialize()

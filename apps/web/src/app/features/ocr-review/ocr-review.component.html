@@ -13,49 +13,84 @@
 @if (!auth.canReviewPlates()) {
   <div class="notice neutral" role="status">Tài khoản VIEWER chỉ có quyền đọc sự kiện. Hàng đợi OCR yêu cầu vai trò OPERATOR hoặc ADMIN.</div>
 } @else {
-  @if (error()) { <div class="notice error" role="alert">{{ error() }}</div> }
+  @if (loadState.staleError(); as loadError) {
+    <div class="notice error" role="alert">
+      {{ loadError }} Dữ liệu đã tải thành công trước đó vẫn được giữ nguyên.
+    </div>
+  }
+  @if (bufferLimitReached()) {
+    <div class="notice neutral" role="status">
+      Đang giữ 500 event cần duyệt mới nhất để giới hạn bộ nhớ. Làm mới sau khi xử lý để đồng bộ hàng đợi.
+    </div>
+  }
 
   <section class="panel table-panel">
     <div class="panel-heading">
       <div><h2>Hàng đợi cần duyệt</h2><p>{{ events().length }} event NEEDS_REVIEW đã tải</p></div>
       <span class="live-chip"><svg lucideScanText aria-hidden="true"></svg> OCR review</span>
     </div>
-    @if (loading() && !events().length) {
-      <div class="empty-state">Đang tải hàng đợi…</div>
+    @if (loading() && !loadState.hasLoaded()) {
+      <div class="empty-state" role="status" aria-live="polite">Đang tải hàng đợi…</div>
+    } @else if (loadState.initialError(); as loadError) {
+      <div class="empty-state" role="alert">
+        <strong>{{ loadError }}</strong>
+        <span>Kiểm tra kết nối API rồi thử lại.</span>
+        <button class="button secondary" type="button" (click)="load(true)">Thử lại</button>
+      </div>
     } @else if (!events().length) {
       <div class="empty-state"><svg lucideCheck aria-hidden="true"></svg><strong>Không còn event chờ duyệt</strong><span>Event confidence thấp mới sẽ tự xuất hiện qua realtime.</span></div>
     } @else {
       <div class="table-scroll">
         <table class="interactive-table">
-          <thead><tr><th>Thời gian</th><th>AI prediction</th><th>Camera</th><th>Vehicle</th><th>Confidence</th><th>Evidence</th><th></th></tr></thead>
+          <thead><tr><th>Thời gian</th><th>AI prediction</th><th>Camera</th><th>Vehicle</th><th>Confidence</th><th>Evidence</th><th><span class="visually-hidden">Thao tác</span></th></tr></thead>
           <tbody>
-            @for (event of events(); track event._id) {
-              <tr (click)="showReview(event)" tabindex="0" (keydown.enter)="showReview(event)">
+            @for (event of eventWindow().items; track event._id) {
+              <tr>
                 <td><strong>{{ event.occurredAt | date: 'dd/MM HH:mm:ss' }}</strong><small class="mono">{{ event.trackId }}</small></td>
                 <td><strong class="plate-text">{{ displayPlate(event) }}</strong><small>raw: {{ event.plate?.raw || 'N/A' }}</small></td>
                 <td><strong>{{ event.camera.name }}</strong><small>{{ event.camera.zone || event.camera.id }}</small></td>
                 <td>{{ event.vehicle.type }}<small>{{ event.vehicle.color || 'Chưa rõ màu' }}</small></td>
                 <td>{{ event.plate ? (event.plate.confidence | percent: '1.0-1') : 'N/A' }}</td>
                 <td>{{ event.media.plateCropKey ? 'Plate crop' : 'Snapshot only' }}</td>
-                <td><svg lucideChevronRight aria-hidden="true"></svg></td>
+                <td>
+                  <button
+                    class="icon-button table-row-action"
+                    type="button"
+                    [attr.aria-label]="'Duyệt OCR ' + displayPlate(event)"
+                    (click)="showReview(event)"
+                  >
+                    <svg lucideChevronRight aria-hidden="true"></svg>
+                  </button>
+                </td>
               </tr>
             }
           </tbody>
         </table>
       </div>
-      @if (nextCursor()) {
-        <div class="load-more"><button class="button secondary" type="button" (click)="load(false)" [disabled]="loadingMore()">{{ loadingMore() ? 'Đang tải…' : 'Tải thêm' }}</button></div>
+      @if (eventWindow().hasPrevious || eventWindow().hasNext || (nextCursor() && !bufferLimitReached())) {
+        <div class="load-more">
+          @if (eventWindow().hasPrevious) {
+            <button class="button secondary" type="button" (click)="showNewerEvents()">100 event mới hơn</button>
+          }
+          <span class="subtle" role="status">Đang hiển thị {{ eventWindow().start + 1 }}–{{ eventWindow().end }} / {{ eventWindow().total }}</span>
+          @if (eventWindow().hasNext) {
+            <button class="button secondary" type="button" (click)="showOlderEvents()">100 event cũ hơn</button>
+          }
+          @if (nextCursor() && !bufferLimitReached()) {
+            <button class="button secondary" type="button" (click)="load(false)" [disabled]="loadingMore() || loading()">{{ loadingMore() ? 'Đang tải…' : 'Tải thêm từ máy chủ' }}</button>
+          }
+        </div>
       }
     }
   </section>
 }
 
 @if (selected(); as event) {
-  <button class="drawer-backdrop" type="button" aria-label="Đóng form duyệt" (click)="closeReview()"></button>
-  <aside class="detail-drawer wide" aria-label="Duyệt OCR biển số">
+  <button data-dialog-backdrop class="drawer-backdrop" type="button" aria-label="Đóng form duyệt" (click)="closeReview()"></button>
+  <aside appAccessibleDialog class="detail-drawer wide" aria-labelledby="ocr-review-title" (appDialogDismiss)="closeReview()">
     <div class="drawer-heading">
-      <div><p class="eyebrow">HUMAN OCR REVIEW</p><h2>{{ displayPlate(event) }}</h2></div>
-      <button class="icon-button" type="button" aria-label="Đóng" (click)="closeReview()"><svg lucideX aria-hidden="true"></svg></button>
+      <div><p class="eyebrow">HUMAN OCR REVIEW</p><h2 id="ocr-review-title">{{ displayPlate(event) }}</h2></div>
+      <button data-dialog-initial-focus class="icon-button" type="button" aria-label="Đóng" (click)="closeReview()"><svg lucideX aria-hidden="true"></svg></button>
     </div>
     <div class="detail-hero"><span class="status-pill" [attr.data-status]="event.status">{{ event.status }}</span><span class="direction" [class.enter]="event.direction === 'ENTER'" [class.exit]="event.direction === 'EXIT'">{{ event.direction }}</span></div>
 

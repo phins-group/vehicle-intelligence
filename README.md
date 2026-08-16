@@ -47,6 +47,10 @@ python run_pipeline.py sample.mp4 \
   --vehicle-model yolo11n.pt
 ```
 
+Detector paths must resolve to local files. Runtime loading does not implicitly
+download checkpoints, and any configured `model_hash` is verified before a
+model is deserialized.
+
 To bypass vehicle detection and track plates directly on each sampled full
 frame, enable plate-only mode. The vehicle model is not loaded:
 
@@ -71,13 +75,33 @@ values described in [configs/default.yaml](configs/default.yaml).
 Start the Phase 1 local infrastructure and API with:
 
 ```bash
-cp .env.example .env
+install -m 600 .env.example .env
 # Generate once and place the result in .env as
 # VIP_SECURITY__CAMERA_CREDENTIAL_KEY=<value>.
 python -c 'import secrets; print(secrets.token_urlsafe(32))'
 docker compose up -d mongodb redis minio api
 curl http://localhost:8000/api/system/health
+curl http://localhost:8000/livez
+curl http://localhost:8000/readyz
 ```
+
+`/livez` is process-only liveness and is used by the image healthcheck. `/readyz`
+returns `503` until startup finishes or while the configured canonical MongoDB
+event store is unavailable. Optional camera-management, MinIO, realtime, and live
+monitor outages are reported as degraded checks without removing the REST API
+from service. Keep `/api/system/health` for the backward-compatible capability
+summary; ingress and orchestrators should query `/readyz` on the API listener
+(port `8000` by default) for traffic admission.
+
+Compose binds every published port to `127.0.0.1` by default. Set
+`HOST_BIND_ADDRESS=0.0.0.0` only when remote access is intentional and protected
+by the appropriate firewall, TLS, and authentication controls.
+
+The API container runs as the non-root `vehicle` user. On Linux hosts, ensure
+the bind-mounted `./datasets` directory is writable by that container user; use
+`docker compose run --rm --no-deps --entrypoint sh api -c 'id -u; id -g'` to
+inspect its UID/GID before adjusting directory ownership. Avoid making the
+dataset directory world-writable.
 
 Start the same-origin Angular operator console with the platform services:
 
@@ -224,13 +248,17 @@ export VIP_MONGODB__URI='mongodb://127.0.0.1:27017'
 export VIP_SECURITY__CAMERA_CREDENTIAL_KEY='<32-byte URL-safe base64 value>'
 export VIP_REDIS__URL='redis://127.0.0.1:6379/0'
 export VIP_LIVE_MONITOR__ENABLED=true
+# Optional: load vehicle/plate models once and batch inference across cameras.
+export VIP_GPU_SCHEDULER__ENABLED=true
 vehicle-camera-supervisor
 ```
 
 The supervisor continuously reconciles MongoDB configuration. It starts/stops a
 worker when a camera is enabled/disabled, restarts it after a revision change or
 crash, applies bounded restart backoff, and caps simultaneous workers and starts
-per reconciliation cycle. ONVIF discovery returns temporary credential-free
+per reconciliation cycle. With the GPU scheduler enabled, it starts the bounded
+shared inference daemon before any camera worker and restarts dependent workers
+only after the daemon is healthy. ONVIF discovery returns temporary credential-free
 device metadata only; an ADMIN must explicitly create each camera and provide
 its RTSP URL. The RTSP URL is passed only in a child
 environment variable—not as an argument—and the child cannot inherit the
@@ -266,7 +294,10 @@ vehicle-event-worker
 The consumer group uses at-least-once delivery. A message is ACKed only after the
 event is durably persisted and every matched rule action has reached a durable
 terminal/success state. Stale pending messages are reclaimed; invalid contracts
-move to the bounded dead-letter stream. See [Event contracts](docs/EVENTS.md).
+move to the bounded dead-letter stream. Each Redis batch preserves ordering per
+camera while processing different cameras with bounded concurrency, then ACKs
+successful messages together. Enabled rules are validated once per short TTL
+instead of being reloaded for every event. See [Event contracts](docs/EVENTS.md).
 
 ## Watchlists, rules, actions, and alerts
 
@@ -544,6 +575,17 @@ python scripts/benchmark_detector.py \
 For multi-camera fairness/capacity and immutable edge packaging, see
 [Fair Scheduling and Edge Deployment](docs/EDGE_DEPLOYMENT.md).
 
+Verify the persisted benchmark set before accepting it:
+
+```bash
+python scripts/verify_performance_gates.py output/benchmarks
+```
+
+The verifier independently enforces the default edge ceilings of 10% dropped
+frames and 250 ms p95 latency, so an overload report cannot pass merely because
+it was generated with relaxed per-run thresholds. Both ceilings can be made
+stricter through the verifier CLI.
+
 Export reviewed OCR feedback and enforce offline evaluation gates:
 
 ```bash
@@ -594,3 +636,17 @@ TEST_MONGODB_URI=mongodb://127.0.0.1:27017 \
   TEST_REDIS_URL=redis://127.0.0.1:6379/15 \
   TEST_MINIO_ENDPOINT=127.0.0.1:9000 pytest -ra
 ```
+
+CI additionally runs a required fail-closed real-service gate against the pinned
+Compose MongoDB replica set, Redis, and MinIO services. To reproduce that exact
+selection locally after starting the services, run:
+
+```bash
+TEST_MONGODB_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true' \
+TEST_REDIS_URL='redis://127.0.0.1:6379/15' \
+TEST_MINIO_ENDPOINT='127.0.0.1:9000' \
+uv run --locked python scripts/run_real_service_tests.py
+```
+
+The command fails when any required connection setting is missing or any
+selected service-backed integration test is skipped.

@@ -128,9 +128,7 @@ def build_dataset_registry_router(
                 DatasetHubSyncCommand(
                     export_id=payload.export_id,
                     revision=payload.revision,
-                    restricted_transfer_confirmed=(
-                        payload.confirm_restricted_private_transfer
-                    ),
+                    restricted_transfer_confirmed=(payload.confirm_restricted_private_transfer),
                 ),
                 principal,
             )
@@ -148,9 +146,7 @@ def build_dataset_registry_router(
                             "exportId": job.export_id,
                             "repoId": job.repo_id,
                             "revision": job.requested_revision,
-                            "restrictedTransferConfirmed": (
-                                job.restricted_transfer_confirmed
-                            ),
+                            "restrictedTransferConfirmed": (job.restricted_transfer_confirmed),
                         },
                     )
                 )

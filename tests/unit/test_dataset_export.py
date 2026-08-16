@@ -30,6 +30,7 @@ from vehicle_intelligence.infrastructure.persistence.review_memory import (
     InMemoryDatasetSampleRepository,
 )
 from vehicle_intelligence.infrastructure.storage.local import LocalMediaStorage
+from vehicle_intelligence.infrastructure.vision.opencv import OpenCVDatasetImageTranscoder
 
 
 def _sample(sample_event, sample_id: str, event_id: str, image_key: str) -> DatasetSample:
@@ -83,9 +84,7 @@ async def test_dataset_export_is_atomic_verified_idempotent_and_camera_grouped(
     assert await samples.create(
         _sample(sample_event, "dss_good", sample_event.id, "plates/good.jpg")
     )
-    assert await samples.create(
-        _sample(sample_event, "dss_good_2", second.id, "plates/good-2.jpg")
-    )
+    assert await samples.create(_sample(sample_event, "dss_good_2", second.id, "plates/good-2.jpg"))
     assert await samples.create(
         _sample(sample_event, "dss_missing", missing_event.id, "plates/missing.jpg")
     )
@@ -103,6 +102,7 @@ async def test_dataset_export_is_atomic_verified_idempotent_and_camera_grouped(
         samples,
         events,
         media,
+        OpenCVDatasetImageTranscoder(),
         clock=lambda: sample_event.occurred_at + timedelta(hours=1),
     )
 
@@ -159,3 +159,33 @@ def test_ocr_feedback_evaluation_reports_accuracy_calibration_and_gates() -> Non
     assert release_gates(evaluation, minimum_exact_accuracy=0.6) == ["exact_accuracy"]
     with pytest.raises(DatasetExportError, match=r"must be in \[0, 1\]"):
         release_gates(evaluation, maximum_ece=1.1)
+
+
+def test_dataset_image_transcoder_preserves_bounded_failure_codes() -> None:
+    transcoder = OpenCVDatasetImageTranscoder()
+    image = np.full((4, 5, 3), 180, dtype=np.uint8)
+    encoded, buffer = cv2.imencode(".jpg", image)
+    assert encoded
+
+    valid = transcoder.normalize_jpeg(
+        bytes(buffer),
+        maximum_pixels=20,
+        jpeg_quality=95,
+    )
+    oversized = transcoder.normalize_jpeg(
+        bytes(buffer),
+        maximum_pixels=19,
+        jpeg_quality=95,
+    )
+    invalid = transcoder.normalize_jpeg(
+        b"not-an-image",
+        maximum_pixels=20,
+        jpeg_quality=95,
+    )
+
+    assert valid.jpeg is not None
+    assert valid.error_code is None
+    assert oversized.jpeg is None
+    assert oversized.error_code == "MEDIA_DIMENSIONS_EXCEEDED"
+    assert invalid.jpeg is None
+    assert invalid.error_code == "MEDIA_INVALID"

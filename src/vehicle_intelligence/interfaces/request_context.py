@@ -20,4 +20,3 @@ def request_id(request: Request) -> str:
     if not isinstance(value, str) or not value:
         raise RuntimeError("request id middleware was not applied")
     return value
-

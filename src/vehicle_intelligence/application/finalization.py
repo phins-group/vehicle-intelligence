@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import cast
 
 from vehicle_intelligence.application.direction import DirectionEstimator
+from vehicle_intelligence.application.finalization_outbox import (
+    FinalizationMediaObject,
+    FinalizationOutbox,
+    MediaReferenceField,
+)
 from vehicle_intelligence.application.ports import (
     ImageEncoder,
     MediaStorage,
@@ -28,6 +34,7 @@ from vehicle_intelligence.domain import (
     VehicleEvidence,
     VehicleTrack,
 )
+from vehicle_intelligence.exceptions import MediaStorageError
 
 
 def utc_now() -> datetime:
@@ -53,6 +60,7 @@ class VehicleEventFinalizer:
         config_version: str | None = None,
         clock: Callable[[], datetime] = utc_now,
         event_id_factory: Callable[[VehicleTrack, EventType], str] = deterministic_event_id,
+        outbox: FinalizationOutbox | None = None,
     ) -> None:
         self._camera = camera
         self._events = events
@@ -65,6 +73,11 @@ class VehicleEventFinalizer:
         self._config_version = config_version
         self._clock = clock
         self._event_id_factory = event_id_factory
+        self._outbox = outbox
+        self._pending_outbox: dict[
+            str,
+            tuple[VehicleEvent, tuple[FinalizationMediaObject, ...]],
+        ] = {}
         self._lock = asyncio.Lock()
 
     async def finalize(self, track: VehicleTrack) -> VehicleEvent | None:
@@ -89,7 +102,7 @@ class VehicleEventFinalizer:
                 else None
             )
             status = self._event_status(track, plate)
-            media = await self._persist_media(track, event_id)
+            media, media_objects = self._prepare_media(track, event_id)
             event = VehicleEvent(
                 id=event_id,
                 schema_version=1,
@@ -124,11 +137,23 @@ class VehicleEventFinalizer:
                     }
                 },
             )
+            if self._outbox is not None:
+                pending = self._pending_outbox.get(event.id)
+                if pending is None:
+                    self._pending_outbox[event.id] = (event, media_objects)
+                else:
+                    event, media_objects = pending
+                return await self._stage_and_finalize(track, event, media_objects)
+            await self._persist_media(media_objects)
             created = await self._publisher.publish(event)
             track.mark_finalized()
             return event if created else None
 
-    async def _persist_media(self, track: VehicleTrack, event_id: str) -> MediaReferences:
+    def _prepare_media(
+        self,
+        track: VehicleTrack,
+        event_id: str,
+    ) -> tuple[MediaReferences, tuple[FinalizationMediaObject, ...]]:
         occurred = track.last_seen.astimezone(UTC)
         prefix = f"vehicles/{occurred:%Y/%m/%d}/{self._camera.id}/{event_id}"
         entries = (
@@ -156,18 +181,58 @@ class VehicleEventFinalizer:
             "vehicle_crop_key": None,
             "plate_crop_key": None,
         }
-        pending: list[tuple[str, str, Awaitable[str]]] = []
+        media_objects: list[FinalizationMediaObject] = []
         for field_name, enabled, candidate, key in entries:
             if enabled and candidate is not None:
                 encoded = self._image_encoder.encode_jpeg(candidate.image)
-                pending.append(
-                    (field_name, key, self._media_storage.put(key, encoded, "image/jpeg"))
+                references[field_name] = key
+                media_objects.append(
+                    FinalizationMediaObject(
+                        reference_field=cast(MediaReferenceField, field_name),
+                        key=key,
+                        data=encoded,
+                    )
                 )
-        if pending:
-            stored = await asyncio.gather(*(operation for _, _, operation in pending))
-            for (field_name, _, _), stored_key in zip(pending, stored, strict=True):
-                references[field_name] = stored_key
-        return MediaReferences(**references)
+        return MediaReferences(**references), tuple(media_objects)
+
+    async def _persist_media(self, media: tuple[FinalizationMediaObject, ...]) -> None:
+        stored = await asyncio.gather(
+            *(self._media_storage.put(item.key, item.data, item.content_type) for item in media)
+        )
+        if any(stored_key != item.key for item, stored_key in zip(media, stored, strict=True)):
+            raise MediaStorageError("media storage returned a non-deterministic object key")
+
+    async def _stage_and_finalize(
+        self,
+        track: VehicleTrack,
+        event: VehicleEvent,
+        media: tuple[FinalizationMediaObject, ...],
+    ) -> VehicleEvent:
+        if self._outbox is None:
+            raise AssertionError("durable stage called without an outbox")
+        stage_task = asyncio.create_task(self._outbox.stage(event, media))
+        caller_cancellation: asyncio.CancelledError | None = None
+        while not stage_task.done():
+            try:
+                await asyncio.shield(stage_task)
+            except asyncio.CancelledError as exc:
+                caller_cancellation = exc
+            except BaseException:
+                break
+        stage_error: BaseException | None = None
+        try:
+            stage_task.result()
+        except BaseException as exc:
+            stage_error = exc
+        if stage_error is not None:
+            if caller_cancellation is not None:
+                raise caller_cancellation from stage_error
+            raise stage_error
+        track.mark_finalized()
+        self._pending_outbox.pop(event.id, None)
+        if caller_cancellation is not None:
+            raise caller_cancellation
+        return event
 
     def _event_status(self, track: VehicleTrack, plate: PlateEvidence | None) -> EventStatus:
         if plate is None:

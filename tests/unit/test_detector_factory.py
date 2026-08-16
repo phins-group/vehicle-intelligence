@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from vehicle_intelligence.config import DetectorConfig, VehicleDetectorConfig, load_settings
-from vehicle_intelligence.exceptions import UnsupportedDetectorProvider
+from vehicle_intelligence.config import (
+    AppConfig,
+    DetectorConfig,
+    VehicleDetectorConfig,
+    load_settings,
+)
+from vehicle_intelligence.exceptions import ConfigurationError, UnsupportedDetectorProvider
 from vehicle_intelligence.infrastructure.vision import factory
 from vehicle_intelligence.interfaces.composition import validate_runtime_settings
 
@@ -122,3 +127,34 @@ def test_plate_only_runtime_does_not_validate_unused_vehicle_provider() -> None:
     )
 
     validate_runtime_settings(settings.model_copy(update={"vision": vision}))
+
+
+@pytest.mark.parametrize("environment", ("production", "Production", " production "))
+def test_production_runtime_refuses_paddle_managed_model_downloads(environment: str) -> None:
+    settings = load_settings()
+    vision = settings.vision.model_copy(
+        update={
+            "plate_detection": settings.vision.plate_detection.model_copy(
+                update={"provider": "yolo", "model_path": "plate-model"}
+            )
+        }
+    )
+    app = AppConfig().model_copy(update={"environment": environment})
+    production = settings.model_copy(update={"app": app, "vision": vision})
+
+    with pytest.raises(ConfigurationError, match="production OCR requires local"):
+        validate_runtime_settings(production)
+
+
+def test_camera_runtime_rejects_minio_delivery_budget_above_outbox_deadline() -> None:
+    settings = load_settings()
+    invalid = settings.model_copy(
+        update={
+            "storage": settings.storage.model_copy(update={"backend": "minio"}),
+            "event_bus": settings.event_bus.model_copy(update={"backend": "redis"}),
+            "redis": settings.redis.model_copy(update={"block_ms": 60_000}),
+        }
+    )
+
+    with pytest.raises(ConfigurationError, match="first-delivery HTTP and publisher budget"):
+        validate_runtime_settings(invalid)

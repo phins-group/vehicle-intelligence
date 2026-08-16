@@ -42,6 +42,38 @@ from vehicle_intelligence.infrastructure.persistence.topology_memory import (
 )
 
 
+def test_reid_configuration_requires_identifying_signal_weight() -> None:
+    with pytest.raises(ValueError, match="identifying coverage exceeds"):
+        ReIDConfig(plate_weight=0, embedding_weight=0)
+
+
+class _CountingIdentityRepository(InMemoryVehicleIdentityRepository):
+    def __init__(self, events) -> None:
+        super().__init__(events)
+        self.batch_reads = 0
+
+    async def get_fingerprints(self, fingerprint_ids):
+        self.batch_reads += 1
+        return await super().get_fingerprints(fingerprint_ids)
+
+
+class _CountingVectorRepository(InMemoryVectorRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.get_calls = 0
+        self.search_calls = 0
+        self.searched_candidate_ids: tuple[str, ...] = ()
+
+    async def get(self, vector_id):
+        self.get_calls += 1
+        return await super().get(vector_id)
+
+    async def search(self, query):
+        self.search_calls += 1
+        self.searched_candidate_ids = query.candidate_ids
+        return await super().search(query)
+
+
 def _observation(
     fingerprint_id: str,
     vehicle_id: str,
@@ -50,15 +82,16 @@ def _observation(
     observed_at: datetime,
     *,
     embedding: EmbeddingReference | None = None,
-    plate: str = "51H-123.45",
-    color: str = "white",
+    plate: str | None = "51H-123.45",
+    color: str | None = "white",
+    vehicle_type: str = "car",
 ) -> tuple[VehicleIdentity, VehicleFingerprint]:
     return (
         VehicleIdentity(
             id=vehicle_id,
             primary_plate=None,
             plates=(),
-            vehicle_type="car",
+            vehicle_type=vehicle_type,
             color=color,
             first_seen_at=observed_at,
             last_seen_at=observed_at,
@@ -70,10 +103,10 @@ def _observation(
             source_event_id=event_id,
             camera_id=camera_id,
             observed_at=observed_at,
-            vehicle_type="car",
+            vehicle_type=vehicle_type,
             vehicle_confidence=0.95,
             plate=plate,
-            plate_confidence=0.95,
+            plate_confidence=0.95 if plate is not None else None,
             color=color,
             embedding=embedding,
         ),
@@ -83,11 +116,11 @@ def _observation(
 async def _services(sample_event):
     now = sample_event.occurred_at
     events = InMemoryVehicleEventRepository()
-    identities = InMemoryVehicleIdentityRepository(events)
+    identities = _CountingIdentityRepository(events)
     topology_repository = InMemoryCameraTopologyRepository()
     topology = CameraTopologyService(topology_repository, clock=lambda: now)
     await topology.create(TopologyCreate("a-b", "camera-a", "camera-b", 60, 600, 300))
-    vectors = InMemoryVectorRepository()
+    vectors = _CountingVectorRepository()
     model = EmbeddingModel("vehicle-reid", "v1", 3, "sha256-test")
     source_reference = EmbeddingReference("emb-source", model)
     target_reference = EmbeddingReference("emb-target", model)
@@ -121,19 +154,20 @@ async def _services(sample_event):
     )
     scoring = ReIDScoringService(identities, candidates, vectors, config.reid)
     reviews = IdentityReviewService(identities, scoring, clock=lambda: now)
-    return events, identities, scoring, reviews
+    return events, identities, scoring, reviews, vectors
 
 
 async def test_reid_scoring_combines_versioned_signals_without_mutating_identity(
     sample_event,
 ) -> None:
-    _events, identities, scoring, _reviews = await _services(sample_event)
+    _events, identities, scoring, _reviews, _vectors = await _services(sample_event)
 
     scores = await scoring.score_candidates("fp-source")
 
     assert len(scores) == 1
     assert scores[0].verdict is ReIDVerdict.MATCH
     assert scores[0].score > 0.99
+    assert scores[0].scoring_version == "reid-score-v2"
     assert scores[0].signals.embedding is not None
     assert scores[0].signals.plate == 1
     assert (await identities.get("veh-source")).status is VehicleIdentityStatus.ACTIVE
@@ -143,7 +177,7 @@ async def test_reid_scoring_combines_versioned_signals_without_mutating_identity
 async def test_merge_is_reviewed_atomic_idempotent_and_split_is_reversible(
     sample_event,
 ) -> None:
-    events, identities, _scoring, reviews = await _services(sample_event)
+    events, identities, _scoring, reviews, _vectors = await _services(sample_event)
     source_event = replace(
         sample_event,
         id="evt-source",
@@ -217,7 +251,7 @@ async def test_merge_is_reviewed_atomic_idempotent_and_split_is_reversible(
 
 
 async def test_merge_rejects_stale_revision(sample_event) -> None:
-    _events, _identities, _scoring, reviews = await _services(sample_event)
+    _events, _identities, _scoring, reviews, _vectors = await _services(sample_event)
     principal = Principal(
         "operator-1",
         "Identity Operator",
@@ -236,3 +270,139 @@ async def test_merge_rejects_stale_revision(sample_event) -> None:
             ),
             principal,
         )
+
+
+async def test_reid_batches_candidate_and_vector_reads(sample_event) -> None:
+    _events, identities, scoring, _reviews, vectors = await _services(sample_event)
+    now = sample_event.occurred_at
+    source = await identities.get_fingerprint("fp-source")
+    assert source is not None and source.embedding is not None
+    second_reference = EmbeddingReference("emb-target-2", source.embedding.model)
+    identity, fingerprint = _observation(
+        "fp-target-2",
+        "veh-target-2",
+        "evt-target-2",
+        "camera-a",
+        now - timedelta(seconds=360),
+        embedding=second_reference,
+    )
+    assert await identities.register_observation(identity, fingerprint)
+    assert await vectors.put(
+        EmbeddingVector("emb-target-2", source.embedding.model, (0.98, 0.02, 0), now)
+    )
+
+    scores = await scoring.score_candidates("fp-source")
+
+    assert len(scores) == 2
+    assert identities.batch_reads == 1
+    assert vectors.get_calls == 1
+    assert vectors.search_calls == 1
+    assert set(vectors.searched_candidate_ids) == {"emb-target", "emb-target-2"}
+
+
+@pytest.mark.parametrize(
+    ("vehicle_type", "expected_type_signal"),
+    [("car", 1.0), ("unknown", None)],
+)
+async def test_reid_sparse_type_and_travel_evidence_cannot_match(
+    sample_event,
+    vehicle_type: str,
+    expected_type_signal: float | None,
+) -> None:
+    now = sample_event.occurred_at
+    events = InMemoryVehicleEventRepository()
+    identities = InMemoryVehicleIdentityRepository(events)
+    topology_repository = InMemoryCameraTopologyRepository()
+    topology = CameraTopologyService(topology_repository, clock=lambda: now)
+    await topology.create(TopologyCreate("a-b", "camera-a", "camera-b", 60, 600, 300))
+    for observation in (
+        _observation(
+            "fp-sparse-source",
+            "veh-sparse-source",
+            "evt-sparse-source",
+            "camera-b",
+            now,
+            plate=None,
+            color=None,
+            vehicle_type=vehicle_type,
+        ),
+        _observation(
+            "fp-sparse-target",
+            "veh-sparse-target",
+            "evt-sparse-target",
+            "camera-a",
+            now - timedelta(seconds=300),
+            plate=None,
+            color=None,
+            vehicle_type=vehicle_type,
+        ),
+    ):
+        assert await identities.register_observation(*observation)
+    config = IdentityConfig()
+    scoring = ReIDScoringService(
+        identities,
+        CrossCameraCandidateGenerator(identities, topology_repository, config),
+        InMemoryVectorRepository(),
+        config.reid,
+    )
+
+    scores = await scoring.score_candidates("fp-sparse-source")
+
+    assert len(scores) == 1
+    assert scores[0].score == 1.0
+    assert scores[0].signals.vehicle_type == expected_type_signal
+    assert scores[0].verdict is ReIDVerdict.REVIEW
+
+
+async def test_reid_strong_embedding_evidence_still_matches_without_plate(sample_event) -> None:
+    now = sample_event.occurred_at
+    events = InMemoryVehicleEventRepository()
+    identities = InMemoryVehicleIdentityRepository(events)
+    topology_repository = InMemoryCameraTopologyRepository()
+    topology = CameraTopologyService(topology_repository, clock=lambda: now)
+    await topology.create(TopologyCreate("a-b", "camera-a", "camera-b", 60, 600, 300))
+    vectors = InMemoryVectorRepository()
+    model = EmbeddingModel("vehicle-reid", "v1", 3, "sha256-test")
+    source_reference = EmbeddingReference("emb-sparse-source", model)
+    target_reference = EmbeddingReference("emb-sparse-target", model)
+    for observation in (
+        _observation(
+            "fp-embedding-source",
+            "veh-embedding-source",
+            "evt-embedding-source",
+            "camera-b",
+            now,
+            embedding=source_reference,
+            plate=None,
+            color=None,
+            vehicle_type="unknown",
+        ),
+        _observation(
+            "fp-embedding-target",
+            "veh-embedding-target",
+            "evt-embedding-target",
+            "camera-a",
+            now - timedelta(seconds=300),
+            embedding=target_reference,
+            plate=None,
+            color=None,
+            vehicle_type="unknown",
+        ),
+    ):
+        assert await identities.register_observation(*observation)
+    assert await vectors.put(EmbeddingVector(source_reference.id, model, (1, 0, 0), now))
+    assert await vectors.put(EmbeddingVector(target_reference.id, model, (0.99, 0.01, 0), now))
+    config = IdentityConfig()
+    scoring = ReIDScoringService(
+        identities,
+        CrossCameraCandidateGenerator(identities, topology_repository, config),
+        vectors,
+        config.reid,
+    )
+
+    scores = await scoring.score_candidates("fp-embedding-source")
+
+    assert len(scores) == 1
+    assert scores[0].signals.vehicle_type is None
+    assert scores[0].signals.embedding is not None
+    assert scores[0].verdict is ReIDVerdict.MATCH

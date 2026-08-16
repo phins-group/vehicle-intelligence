@@ -52,9 +52,7 @@ class QualityCounts:
             ),
             human_correction_rate=_ratio(self.corrected_count, self.reviewed_count),
             average_plate_confidence=(
-                self.confidence_sum / self.confidence_count
-                if self.confidence_count
-                else None
+                self.confidence_sum / self.confidence_count if self.confidence_count else None
             ),
         )
 

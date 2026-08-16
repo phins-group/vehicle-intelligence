@@ -138,9 +138,7 @@ class MongoWatchlistRepository(_MongoRepository):
         except PyMongoError as exc:
             raise PersistenceError("cannot list watchlist entries") from exc
 
-    async def find_active_by_plate(
-        self, plate: str, timestamp: datetime
-    ) -> list[WatchlistEntry]:
+    async def find_active_by_plate(self, plate: str, timestamp: datetime) -> list[WatchlistEntry]:
         query = {
             "plate": plate,
             "enabled": True,
@@ -339,9 +337,7 @@ class MongoAlertRepository(_MongoRepository):
         has_more = len(documents) > query.limit
         alerts = tuple(_document_to_alert(document) for document in documents[: query.limit])
         next_cursor = (
-            encode_cursor(alerts[-1].created_at, alerts[-1].id)
-            if has_more and alerts
-            else None
+            encode_cursor(alerts[-1].created_at, alerts[-1].id) if has_more and alerts else None
         )
         return AlertPage(alerts, next_cursor)
 
@@ -627,14 +623,10 @@ def _document_to_alert(document: dict[str, Any]) -> Alert:
         created_at=_aware(document["createdAt"]),
         updated_at=_aware(document["updatedAt"]),
         acknowledged_at=(
-            _aware(document["acknowledgedAt"])
-            if document.get("acknowledgedAt")
-            else None
+            _aware(document["acknowledgedAt"]) if document.get("acknowledgedAt") else None
         ),
         acknowledged_by=document.get("acknowledgedBy"),
-        resolved_at=(
-            _aware(document["resolvedAt"]) if document.get("resolvedAt") else None
-        ),
+        resolved_at=(_aware(document["resolvedAt"]) if document.get("resolvedAt") else None),
         resolved_by=document.get("resolvedBy"),
         metadata=document.get("metadata") or {},
     )
@@ -653,9 +645,7 @@ def _action_execution_to_document(execution: ActionExecution) -> dict[str, Any]:
         "errorCode": execution.error_code,
         "createdAt": execution.created_at.astimezone(UTC),
         "updatedAt": execution.updated_at.astimezone(UTC),
-        "completedAt": (
-            execution.completed_at.astimezone(UTC) if execution.completed_at else None
-        ),
+        "completedAt": (execution.completed_at.astimezone(UTC) if execution.completed_at else None),
     }
 
 
@@ -672,7 +662,5 @@ def _document_to_action_execution(document: dict[str, Any]) -> ActionExecution:
         error_code=document.get("errorCode"),
         created_at=_aware(document["createdAt"]),
         updated_at=_aware(document["updatedAt"]),
-        completed_at=(
-            _aware(document["completedAt"]) if document.get("completedAt") else None
-        ),
+        completed_at=(_aware(document["completedAt"]) if document.get("completedAt") else None),
     )

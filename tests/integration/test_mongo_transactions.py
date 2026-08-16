@@ -98,7 +98,7 @@ async def test_resource_and_required_audit_commit_or_rollback_atomically() -> No
         assert await cameras.get(camera_id) == camera
         assert await audit_repository.get(committed.id) is not None
     finally:
-        await cameras._collection.delete_one({"_id": camera_id})
+        await cameras.delete(camera_id)
         await audit_repository._collection.delete_many({"_id": {"$regex": f"^{audit_id}"}})
         await duplicate_audit.close()
         await cameras.close()

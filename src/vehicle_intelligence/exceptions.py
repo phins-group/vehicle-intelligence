@@ -25,6 +25,10 @@ class InferenceError(VehicleIntelligenceError):
     """An inference provider failed while processing an image."""
 
 
+class InferenceProtocolError(InferenceError):
+    """A local shared-inference message violates the bounded IPC contract."""
+
+
 class VideoSourceError(VehicleIntelligenceError):
     """A video source cannot be opened or decoded."""
 
@@ -135,6 +139,22 @@ class EventContractError(VehicleIntelligenceError):
 
 class MediaStorageError(VehicleIntelligenceError):
     """A media object could not be stored."""
+
+
+class FinalizationOutboxError(VehicleIntelligenceError):
+    """A complete event/media finalization unit could not be staged durably."""
+
+
+class FinalizationOutboxRetryableError(FinalizationOutboxError):
+    """A transient local outbox failure can be retried without losing the track."""
+
+
+class FinalizationOutboxFullError(FinalizationOutboxError):
+    """The durable finalization outbox reached a configured hard capacity."""
+
+
+class FinalizationOutboxCorruptionError(FinalizationOutboxError):
+    """A finalization outbox entry failed integrity or path validation."""
 
 
 class MediaAccessError(VehicleIntelligenceError):

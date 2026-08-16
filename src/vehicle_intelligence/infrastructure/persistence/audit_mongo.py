@@ -117,9 +117,7 @@ class MongoAuditLogRepository:
         has_more = len(documents) > query.limit
         entries = tuple(_from_document(document) for document in documents[: query.limit])
         next_cursor = (
-            encode_cursor(entries[-1].occurred_at, entries[-1].id)
-            if has_more and entries
-            else None
+            encode_cursor(entries[-1].occurred_at, entries[-1].id) if has_more and entries else None
         )
         return AuditPage(entries, next_cursor)
 

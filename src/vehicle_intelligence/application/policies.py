@@ -211,8 +211,7 @@ class RuleService:
         current = await self._required(rule_id)
         if current.revision != command.revision:
             raise PolicyConflictError(
-                f"rule revision conflict: expected {command.revision}, "
-                f"current {current.revision}"
+                f"rule revision conflict: expected {command.revision}, current {current.revision}"
             )
         updated = Rule(
             id=current.id,
@@ -293,9 +292,7 @@ class AlertService:
     async def resolve(self, alert_id: str, actor_id: str) -> Alert:
         return await self._transition(alert_id, AlertStatus.RESOLVED, actor_id)
 
-    async def _transition(
-        self, alert_id: str, target: AlertStatus, actor_id: str
-    ) -> Alert:
+    async def _transition(self, alert_id: str, target: AlertStatus, actor_id: str) -> Alert:
         actor = actor_id.strip()
         if not actor:
             raise ValueError("alert transition actor is required")

@@ -93,11 +93,15 @@ async def run(args: argparse.Namespace) -> int:
         try:
             await service.close()
         finally:
-            if metrics_server is not None:
-                await asyncio.to_thread(metrics_server.shutdown)
-                metrics_server.server_close()
-            if metrics_thread is not None:
-                await asyncio.to_thread(metrics_thread.join, 5)
+            try:
+                if isinstance(media, MinioMediaStorage):
+                    await media.close()
+            finally:
+                if metrics_server is not None:
+                    await asyncio.to_thread(metrics_server.shutdown)
+                    metrics_server.server_close()
+                if metrics_thread is not None:
+                    await asyncio.to_thread(metrics_thread.join, 5)
     if latest is not None:
         print(
             "Retention pass complete; "

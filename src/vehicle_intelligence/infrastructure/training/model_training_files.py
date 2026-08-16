@@ -154,10 +154,14 @@ class FileModelTrainingRunRepository:
                 raise ModelTrainingStorageError("model training run evidence is invalid") from exc
             if path.stem != run.id or run.id in runs:
                 raise ModelTrainingStorageError("model training run filename is invalid")
-            if run.status in {
-                ModelTrainingRunStatus.QUEUED,
-                ModelTrainingRunStatus.SUBMITTING,
-            } and not run.remote_job_id:
+            if (
+                run.status
+                in {
+                    ModelTrainingRunStatus.QUEUED,
+                    ModelTrainingRunStatus.SUBMITTING,
+                }
+                and not run.remote_job_id
+            ):
                 now = datetime.now(UTC)
                 advanced = max(now, run.updated_at + timedelta(microseconds=1))
                 run = replace(

@@ -96,9 +96,7 @@ class SplitIdentityRequest(APIModel):
     review_id: str = Field(alias="reviewId", min_length=8, max_length=128)
     source_vehicle_id: str = Field(alias="sourceVehicleId", min_length=1, max_length=128)
     expected_source_revision: int = Field(alias="expectedSourceRevision", ge=1)
-    fingerprint_ids: list[str] = Field(
-        alias="fingerprintIds", min_length=1, max_length=1000
-    )
+    fingerprint_ids: list[str] = Field(alias="fingerprintIds", min_length=1, max_length=1000)
     reason: str = Field(min_length=3, max_length=1000)
 
     @field_validator("fingerprint_ids")

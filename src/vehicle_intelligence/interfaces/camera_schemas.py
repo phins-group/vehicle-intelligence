@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, SecretStr, field_validator
 
 from vehicle_intelligence.application.cameras import (
     CameraBatchResult,
@@ -62,10 +62,13 @@ class CameraVisionInput(APIModel):
 
 
 class CameraGeometryInput(APIModel):
-    vehicle_roi: list[tuple[float, float]] | None = Field(default=None, alias="vehicleRoi")
-    crossing_line: tuple[tuple[float, float], tuple[float, float]] | None = Field(
-        default=None, alias="crossingLine"
+    vehicle_roi: list[tuple[FiniteFloat, FiniteFloat]] | None = Field(
+        default=None,
+        alias="vehicleRoi",
     )
+    crossing_line: (
+        tuple[tuple[FiniteFloat, FiniteFloat], tuple[FiniteFloat, FiniteFloat]] | None
+    ) = Field(default=None, alias="crossingLine")
     crossing_positive_to_negative: Direction = Field(
         default=Direction.ENTER,
         alias="crossingPositiveToNegative",
@@ -75,8 +78,9 @@ class CameraGeometryInput(APIModel):
     @field_validator("vehicle_roi")
     @classmethod
     def validate_roi(
-        cls, value: list[tuple[float, float]] | None
-    ) -> list[tuple[float, float]] | None:
+        cls,
+        value: list[tuple[FiniteFloat, FiniteFloat]] | None,
+    ) -> list[tuple[FiniteFloat, FiniteFloat]] | None:
         if value is not None and len(value) < 3:
             raise ValueError("vehicleRoi requires at least three points")
         return value
@@ -217,9 +221,7 @@ class CameraPublic(APIModel):
             ),
             geometry=CameraPublicGeometry(
                 vehicleRoi=(
-                    [(point.x, point.y) for point in camera.roi]
-                    if camera.roi is not None
-                    else None
+                    [(point.x, point.y) for point in camera.roi] if camera.roi is not None else None
                 ),
                 crossingLine=(
                     [(point.x, point.y) for point in camera.crossing_line]
@@ -359,6 +361,15 @@ class CameraHealthPublic(APIModel):
             plateInferenceLatencyMs=health.plate_inference_latency_ms,
             ocrLatencyMs=health.ocr_latency_ms,
         )
+
+
+class CameraHealthSnapshotItemPublic(APIModel):
+    camera: CameraPublic
+    health: CameraHealthPublic | None
+
+
+class CameraHealthSnapshotPublic(APIModel):
+    items: list[CameraHealthSnapshotItemPublic]
 
 
 class CameraConnectionTestPublic(APIModel):

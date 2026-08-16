@@ -1,5 +1,12 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
-import { Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
+import {
+  Component,
+  OnDestroy,
+  OnInit,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import {
   LucideBoxSelect,
@@ -13,7 +20,7 @@ import {
   LucideRotateCcw,
   LucideSave,
   LucideTrash2,
-  LucideX
+  LucideX,
 } from '@lucide/angular';
 import { firstValueFrom } from 'rxjs';
 
@@ -25,21 +32,29 @@ import {
   DetectorReviewDecision,
   DetectorReviewItem,
   DetectorReviewSource,
-  DetectorReviewStatus
+  DetectorReviewStatus,
 } from '../../core/models/api.models';
 import { ApiClientService } from '../../core/services/api-client.service';
 import { apiErrorMessage } from '../../core/utils/api-error';
+import { AsyncDataState } from '../../core/utils/async-data-state';
 import {
+  BoxNudgeKey,
   CanvasPoint,
   boxFromPoints,
   boxesMatchSuggestions,
   clampBox,
+  defaultReviewBox,
   detectorReviewReason,
   editableBoxes,
-  pointerToImage
+  nudgeReviewBox,
+  pointerToImage,
 } from '../../core/utils/dataset-review-utils';
 
 type BoxField = 'x' | 'y' | 'width' | 'height';
+
+function isBoxNudgeKey(key: string): key is BoxNudgeKey {
+  return ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(key);
+}
 
 @Component({
   selector: 'app-dataset-review',
@@ -58,9 +73,9 @@ type BoxField = 'x' | 'y' | 'width' | 'height';
     LucideRotateCcw,
     LucideSave,
     LucideTrash2,
-    LucideX
+    LucideX,
   ],
-  templateUrl: './dataset-review.component.html'
+  templateUrl: './dataset-review.component.html',
 })
 export class DatasetReviewComponent implements OnInit, OnDestroy {
   private readonly api = inject(ApiClientService);
@@ -76,6 +91,7 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
   readonly selectedBox = signal<number | null>(null);
   readonly draftBox = signal<DetectorReviewBox | null>(null);
   readonly loading = signal(true);
+  readonly loadState = new AsyncDataState();
   readonly loadingItems = signal(false);
   readonly loadingMore = signal(false);
   readonly loadingDetail = signal(false);
@@ -83,17 +99,24 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
   readonly error = signal<string | null>(null);
   readonly reviewError = signal<string | null>(null);
   readonly success = signal<string | null>(null);
+  readonly bboxStatus = signal('');
   readonly promotionJob = signal<DetectorPromotionJob | null>(null);
   readonly promotionStarting = signal(false);
-  readonly promoting = computed(() =>
-    this.promotionStarting() || ['QUEUED', 'RUNNING'].includes(this.promotionJob()?.status ?? '')
+  readonly promoting = computed(
+    () =>
+      this.promotionStarting() ||
+      ['QUEUED', 'RUNNING'].includes(this.promotionJob()?.status ?? ''),
   );
   readonly selectedSource = computed(
-    () => this.sources().find((source) => source.sourceId === this.sourceId) ?? null
+    () =>
+      this.sources().find((source) => source.sourceId === this.sourceId) ??
+      null,
   );
   readonly canApprove = computed(() => {
     const item = this.selected();
-    return item !== null && boxesMatchSuggestions(this.boxes(), item.suggestions);
+    return (
+      item !== null && boxesMatchSuggestions(this.boxes(), item.suggestions)
+    );
   });
 
   sourceId = '';
@@ -105,6 +128,12 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
   private dragStart: CanvasPoint | null = null;
   private previewObjectUrl: string | null = null;
   private promotionTimer: number | null = null;
+  private destroyed = false;
+  private sourceRequestGeneration = 0;
+  private itemListGeneration = 0;
+  private detailRequestGeneration = 0;
+  private submissionGeneration = 0;
+  private promotionGeneration = 0;
 
   ngOnInit(): void {
     if (!this.auth.canReviewDatasets()) {
@@ -115,16 +144,28 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.destroyed = true;
+    this.sourceRequestGeneration += 1;
+    this.itemListGeneration += 1;
+    this.detailRequestGeneration += 1;
+    this.submissionGeneration += 1;
+    this.promotionGeneration += 1;
     this.releasePreview();
     if (this.promotionTimer !== null) window.clearTimeout(this.promotionTimer);
+    this.promotionTimer = null;
   }
 
   async loadSources(): Promise<void> {
+    if (this.destroyed) return;
+    const generation = ++this.sourceRequestGeneration;
     this.loading.set(true);
     this.error.set(null);
+    this.loadState.begin();
     try {
       const result = await firstValueFrom(this.api.detectorReviewSources());
+      if (this.destroyed || generation !== this.sourceRequestGeneration) return;
       this.sources.set(result.items);
+      this.loadState.succeed();
       if (!result.items.some((source) => source.sourceId === this.sourceId)) {
         this.sourceId = result.items[0]?.sourceId ?? '';
       }
@@ -132,9 +173,15 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
       if (this.sourceId) await this.loadItems(true);
       else this.items.set([]);
     } catch (error) {
-      this.error.set(apiErrorMessage(error, 'Không thể tải detector review sources.'));
+      if (!this.destroyed && generation === this.sourceRequestGeneration) {
+        this.loadState.fail(
+          apiErrorMessage(error, 'Không thể tải detector review sources.'),
+        );
+      }
     } finally {
-      this.loading.set(false);
+      if (!this.destroyed && generation === this.sourceRequestGeneration) {
+        this.loading.set(false);
+      }
     }
   }
 
@@ -152,61 +199,110 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
   }
 
   async loadItems(reset: boolean): Promise<void> {
-    if (!this.sourceId || this.loadingItems() || this.loadingMore()) return;
+    if (
+      this.destroyed ||
+      !this.sourceId ||
+      (!reset && (this.loadingItems() || this.loadingMore()))
+    ) {
+      return;
+    }
+    const sourceId = this.sourceId;
+    const generation = reset
+      ? ++this.itemListGeneration
+      : this.itemListGeneration;
+    if (reset) {
+      this.items.set([]);
+      this.nextCursor.set(null);
+    }
     reset ? this.loadingItems.set(true) : this.loadingMore.set(true);
     this.error.set(null);
     try {
       const page = await firstValueFrom(
         this.api.detectorReviewItems({
-          sourceId: this.sourceId,
+          sourceId,
           limit: 50,
           cursor: reset ? null : this.nextCursor(),
           status: this.statusFilter,
-          reason: this.reasonFilter
-        })
+          reason: this.reasonFilter,
+        }),
       );
-      this.items.update((current) => (reset ? page.items : [...current, ...page.items]));
+      if (
+        this.destroyed ||
+        generation !== this.itemListGeneration ||
+        sourceId !== this.sourceId
+      ) {
+        return;
+      }
+      this.items.update((current) =>
+        reset ? page.items : [...current, ...page.items],
+      );
       this.nextCursor.set(page.nextCursor);
     } catch (error) {
-      this.error.set(apiErrorMessage(error, 'Không thể tải hàng đợi detector dataset.'));
+      if (!this.destroyed && generation === this.itemListGeneration) {
+        this.error.set(
+          apiErrorMessage(error, 'Không thể tải hàng đợi detector dataset.'),
+        );
+      }
     } finally {
-      this.loadingItems.set(false);
-      this.loadingMore.set(false);
+      if (!this.destroyed && generation === this.itemListGeneration) {
+        this.loadingItems.set(false);
+        this.loadingMore.set(false);
+      }
     }
   }
 
   async openItem(item: DetectorReviewItem): Promise<void> {
-    if (this.loadingDetail()) return;
+    if (this.destroyed || item.sourceId !== this.sourceId) return;
+    const generation = ++this.detailRequestGeneration;
     this.loadingDetail.set(true);
     this.reviewError.set(null);
     this.success.set(null);
     this.releasePreview();
     try {
       const [detail, image, history] = await Promise.all([
-        firstValueFrom(this.api.detectorReviewItem(item.sourceId, item.reviewId)),
-        firstValueFrom(this.api.detectorReviewImage(item.sourceId, item.reviewId)),
-        firstValueFrom(this.api.detectorReviewHistory(item.sourceId, item.reviewId))
+        firstValueFrom(
+          this.api.detectorReviewItem(item.sourceId, item.reviewId),
+        ),
+        firstValueFrom(
+          this.api.detectorReviewImage(item.sourceId, item.reviewId),
+        ),
+        firstValueFrom(
+          this.api.detectorReviewHistory(item.sourceId, item.reviewId),
+        ),
       ]);
+      if (this.destroyed || generation !== this.detailRequestGeneration) return;
       this.selected.set(detail);
       this.boxes.set(editableBoxes(detail));
       this.history.set(history.items);
       this.selectedBox.set(null);
+      this.bboxStatus.set('');
       this.note = detail.decision?.note ?? '';
       this.previewObjectUrl = URL.createObjectURL(image);
       this.previewUrl.set(this.previewObjectUrl);
     } catch (error) {
-      this.reviewError.set(apiErrorMessage(error, 'Không thể tải ảnh và nhãn cần duyệt.'));
+      if (!this.destroyed && generation === this.detailRequestGeneration) {
+        this.reviewError.set(
+          apiErrorMessage(error, 'Không thể tải ảnh và nhãn cần duyệt.'),
+        );
+      }
     } finally {
-      this.loadingDetail.set(false);
+      if (!this.destroyed && generation === this.detailRequestGeneration) {
+        this.loadingDetail.set(false);
+      }
     }
   }
 
   closeItem(): void {
+    this.detailRequestGeneration += 1;
+    this.submissionGeneration += 1;
+    this.loadingDetail.set(false);
+    this.submitting.set(false);
     this.selected.set(null);
     this.history.set([]);
     this.boxes.set([]);
     this.draftBox.set(null);
     this.selectedBox.set(null);
+    this.bboxStatus.set('');
     this.reviewError.set(null);
     this.success.set(null);
     this.note = '';
@@ -218,6 +314,57 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
     if (!item) return;
     this.boxes.set(editableBoxes(item));
     this.selectedBox.set(null);
+    this.bboxStatus.set('Đã khôi phục bounding box theo dữ liệu ban đầu.');
+  }
+
+  addKeyboardBox(): void {
+    const image = this.selected()?.image;
+    if (!image) return;
+    const box = defaultReviewBox(image);
+    this.boxes.update((items) => [...items, box]);
+    const index = this.boxes().length - 1;
+    this.selectedBox.set(index);
+    this.bboxStatus.set(`Đã thêm bbox ${index + 1} ở giữa ảnh.`);
+  }
+
+  selectBox(index: number): void {
+    if (index < 0 || index >= this.boxes().length) return;
+    this.selectedBox.set(index);
+  }
+
+  boxAccessibleLabel(box: DetectorReviewBox, index: number): string {
+    return `BBox ${index + 1}: x ${box.x}, y ${box.y}, rộng ${box.width}, cao ${box.height}`;
+  }
+
+  boxKeydown(index: number, event: KeyboardEvent): void {
+    if (event.defaultPrevented || event.isComposing) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      this.selectBox(index);
+      return;
+    }
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      event.preventDefault();
+      const fallback = (
+        event.currentTarget as Element | null
+      )?.ownerDocument.getElementById('add-keyboard-bbox');
+      this.removeBox(index);
+      fallback?.focus();
+      return;
+    }
+    if (!isBoxNudgeKey(event.key)) return;
+    const image = this.selected()?.image;
+    if (!image) return;
+    event.preventDefault();
+    const step = event.shiftKey ? 10 : 1;
+    this.boxes.update((items) =>
+      items.map((box, boxIndex) =>
+        boxIndex === index
+          ? nudgeReviewBox(box, image, event.key as BoxNudgeKey, step)
+          : box,
+      ),
+    );
+    this.selectedBox.set(index);
   }
 
   canvasPointerDown(event: PointerEvent): void {
@@ -229,7 +376,7 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
       event.clientX,
       event.clientY,
       canvas.getBoundingClientRect(),
-      image
+      image,
     );
     this.draftBox.set(null);
     this.selectedBox.set(null);
@@ -244,7 +391,7 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
       event.clientX,
       event.clientY,
       canvas.getBoundingClientRect(),
-      image
+      image,
     );
     this.draftBox.set(boxFromPoints(this.dragStart, point, image));
   }
@@ -257,7 +404,7 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
       event.clientX,
       event.clientY,
       canvas.getBoundingClientRect(),
-      image
+      image,
     );
     const box = boxFromPoints(this.dragStart, point, image);
     this.dragStart = null;
@@ -279,31 +426,39 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
     const parsed = typeof value === 'number' ? value : Number(value);
     this.boxes.update((items) =>
       items.map((box, boxIndex) =>
-        boxIndex === index ? clampBox({ ...box, [field]: parsed }, image) : box
-      )
+        boxIndex === index ? clampBox({ ...box, [field]: parsed }, image) : box,
+      ),
     );
   }
 
   removeBox(index: number): void {
-    this.boxes.update((items) => items.filter((_, boxIndex) => boxIndex !== index));
+    this.boxes.update((items) =>
+      items.filter((_, boxIndex) => boxIndex !== index),
+    );
     this.selectedBox.set(null);
+    this.bboxStatus.set(`Đã xóa bbox ${index + 1}.`);
   }
 
   async submit(action: DetectorReviewAction): Promise<void> {
     const item = this.selected();
-    if (!item || this.submitting()) return;
+    if (this.destroyed || !item || this.submitting()) return;
     if (action === 'APPROVE' && !this.canApprove()) {
-      this.reviewError.set('Approve chỉ dùng khi bbox còn nguyên như model đề xuất.');
+      this.reviewError.set(
+        'Approve chỉ dùng khi bbox còn nguyên như model đề xuất.',
+      );
       return;
     }
     if (action === 'CORRECT' && !this.boxes().length) {
-      this.reviewError.set('Hãy vẽ ít nhất một bbox hoặc chọn “Không có biển số”.');
+      this.reviewError.set(
+        'Hãy vẽ ít nhất một bbox hoặc chọn “Không có biển số”.',
+      );
       return;
     }
     if (action === 'REJECT' && !this.note.trim()) {
       this.reviewError.set('Cần ghi rõ lý do loại ảnh.');
       return;
     }
+    const generation = ++this.submissionGeneration;
     this.submitting.set(true);
     this.reviewError.set(null);
     this.success.set(null);
@@ -313,33 +468,55 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
           action,
           expectedRevision: item.revision,
           annotations: action === 'CORRECT' ? this.boxes() : [],
-          note: this.note.trim() || null
-        })
+          note: this.note.trim() || null,
+        }),
       );
+      if (this.destroyed || generation !== this.submissionGeneration) return;
       this.selected.set(reviewed);
       this.boxes.set(editableBoxes(reviewed));
-      this.success.set(`Đã lưu ${reviewed.status} · revision ${reviewed.revision}.`);
-      await this.refreshAfterReview(reviewed.reviewId);
+      this.success.set(
+        `Đã lưu ${reviewed.status} · revision ${reviewed.revision}.`,
+      );
+      await this.refreshAfterReview(reviewed.reviewId, generation);
     } catch (error) {
-      this.reviewError.set(apiErrorMessage(error, 'Không thể lưu quyết định detector review.'));
-      if (typeof error === 'object' && error !== null && 'status' in error && error.status === 409) {
+      if (this.destroyed || generation !== this.submissionGeneration) return;
+      this.reviewError.set(
+        apiErrorMessage(error, 'Không thể lưu quyết định detector review.'),
+      );
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'status' in error &&
+        error.status === 409
+      ) {
         await this.reloadSelected(item);
       }
     } finally {
-      this.submitting.set(false);
+      if (!this.destroyed && generation === this.submissionGeneration) {
+        this.submitting.set(false);
+      }
     }
   }
 
   async startPromotion(): Promise<void> {
-    if (!this.auth.canManageDatasets() || !this.sourceId || this.promoting()) return;
+    if (
+      this.destroyed ||
+      !this.auth.canManageDatasets() ||
+      !this.sourceId ||
+      this.promoting()
+    ) {
+      return;
+    }
     if (!this.selectedSource()?.promotionEligible) {
       this.error.set(
-        'Source này chỉ dành cho kiểm duyệt; cần xác minh quyền dữ liệu trước khi tạo source production.'
+        'Source này chỉ dành cho kiểm duyệt; cần xác minh quyền dữ liệu trước khi tạo source production.',
       );
       return;
     }
     if ((this.selectedSource()?.reviewedCount ?? 0) === 0) {
-      this.error.set('Cần hoàn tất ít nhất một quyết định review trước khi promote.');
+      this.error.set(
+        'Cần hoàn tất ít nhất một quyết định review trước khi promote.',
+      );
       return;
     }
     const target = this.targetSourceId.trim();
@@ -347,16 +524,26 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
       this.error.set('Target source ID là bắt buộc.');
       return;
     }
+    const generation = ++this.promotionGeneration;
     this.error.set(null);
     this.promotionStarting.set(true);
     try {
-      const job = await firstValueFrom(this.api.promoteDetectorSource(this.sourceId, target));
+      const job = await firstValueFrom(
+        this.api.promoteDetectorSource(this.sourceId, target),
+      );
+      if (this.destroyed || generation !== this.promotionGeneration) return;
       this.promotionJob.set(job);
-      this.schedulePromotionPoll(job.id);
+      this.schedulePromotionPoll(job.id, generation);
     } catch (error) {
-      this.error.set(apiErrorMessage(error, 'Không thể khởi tạo promotion job.'));
+      if (!this.destroyed && generation === this.promotionGeneration) {
+        this.error.set(
+          apiErrorMessage(error, 'Không thể khởi tạo promotion job.'),
+        );
+      }
     } finally {
-      this.promotionStarting.set(false);
+      if (!this.destroyed && generation === this.promotionGeneration) {
+        this.promotionStarting.set(false);
+      }
     }
   }
 
@@ -377,9 +564,17 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
     return typeof value === 'number' ? value : null;
   }
 
-  private async refreshAfterReview(reviewId: string): Promise<void> {
+  private async refreshAfterReview(
+    reviewId: string,
+    submissionGeneration: number,
+  ): Promise<void> {
+    const isCurrent = (): boolean =>
+      !this.destroyed && submissionGeneration === this.submissionGeneration;
+    if (!isCurrent()) return;
     await this.loadItems(true);
+    if (!isCurrent()) return;
     await this.loadSourcesSummaryOnly();
+    if (!isCurrent()) return;
     if (this.statusFilter === 'PENDING_REVIEW') {
       const next = this.items().find((item) => item.reviewId !== reviewId);
       if (next) await this.openItem(next);
@@ -391,7 +586,8 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
 
   private async loadSourcesSummaryOnly(): Promise<void> {
     try {
-      this.sources.set((await firstValueFrom(this.api.detectorReviewSources())).items);
+      const result = await firstValueFrom(this.api.detectorReviewSources());
+      if (!this.destroyed) this.sources.set(result.items);
     } catch {
       // The saved revision remains visible; a later refresh can recover summary counts.
     }
@@ -416,25 +612,33 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
       : `${this.sourceId}-reviewed-v2`;
   }
 
-  private schedulePromotionPoll(jobId: string): void {
+  private schedulePromotionPoll(jobId: string, generation: number): void {
+    if (this.destroyed || generation !== this.promotionGeneration) return;
     if (this.promotionTimer !== null) window.clearTimeout(this.promotionTimer);
     this.promotionTimer = window.setTimeout(async () => {
       this.promotionTimer = null;
+      if (this.destroyed || generation !== this.promotionGeneration) return;
       try {
         const job = await firstValueFrom(this.api.detectorPromotion(jobId));
+        if (this.destroyed || generation !== this.promotionGeneration) return;
         this.promotionJob.set(job);
         if (job.status === 'QUEUED' || job.status === 'RUNNING') {
-          this.schedulePromotionPoll(jobId);
+          this.schedulePromotionPoll(jobId, generation);
         } else if (job.status === 'COMPLETED') {
           await this.loadSourcesSummaryOnly();
         }
       } catch (error) {
-        this.error.set(apiErrorMessage(error, 'Không thể cập nhật trạng thái promotion.'));
+        if (!this.destroyed && generation === this.promotionGeneration) {
+          this.error.set(
+            apiErrorMessage(error, 'Không thể cập nhật trạng thái promotion.'),
+          );
+        }
       }
     }, 1500);
   }
 
   private clearPromotionState(): void {
+    this.promotionGeneration += 1;
     if (this.promotionTimer !== null) window.clearTimeout(this.promotionTimer);
     this.promotionTimer = null;
     this.promotionJob.set(null);
@@ -442,7 +646,8 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
   }
 
   private releasePreview(): void {
-    if (this.previewObjectUrl !== null) URL.revokeObjectURL(this.previewObjectUrl);
+    if (this.previewObjectUrl !== null)
+      URL.revokeObjectURL(this.previewObjectUrl);
     this.previewObjectUrl = null;
     this.previewUrl.set(null);
   }

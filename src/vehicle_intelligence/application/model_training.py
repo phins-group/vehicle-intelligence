@@ -294,9 +294,7 @@ class ModelTrainingService:
         run = await self._repository.get(run_id)
         maximum = self._runtime.maximum_log_lines
         if not 1 <= tail <= maximum:
-            raise ModelTrainingValidationError(
-                f"training log tail must be between 1 and {maximum}"
-            )
+            raise ModelTrainingValidationError(f"training log tail must be between 1 and {maximum}")
         if not run.remote_job_id:
             return ModelTrainingLog(run_id=run.id, lines=(), available=False)
         lines = await asyncio.to_thread(

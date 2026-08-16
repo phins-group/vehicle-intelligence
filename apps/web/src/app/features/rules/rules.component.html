@@ -4,140 +4,532 @@
     <p>Xây policy khai báo bằng field, operator và action đã được allowlist.</p>
   </div>
   <div class="heading-actions">
-    <button class="button secondary" type="button" (click)="load()" [disabled]="loading()"><svg lucideRefreshCw aria-hidden="true" [class.spin]="loading()"></svg> Làm mới</button>
-    @if (auth.canManagePolicies()) { <button class="button primary" type="button" (click)="openCreate()"><svg lucidePlus aria-hidden="true"></svg> Tạo rule</button> }
+    <button
+      class="button secondary"
+      type="button"
+      (click)="load()"
+      [disabled]="loading()"
+    >
+      <svg lucideRefreshCw aria-hidden="true" [class.spin]="loading()"></svg>
+      Làm mới
+    </button>
+    @if (auth.canManagePolicies()) {
+      <button class="button primary" type="button" (click)="openCreate()">
+        <svg lucidePlus aria-hidden="true"></svg> Tạo rule
+      </button>
+    }
   </div>
 </div>
 
-<section class="metric-grid policy-metrics" aria-label="Tổng hợp rules">
-  <article class="metric-card accent-blue"><span class="metric-icon"><svg lucideGitBranch aria-hidden="true"></svg></span><div><span>Tổng số rules</span><strong>{{ rules().length }}</strong><small>tối đa 200 trong màn hình</small></div></article>
-  <article class="metric-card accent-green"><span class="metric-icon"><svg lucideZap aria-hidden="true"></svg></span><div><span>Đang bật</span><strong>{{ enabledCount() }}</strong><small>tham gia evaluation</small></div></article>
-  <article class="metric-card accent-amber"><span class="metric-icon"><svg lucideBell aria-hidden="true"></svg></span><div><span>Tạo cảnh báo</span><strong>{{ alertRuleCount() }}</strong><small>có CREATE_ALERT action</small></div></article>
-  <article class="metric-card accent-violet"><span class="metric-icon"><svg lucideGlobe2 aria-hidden="true"></svg></span><div><span>External action</span><strong>{{ externalRuleCount() }}</strong><small>chịu allowlist phía server</small></div></article>
-</section>
-
-@if (!auth.canManagePolicies()) { <div class="notice neutral" role="note"><svg lucideShieldCheck aria-hidden="true"></svg> Chế độ chỉ đọc. Chỉ ADMIN có quyền thay đổi rules.</div> }
-@if (error()) { <div class="notice error" role="alert">{{ error() }}</div> }
-@if (notice()) { <div class="notice success" role="status">{{ notice() }}</div> }
-
-<section class="panel filter-panel compact">
-  <div class="filter-grid rule-filters">
-    <label><span>Tìm rule hoặc ID</span><div class="input-with-icon"><svg lucideSearch aria-hidden="true"></svg><input [(ngModel)]="search" placeholder="Blacklist Gate 01"></div></label>
-    <label><span>Trạng thái</span><select [(ngModel)]="enabledFilter"><option value="ALL">Tất cả</option><option value="ENABLED">Enabled</option><option value="DISABLED">Disabled</option></select></label>
-    <div class="filter-actions"><button class="button ghost" type="button" (click)="clearFilters()">Xóa lọc</button></div>
-  </div>
-</section>
-
-<section class="rule-grid" aria-label="Danh sách rules">
-  @if (loading() && !rules().length) {
-    <div class="panel empty-state full-grid">Đang tải rules…</div>
-  } @else if (!filteredRules().length) {
-    <div class="panel empty-state full-grid"><svg lucideGitBranch aria-hidden="true"></svg><strong>Không có rule phù hợp</strong><span>Thử thay đổi bộ lọc hoặc tạo rule mới.</span></div>
-  } @else {
-    @for (rule of filteredRules(); track rule.id) {
-      <article class="rule-card">
-        <header class="rule-card-header">
-          <div><span class="priority-chip">P{{ rule.priority }}</span><span class="status-pill" [attr.data-enabled]="rule.enabled">{{ rule.enabled ? 'ENABLED' : 'DISABLED' }}</span></div>
-          @if (auth.canManagePolicies()) {
-            <div class="row-actions"><button class="icon-button" type="button" title="Sửa" aria-label="Sửa rule" (click)="openEdit(rule)"><svg lucidePencil aria-hidden="true"></svg></button><button class="icon-button danger" type="button" title="Xóa" aria-label="Xóa rule" (click)="requestDelete(rule)"><svg lucideTrash2 aria-hidden="true"></svg></button></div>
-          }
-        </header>
-        <div class="rule-card-body">
-          <h2>{{ rule.name }}</h2>
-          <p class="mono subtle break-all">{{ rule.id }} · rev {{ rule.revision }}</p>
-          <div class="rule-flow">
-            <section>
-              <div class="rule-section-label"><svg lucideBraces aria-hidden="true"></svg> Conditions · AND</div>
-              <ol class="condition-summary-list">@for (condition of rule.conditions; track $index) { <li>{{ conditionSummary(condition) }}</li> }</ol>
-            </section>
-            <section>
-              <div class="rule-section-label"><svg lucideZap aria-hidden="true"></svg> Actions</div>
-              <div class="action-summary-list">@for (action of rule.actions; track action.id) { <span class="action-chip" [attr.data-external]="externalAction(action.type)"><b>{{ action.type }}</b><small>{{ actionSummary(action) }}</small></span> }</div>
-            </section>
-          </div>
-        </div>
-        <footer class="rule-card-footer"><span>Cập nhật {{ rule.updatedAt | date: 'dd/MM/yyyy HH:mm' }}</span><span>{{ rule.conditions.length }} conditions · {{ rule.actions.length }} actions</span></footer>
-      </article>
-    }
+@if (loading() && !loadState.hasLoaded()) {
+  <section class="panel empty-state" role="status" aria-live="polite">
+    Đang tải rules…
+  </section>
+} @else if (loadState.initialError(); as loadError) {
+  <section class="panel empty-state" role="alert">
+    <strong>{{ loadError }}</strong>
+    <span>Chưa có dữ liệu rules để hiển thị.</span>
+    <button class="button secondary" type="button" (click)="load()">
+      Thử lại
+    </button>
+  </section>
+} @else {
+  @if (loadState.staleError(); as loadError) {
+    <div class="notice error" role="alert">
+      {{ loadError }} Dữ liệu đã tải trước đó vẫn được giữ nguyên.
+    </div>
   }
-</section>
+  @if (!auth.canManagePolicies()) {
+    <div class="notice neutral" role="note">
+      <svg lucideShieldCheck aria-hidden="true"></svg> Chế độ chỉ đọc. Chỉ ADMIN
+      có quyền thay đổi rules.
+    </div>
+  }
+  @if (notice()) {
+    <div class="notice success" role="status">{{ notice() }}</div>
+  }
+
+  <section class="metric-grid policy-metrics" aria-label="Tổng hợp rules">
+    <article class="metric-card accent-blue">
+      <span class="metric-icon"
+        ><svg lucideGitBranch aria-hidden="true"></svg
+      ></span>
+      <div>
+        <span>Tổng số rules</span><strong>{{ rules().length }}</strong
+        ><small>tối đa 200 trong màn hình</small>
+      </div>
+    </article>
+    <article class="metric-card accent-green">
+      <span class="metric-icon"><svg lucideZap aria-hidden="true"></svg></span>
+      <div>
+        <span>Đang bật</span><strong>{{ enabledCount() }}</strong
+        ><small>tham gia evaluation</small>
+      </div>
+    </article>
+    <article class="metric-card accent-amber">
+      <span class="metric-icon"><svg lucideBell aria-hidden="true"></svg></span>
+      <div>
+        <span>Tạo cảnh báo</span><strong>{{ alertRuleCount() }}</strong
+        ><small>có CREATE_ALERT action</small>
+      </div>
+    </article>
+    <article class="metric-card accent-violet">
+      <span class="metric-icon"
+        ><svg lucideGlobe2 aria-hidden="true"></svg
+      ></span>
+      <div>
+        <span>External action</span><strong>{{ externalRuleCount() }}</strong
+        ><small>chịu allowlist phía server</small>
+      </div>
+    </article>
+  </section>
+
+  <section class="panel filter-panel compact">
+    <div class="filter-grid rule-filters">
+      <label
+        ><span>Tìm rule hoặc ID</span>
+        <div class="input-with-icon">
+          <svg lucideSearch aria-hidden="true"></svg
+          ><input [(ngModel)]="search" placeholder="Blacklist Gate 01" /></div
+      ></label>
+      <label
+        ><span>Trạng thái</span
+        ><select [(ngModel)]="enabledFilter">
+          <option value="ALL">Tất cả</option>
+          <option value="ENABLED">Enabled</option>
+          <option value="DISABLED">Disabled</option>
+        </select></label
+      >
+      <div class="filter-actions">
+        <button class="button ghost" type="button" (click)="clearFilters()">
+          Xóa lọc
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <section class="rule-grid" aria-label="Danh sách rules">
+    @if (!filteredRules().length) {
+      <div class="panel empty-state full-grid">
+        <svg lucideGitBranch aria-hidden="true"></svg
+        ><strong>Không có rule phù hợp</strong
+        ><span>Thử thay đổi bộ lọc hoặc tạo rule mới.</span>
+      </div>
+    } @else {
+      @for (rule of filteredRules(); track rule.id) {
+        <article class="rule-card">
+          <header class="rule-card-header">
+            <div>
+              <span class="priority-chip">P{{ rule.priority }}</span
+              ><span class="status-pill" [attr.data-enabled]="rule.enabled">{{
+                rule.enabled ? "ENABLED" : "DISABLED"
+              }}</span>
+            </div>
+            @if (auth.canManagePolicies()) {
+              <div class="row-actions">
+                <button
+                  class="icon-button"
+                  type="button"
+                  title="Sửa"
+                  [attr.aria-label]="'Sửa rule ' + rule.name"
+                  (click)="openEdit(rule)"
+                >
+                  <svg lucidePencil aria-hidden="true"></svg></button
+                ><button
+                  class="icon-button danger"
+                  type="button"
+                  title="Xóa"
+                  [attr.aria-label]="'Xóa rule ' + rule.name"
+                  (click)="requestDelete(rule)"
+                >
+                  <svg lucideTrash2 aria-hidden="true"></svg>
+                </button>
+              </div>
+            }
+          </header>
+          <div class="rule-card-body">
+            <h2>{{ rule.name }}</h2>
+            <p class="mono subtle break-all">
+              {{ rule.id }} · rev {{ rule.revision }}
+            </p>
+            <div class="rule-flow">
+              <section>
+                <div class="rule-section-label">
+                  <svg lucideBraces aria-hidden="true"></svg> Conditions · AND
+                </div>
+                <ol class="condition-summary-list">
+                  @for (condition of rule.conditions; track $index) {
+                    <li>{{ conditionSummary(condition) }}</li>
+                  }
+                </ol>
+              </section>
+              <section>
+                <div class="rule-section-label">
+                  <svg lucideZap aria-hidden="true"></svg> Actions
+                </div>
+                <div class="action-summary-list">
+                  @for (action of rule.actions; track action.id) {
+                    <span
+                      class="action-chip"
+                      [attr.data-external]="externalAction(action.type)"
+                      ><b>{{ action.type }}</b
+                      ><small>{{ actionSummary(action) }}</small></span
+                    >
+                  }
+                </div>
+              </section>
+            </div>
+          </div>
+          <footer class="rule-card-footer">
+            <span>Cập nhật {{ rule.updatedAt | date: "dd/MM/yyyy HH:mm" }}</span
+            ><span
+              >{{ rule.conditions.length }} conditions ·
+              {{ rule.actions.length }} actions</span
+            >
+          </footer>
+        </article>
+      }
+    }
+  </section>
+}
 
 @if (editorOpen()) {
-  <button class="drawer-backdrop" type="button" aria-label="Đóng form" (click)="closeEditor()"></button>
-  <aside class="detail-drawer extra-wide" aria-label="Rule builder">
+  <button
+    data-dialog-backdrop
+    class="drawer-backdrop"
+    type="button"
+    aria-label="Đóng form"
+    (click)="closeEditor()"
+  ></button>
+  <aside
+    appAccessibleDialog
+    class="detail-drawer extra-wide"
+    aria-labelledby="rule-editor-title"
+    (appDialogDismiss)="closeEditor()"
+  >
     <form #ruleForm="ngForm" (ngSubmit)="save()">
-      <div class="drawer-heading"><div><p class="eyebrow">DECLARATIVE RULE BUILDER</p><h2>{{ editingId() ? 'Sửa rule' : 'Tạo rule' }}</h2></div><button class="icon-button" type="button" aria-label="Đóng" (click)="closeEditor()"><svg lucideX aria-hidden="true"></svg></button></div>
-      @if (editingId()) { <div class="revision-banner">Đang sửa <span class="mono">{{ editingId() }}</span> tại revision {{ draft.revision }}. API sẽ trả 409 nếu revision đã thay đổi.</div> }
+      <div class="drawer-heading">
+        <div>
+          <p class="eyebrow">DECLARATIVE RULE BUILDER</p>
+          <h2 id="rule-editor-title">
+            {{ editingId() ? "Sửa rule" : "Tạo rule" }}
+          </h2>
+        </div>
+        <button
+          data-dialog-initial-focus
+          class="icon-button"
+          type="button"
+          aria-label="Đóng"
+          (click)="closeEditor()"
+        >
+          <svg lucideX aria-hidden="true"></svg>
+        </button>
+      </div>
+      @if (editingId()) {
+        <div class="revision-banner">
+          Đang sửa <span class="mono">{{ editingId() }}</span> tại revision
+          {{ draft.revision }}. API sẽ trả 409 nếu revision đã thay đổi.
+        </div>
+      }
       <div class="form-grid rule-basics">
-        @if (!editingId()) { <label><span>Rule ID (không bắt buộc)</span><input name="id" [(ngModel)]="draft.id" maxlength="128" placeholder="rule-gate-blacklist"></label> }
-        <label [class.full-span]="editingId()"><span>Tên rule</span><input name="name" [(ngModel)]="draft.name" maxlength="256" placeholder="Alert blacklist tại Gate 01" required></label>
-        <label><span>Priority</span><input type="number" name="priority" [(ngModel)]="draft.priority" min="-10000" max="10000" step="1" required></label>
-        <label class="checkbox-field"><input type="checkbox" name="enabled" [(ngModel)]="draft.enabled"><span>Rule được bật</span></label>
+        @if (!editingId()) {
+          <label
+            ><span>Rule ID (không bắt buộc)</span
+            ><input
+              name="id"
+              [(ngModel)]="draft.id"
+              maxlength="128"
+              placeholder="rule-gate-blacklist"
+          /></label>
+        }
+        <label [class.full-span]="editingId()"
+          ><span>Tên rule</span
+          ><input
+            name="name"
+            [(ngModel)]="draft.name"
+            maxlength="256"
+            placeholder="Alert blacklist tại Gate 01"
+            required
+        /></label>
+        <label
+          ><span>Priority</span
+          ><input
+            type="number"
+            name="priority"
+            [(ngModel)]="draft.priority"
+            min="-10000"
+            max="10000"
+            step="1"
+            required
+        /></label>
+        <label class="checkbox-field"
+          ><input
+            type="checkbox"
+            name="enabled"
+            [(ngModel)]="draft.enabled"
+          /><span>Rule được bật</span></label
+        >
       </div>
 
       <section class="builder-section">
-        <div class="builder-heading"><div><h3>Conditions</h3><p>Tất cả condition được kết hợp bằng AND.</p></div><button class="button secondary small" type="button" (click)="addCondition()" [disabled]="draft.conditions.length >= 32"><svg lucidePlus aria-hidden="true"></svg> Thêm condition</button></div>
+        <div class="builder-heading">
+          <div>
+            <h3>Conditions</h3>
+            <p>Tất cả condition được kết hợp bằng AND.</p>
+          </div>
+          <button
+            class="button secondary small"
+            type="button"
+            (click)="addCondition()"
+            [disabled]="draft.conditions.length >= 32"
+          >
+            <svg lucidePlus aria-hidden="true"></svg> Thêm condition
+          </button>
+        </div>
         <div class="builder-list">
           @for (condition of draft.conditions; track $index) {
             <article class="builder-row condition-row">
               <span class="builder-index">{{ $index + 1 }}</span>
-              <label><span>Field</span><select [name]="'conditionField' + $index" [(ngModel)]="condition.field" (ngModelChange)="conditionFieldChanged($index)">@for (field of fields; track field) { <option [value]="field">{{ conditionLabel(field) }}</option> }</select></label>
-              <label><span>Operator</span><select [name]="'conditionOperator' + $index" [(ngModel)]="condition.operator" (ngModelChange)="conditionOperatorChanged($index)">@for (operator of operatorsFor(condition); track operator) { <option [value]="operator">{{ operator }}</option> }</select></label>
-              <label class="builder-value"><span>Value</span>
-                @if (condition.operator === 'EXISTS') {
-                  <select [name]="'conditionValue' + $index" [(ngModel)]="condition.value"><option value="true">Có giá trị</option><option value="false">Không có giá trị</option></select>
+              <label
+                ><span>Field</span
+                ><select
+                  [name]="'conditionField' + $index"
+                  [(ngModel)]="condition.field"
+                  (ngModelChange)="conditionFieldChanged($index)"
+                >
+                  @for (field of fields; track field) {
+                    <option [value]="field">{{ conditionLabel(field) }}</option>
+                  }
+                </select></label
+              >
+              <label
+                ><span>Operator</span
+                ><select
+                  [name]="'conditionOperator' + $index"
+                  [(ngModel)]="condition.operator"
+                  (ngModelChange)="conditionOperatorChanged($index)"
+                >
+                  @for (operator of operatorsFor(condition); track operator) {
+                    <option [value]="operator">{{ operator }}</option>
+                  }
+                </select></label
+              >
+              <label class="builder-value"
+                ><span>Value</span>
+                @if (condition.operator === "EXISTS") {
+                  <select
+                    [name]="'conditionValue' + $index"
+                    [(ngModel)]="condition.value"
+                  >
+                    <option value="true">Có giá trị</option>
+                    <option value="false">Không có giá trị</option>
+                  </select>
                 } @else if (conditionChoices(condition).length) {
-                  <select [name]="'conditionValue' + $index" [(ngModel)]="condition.value">@for (choice of conditionChoices(condition); track choice) { <option [value]="choice">{{ choice }}</option> }</select>
+                  <select
+                    [name]="'conditionValue' + $index"
+                    [(ngModel)]="condition.value"
+                  >
+                    @for (choice of conditionChoices(condition); track choice) {
+                      <option [value]="choice">{{ choice }}</option>
+                    }
+                  </select>
                 } @else {
-                  <input [name]="'conditionValue' + $index" [(ngModel)]="condition.value" [placeholder]="conditionPlaceholder(condition)" required>
+                  <input
+                    [name]="'conditionValue' + $index"
+                    [(ngModel)]="condition.value"
+                    [placeholder]="conditionPlaceholder(condition)"
+                    required
+                  />
                 }
               </label>
-              <button class="icon-button danger builder-remove" type="button" aria-label="Xóa condition" (click)="removeCondition($index)" [disabled]="draft.conditions.length === 1"><svg lucideTrash2 aria-hidden="true"></svg></button>
+              <button
+                class="icon-button danger builder-remove"
+                type="button"
+                aria-label="Xóa condition"
+                (click)="removeCondition($index)"
+                [disabled]="draft.conditions.length === 1"
+              >
+                <svg lucideTrash2 aria-hidden="true"></svg>
+              </button>
             </article>
           }
         </div>
       </section>
 
       <section class="builder-section">
-        <div class="builder-heading"><div><h3>Actions</h3><p>Action ID được giữ ổn định để bảo toàn idempotency.</p></div><button class="button secondary small" type="button" (click)="addAction()" [disabled]="draft.actions.length >= 16"><svg lucidePlus aria-hidden="true"></svg> Thêm action</button></div>
+        <div class="builder-heading">
+          <div>
+            <h3>Actions</h3>
+            <p>Action ID được giữ ổn định để bảo toàn idempotency.</p>
+          </div>
+          <button
+            class="button secondary small"
+            type="button"
+            (click)="addAction()"
+            [disabled]="draft.actions.length >= 16"
+          >
+            <svg lucidePlus aria-hidden="true"></svg> Thêm action
+          </button>
+        </div>
         <div class="builder-list">
           @for (action of draft.actions; track action.uiId) {
             <article class="builder-row action-row">
               <span class="builder-index">{{ $index + 1 }}</span>
               <div class="action-editor-main">
                 <div class="form-grid action-config-grid">
-                  <label><span>Action type</span><select [name]="'actionType' + $index" [(ngModel)]="action.type" (ngModelChange)="actionTypeChanged($index)">@for (type of actionTypes; track type) { <option [value]="type">{{ type }}</option> }</select></label>
-                  <label><span>Action ID</span><input [name]="'actionId' + $index" [(ngModel)]="action.id" maxlength="128" required></label>
-                  @if (action.type === 'CREATE_ALERT') {
-                    <label><span>Severity</span><select [name]="'severity' + $index" [(ngModel)]="action.severity">@for (severity of alertSeverities; track severity) { <option [value]="severity">{{ severity }}</option> }</select></label>
-                    <label class="full-span"><span>Message (không bắt buộc)</span><input [name]="'message' + $index" [(ngModel)]="action.message" placeholder="Blacklisted vehicle entered Gate 01"></label>
+                  <label
+                    ><span>Action type</span
+                    ><select
+                      [name]="'actionType' + $index"
+                      [(ngModel)]="action.type"
+                      (ngModelChange)="actionTypeChanged($index)"
+                    >
+                      @for (type of actionTypes; track type) {
+                        <option [value]="type">{{ type }}</option>
+                      }
+                    </select></label
+                  >
+                  <label
+                    ><span>Action ID</span
+                    ><input
+                      [name]="'actionId' + $index"
+                      [(ngModel)]="action.id"
+                      maxlength="128"
+                      required
+                  /></label>
+                  @if (action.type === "CREATE_ALERT") {
+                    <label
+                      ><span>Severity</span
+                      ><select
+                        [name]="'severity' + $index"
+                        [(ngModel)]="action.severity"
+                      >
+                        @for (severity of alertSeverities; track severity) {
+                          <option [value]="severity">{{ severity }}</option>
+                        }
+                      </select></label
+                    >
+                    <label class="full-span"
+                      ><span>Message (không bắt buộc)</span
+                      ><input
+                        [name]="'message' + $index"
+                        [(ngModel)]="action.message"
+                        placeholder="Blacklisted vehicle entered Gate 01"
+                    /></label>
                   } @else if (externalAction(action.type)) {
-                    <label><span>HTTP method</span><select [name]="'method' + $index" [(ngModel)]="action.method"><option value="GET">GET</option><option value="POST">POST</option><option value="PUT">PUT</option><option value="PATCH">PATCH</option></select></label>
-                    <label class="full-span"><span>Target URL</span><input type="url" [name]="'url' + $index" [(ngModel)]="action.url" placeholder="https://barrier.internal/open" required></label>
-                    <p class="inline-help full-span"><svg lucideGlobe2 aria-hidden="true"></svg> Server vẫn kiểm tra host allowlist; external actions mặc định bị tắt.</p>
+                    <label
+                      ><span>HTTP method</span
+                      ><select
+                        [name]="'method' + $index"
+                        [(ngModel)]="action.method"
+                      >
+                        <option value="GET">GET</option>
+                        <option value="POST">POST</option>
+                        <option value="PUT">PUT</option>
+                        <option value="PATCH">PATCH</option>
+                      </select></label
+                    >
+                    <label class="full-span"
+                      ><span>Target URL</span
+                      ><input
+                        type="url"
+                        [name]="'url' + $index"
+                        [(ngModel)]="action.url"
+                        placeholder="https://barrier.internal/open"
+                        required
+                    /></label>
+                    <p class="inline-help full-span">
+                      <svg lucideGlobe2 aria-hidden="true"></svg> Server vẫn
+                      kiểm tra host allowlist; external actions mặc định bị tắt.
+                    </p>
                   } @else {
-                    <label class="full-span"><span>Log message (không bắt buộc)</span><input [name]="'message' + $index" [(ngModel)]="action.message" placeholder="vehicle rule matched"></label>
+                    <label class="full-span"
+                      ><span>Log message (không bắt buộc)</span
+                      ><input
+                        [name]="'message' + $index"
+                        [(ngModel)]="action.message"
+                        placeholder="vehicle rule matched"
+                    /></label>
                   }
                 </div>
               </div>
-              <button class="icon-button danger builder-remove" type="button" aria-label="Xóa action" (click)="removeAction($index)" [disabled]="draft.actions.length === 1"><svg lucideTrash2 aria-hidden="true"></svg></button>
+              <button
+                class="icon-button danger builder-remove"
+                type="button"
+                aria-label="Xóa action"
+                (click)="removeAction($index)"
+                [disabled]="draft.actions.length === 1"
+              >
+                <svg lucideTrash2 aria-hidden="true"></svg>
+              </button>
             </article>
           }
         </div>
       </section>
 
-      @if (draftValidation(); as validation) { <div class="field-error" role="alert">{{ validation }}</div> }
-      <div class="notice neutral"><svg lucideShieldCheck aria-hidden="true"></svg> Builder chỉ sinh field, operator và action đã được backend hỗ trợ; không thực thi expression tùy ý.</div>
-      <div class="drawer-actions sticky-actions"><button class="button ghost" type="button" (click)="closeEditor()">Hủy</button><button class="button primary" type="submit" [disabled]="saving() || ruleForm.invalid || !!draftValidation()">{{ saving() ? 'Đang lưu…' : (editingId() ? 'Lưu thay đổi' : 'Tạo rule') }}</button></div>
+      @if (editorError(); as saveError) {
+        <div class="field-error" role="alert">{{ saveError }}</div>
+      }
+      <div class="notice neutral">
+        <svg lucideShieldCheck aria-hidden="true"></svg> Builder chỉ sinh field,
+        operator và action đã được backend hỗ trợ; không thực thi expression tùy
+        ý.
+      </div>
+      <div class="drawer-actions sticky-actions">
+        <button class="button ghost" type="button" (click)="closeEditor()">
+          Hủy</button
+        ><button class="button primary" type="submit" [disabled]="saving()">
+          {{
+            saving() ? "Đang lưu…" : editingId() ? "Lưu thay đổi" : "Tạo rule"
+          }}
+        </button>
+      </div>
     </form>
   </aside>
 }
 
 @if (pendingDelete(); as rule) {
-  <button class="drawer-backdrop" type="button" aria-label="Hủy xóa" (click)="cancelDelete()"></button>
-  <section class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-rule-title">
-    <span class="confirm-icon danger"><svg lucideTrash2 aria-hidden="true"></svg></span><h2 id="delete-rule-title">Xóa “{{ rule.name }}”?</h2>
-    <p>Rule <span class="mono">{{ rule.id }}</span> sẽ không còn được đánh giá cho event mới. Thao tác được audit nhưng không thể khôi phục từ giao diện.</p>
-    <div class="drawer-actions"><button class="button secondary" type="button" (click)="cancelDelete()" [disabled]="deleting()">Hủy</button><button class="button danger" type="button" (click)="confirmDelete()" [disabled]="deleting()">{{ deleting() ? 'Đang xóa…' : 'Xóa rule' }}</button></div>
+  <button
+    data-dialog-backdrop
+    class="drawer-backdrop"
+    type="button"
+    aria-label="Hủy xóa"
+    (click)="cancelDelete()"
+  ></button>
+  <section
+    appAccessibleDialog
+    class="confirm-dialog"
+    aria-labelledby="delete-rule-title"
+    (appDialogDismiss)="cancelDelete()"
+  >
+    <span class="confirm-icon danger"
+      ><svg lucideTrash2 aria-hidden="true"></svg
+    ></span>
+    <h2 id="delete-rule-title">Xóa “{{ rule.name }}”?</h2>
+    <p>
+      Rule <span class="mono">{{ rule.id }}</span> sẽ không còn được đánh giá
+      cho event mới. Thao tác được audit nhưng không thể khôi phục từ giao diện.
+    </p>
+    @if (deleteError(); as removeError) {
+      <div class="field-error" role="alert">{{ removeError }}</div>
+    }
+    <div class="drawer-actions">
+      <button
+        data-dialog-initial-focus
+        class="button secondary"
+        type="button"
+        (click)="cancelDelete()"
+        [disabled]="deleting()"
+      >
+        Hủy</button
+      ><button
+        class="button danger"
+        type="button"
+        (click)="confirmDelete()"
+        [disabled]="deleting()"
+      >
+        {{ deleting() ? "Đang xóa…" : "Xóa rule" }}
+      </button>
+    </div>
   </section>
 }

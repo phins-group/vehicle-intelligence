@@ -40,9 +40,7 @@ class JsonEventEnvelopeCodec:
         try:
             envelope = EventEnvelope.model_validate_json(payload)
             if envelope.schema_version != EVENT_ENVELOPE_SCHEMA_VERSION:
-                raise ValueError(
-                    f"unsupported envelope schema version: {envelope.schema_version}"
-                )
+                raise ValueError(f"unsupported envelope schema version: {envelope.schema_version}")
             expected_event_type = TOPIC_EVENTS.get(envelope.type)
             if expected_event_type is None:
                 raise ValueError(f"unsupported vehicle event type: {envelope.type}")

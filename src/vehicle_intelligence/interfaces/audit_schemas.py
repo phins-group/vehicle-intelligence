@@ -64,4 +64,3 @@ class AuditLogPublic(APIModel):
 class AuditLogListPublic(APIModel):
     items: list[AuditLogPublic]
     next_cursor: str | None = Field(alias="nextCursor")
-

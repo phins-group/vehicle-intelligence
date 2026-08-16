@@ -122,16 +122,10 @@ class VehicleJourneyService:
             arrived_at=current.occurred_at,
             elapsed_seconds=elapsed,
             topology_edge_id=edge.id if edge is not None else None,
-            expected_minimum_seconds=(
-                edge.minimum_travel_seconds if edge is not None else None
-            ),
-            expected_maximum_seconds=(
-                edge.maximum_travel_seconds if edge is not None else None
-            ),
+            expected_minimum_seconds=(edge.minimum_travel_seconds if edge is not None else None),
+            expected_maximum_seconds=(edge.maximum_travel_seconds if edge is not None else None),
             feasible=(
-                edge.minimum_travel_seconds
-                <= elapsed
-                <= edge.maximum_travel_seconds
+                edge.minimum_travel_seconds <= elapsed <= edge.maximum_travel_seconds
                 if edge is not None
                 else None
             ),

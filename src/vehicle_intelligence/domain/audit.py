@@ -45,4 +45,3 @@ class AuditLog:
             raise ValueError("audit occurred_at must be timezone-aware")
         if self.schema_version < 1:
             raise ValueError("audit schema version must be positive")
-

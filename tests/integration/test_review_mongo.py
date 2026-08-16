@@ -60,9 +60,7 @@ async def test_mongo_human_review_is_atomic_searchable_and_dataset_ready(sample_
         sample_id = result.dataset_sample_id
         corrected = await events.list(EventQuery(plate="51H-123.46"))
         original = await events.list(EventQuery(plate="51H-123.45"))
-        dataset_page = await service.list_samples(
-            DatasetSampleQuery(source_event_id=event.id)
-        )
+        dataset_page = await service.list_samples(DatasetSampleQuery(source_event_id=event.id))
         event_index_cursor = await events._collection.list_indexes()
         dataset_index_cursor = await samples._collection.list_indexes()
         event_indexes = {item["name"] async for item in event_index_cursor}

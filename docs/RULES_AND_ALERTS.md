@@ -218,6 +218,7 @@ Alert listing is newest-first and returns an opaque `nextCursor`.
   breaker yet.
 - Rule changes affect new/redelivered events; rules are not snapshotted onto an
   event before evaluation and there is no historical policy replay command yet.
-- Actions execute sequentially in one event worker process. Horizontal consumers
-  are safe through MongoDB claims, but throughput/load/soak limits still need
-  measurement.
+- Actions execute sequentially for one event and camera order is preserved inside
+  each Redis batch. Different cameras use bounded worker concurrency; horizontal
+  consumers remain safe through MongoDB claims. Deployment-specific
+  throughput/load/soak limits still require measurement.

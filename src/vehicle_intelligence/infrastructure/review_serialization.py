@@ -58,9 +58,7 @@ def dataset_sample_to_document(sample: DatasetSample) -> dict[str, Any]:
                 else None
             ),
             "exportedAt": (
-                sample.exported_at.astimezone(UTC)
-                if sample.exported_at is not None
-                else None
+                sample.exported_at.astimezone(UTC) if sample.exported_at is not None else None
             ),
             "manifestSha256": sample.export_manifest_sha256,
             "errorCode": sample.export_error_code,

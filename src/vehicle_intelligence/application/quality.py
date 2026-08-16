@@ -19,15 +19,14 @@ def grayscale(image: NDArray[np.uint8]) -> NDArray[np.float32]:
 
 
 def sharpness_variance(image: NDArray[np.uint8]) -> float:
-    gray = grayscale(image)
+    return _sharpness_variance_from_gray(grayscale(image))
+
+
+def _sharpness_variance_from_gray(gray: NDArray[np.float32]) -> float:
     if min(gray.shape[:2]) < 3:
         return 0.0
     laplacian = (
-        -4 * gray[1:-1, 1:-1]
-        + gray[:-2, 1:-1]
-        + gray[2:, 1:-1]
-        + gray[1:-1, :-2]
-        + gray[1:-1, 2:]
+        -4 * gray[1:-1, 1:-1] + gray[:-2, 1:-1] + gray[2:, 1:-1] + gray[1:-1, :-2] + gray[1:-1, 2:]
     )
     return float(np.var(laplacian))
 
@@ -44,23 +43,29 @@ class PlateQualityEvaluator:
         gray = grayscale(image)
         height, width = gray.shape[:2]
         config = self._config
-        sharpness = min(sharpness_variance(image) / config.blur_reference, 1.0)
+        sharpness = min(_sharpness_variance_from_gray(gray) / config.blur_reference, 1.0)
         mean_brightness = float(np.mean(gray))
         brightness = self._brightness_score(mean_brightness)
         contrast = min(float(np.std(gray)) / config.contrast_reference, 1.0)
         resolution = min(width / config.target_width, height / config.target_height, 1.0)
         angle = self._angle_score(detection, width, height)
-        values = {
-            "sharpness": sharpness,
-            "brightness": brightness,
-            "contrast": contrast,
-            "resolution": resolution,
-            "angle": angle,
-            "detector": detection.confidence,
-        }
-        weights = config.weights.model_dump()
-        weight_total = sum(weights.values())
-        total = sum(values[name] * weight for name, weight in weights.items()) / weight_total
+        weights = config.weights
+        weight_total = (
+            weights.sharpness
+            + weights.brightness
+            + weights.contrast
+            + weights.resolution
+            + weights.angle
+            + weights.detector
+        )
+        total = (
+            sharpness * weights.sharpness
+            + brightness * weights.brightness
+            + contrast * weights.contrast
+            + resolution * weights.resolution
+            + angle * weights.angle
+            + detection.confidence * weights.detector
+        ) / weight_total
         dimensions_ok = width >= config.min_width and height >= config.min_height
         return PlateQuality(
             sharpness=sharpness,
@@ -83,9 +88,7 @@ class PlateQualityEvaluator:
     def _angle_score(self, detection: PlateDetection, width: int, height: int) -> float:
         if detection.corners:
             top_left, top_right, bottom_right, _ = detection.corners
-            horizontal_angle = abs(
-                math.atan2(top_right.y - top_left.y, top_right.x - top_left.x)
-            )
+            horizontal_angle = abs(math.atan2(top_right.y - top_left.y, top_right.x - top_left.x))
             vertical_angle = abs(
                 math.atan2(bottom_right.x - top_right.x, bottom_right.y - top_right.y)
             )

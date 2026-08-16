@@ -32,4 +32,3 @@ class DetectorPromotionRequest(BaseModel):
     @classmethod
     def normalize_target_source_id(cls, value: str) -> str:
         return value.strip()
-

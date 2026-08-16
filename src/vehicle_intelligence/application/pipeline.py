@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -18,6 +19,7 @@ from vehicle_intelligence.application.health import CameraHealthReporter
 from vehicle_intelligence.application.normalization import VietnamPlateNormalizer
 from vehicle_intelligence.application.plate_crop import expanded_plate_detection
 from vehicle_intelligence.application.ports import (
+    BatchPlateDetector,
     LivePreviewSink,
     OCRProvider,
     PlateDetector,
@@ -76,6 +78,15 @@ class PipelineStats:
 class PipelineResult:
     events: tuple[VehicleEvent, ...]
     stats: PipelineStats
+
+
+@dataclass(frozen=True, slots=True)
+class _TrackedVehicleContext:
+    key: TrackKey
+    track: VehicleTrack
+    tracked: TrackedDetection
+    bbox: BoundingBox
+    crop: NDArray[np.uint8]
 
 
 class VideoVehiclePipeline:
@@ -138,6 +149,7 @@ class VideoVehiclePipeline:
         events: list[VehicleEvent] = []
         last_timestamp: datetime | None = None
         should_finalize = False
+        primary_error: BaseException | None = None
         try:
             for source_item in self._source.frames():
                 await self._report_health()
@@ -169,21 +181,62 @@ class VideoVehiclePipeline:
                 "pipeline_interrupted",
                 extra={"camera_id": self._settings.camera.id},
             )
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as exc:
             should_finalize = True
+            primary_error = exc
             logger.info(
                 "pipeline_cancelled",
                 extra={"camera_id": self._settings.camera.id},
             )
             raise
+        except BaseException as exc:
+            primary_error = exc
+            raise
         finally:
-            try:
-                if should_finalize:
+            deferred_error: BaseException | None = primary_error
+            if should_finalize:
+                try:
                     self._record_events(events, await self._finalize_all())
-            finally:
+                except BaseException as exc:
+                    if deferred_error is None:
+                        deferred_error = exc
+                    else:
+                        logger.exception(
+                            "track finalization failed while preserving primary pipeline error",
+                            extra={"camera_id": self._settings.camera.id},
+                        )
+            try:
                 self._source.close()
+            except BaseException as exc:
+                if deferred_error is None:
+                    deferred_error = exc
+                else:
+                    logger.exception(
+                        "video source cleanup failed while preserving pipeline error",
+                        extra={"camera_id": self._settings.camera.id},
+                    )
+            try:
                 await self._report_health(force=True)
+            except BaseException as exc:
+                if deferred_error is None:
+                    deferred_error = exc
+                else:
+                    logger.exception(
+                        "health cleanup failed while preserving pipeline error",
+                        extra={"camera_id": self._settings.camera.id},
+                    )
+            try:
                 self._tracker.reset()
+            except BaseException as exc:
+                if deferred_error is None:
+                    deferred_error = exc
+                else:
+                    logger.exception(
+                        "tracker cleanup failed while preserving pipeline error",
+                        extra={"camera_id": self._settings.camera.id},
+                    )
+            if primary_error is None and deferred_error is not None:
+                raise deferred_error
         if last_timestamp is None:
             logger.warning(
                 "video_source_produced_no_frames",
@@ -224,19 +277,35 @@ class VideoVehiclePipeline:
         detections = [item for item in detections if self._inside_roi(item.bbox)]
         self._stats.vehicle_detections += len(detections)
         tracked = self._tracker.update(detections, frame.image)
-        events: list[VehicleEvent] = []
-        live_vehicles: list[LiveVehicleOverlay] = []
+        prepared: list[_TrackedVehicleContext] = []
         for item in tracked:
             key = (frame.stream_epoch, item.track_id)
             if key in self._completed_track_ids:
                 self._completed_track_ids[key] = frame.timestamp
                 continue
-            event, live_vehicle = await self._process_tracked(
+            context = self._prepare_tracked(
                 frame.image,
                 frame.frame_id,
                 frame.timestamp,
                 frame.stream_epoch,
                 item,
+            )
+            if context is not None:
+                prepared.append(context)
+
+        plate_detection_sets = self._detect_plates_for_tracks(prepared)
+        events: list[VehicleEvent] = []
+        live_vehicles: list[LiveVehicleOverlay] = []
+        for context, plate_detections in zip(
+            prepared,
+            plate_detection_sets,
+            strict=True,
+        ):
+            event, live_vehicle = await self._process_tracked(
+                context,
+                plate_detections,
+                frame.frame_id,
+                frame.timestamp,
             )
             if live_vehicle is not None:
                 live_vehicles.append(live_vehicle)
@@ -249,9 +318,7 @@ class VideoVehiclePipeline:
         frame: VideoFrame,
     ) -> tuple[list[VehicleEvent], list[LiveVehicleOverlay]]:
         plate_detections = [
-            item
-            for item in self._detect_plates(frame.image)
-            if self._inside_roi(item.bbox)
+            item for item in self._detect_plates(frame.image) if self._inside_roi(item.bbox)
         ]
         tracker_input = [
             Detection(
@@ -337,18 +404,18 @@ class VideoVehiclePipeline:
             return await self._finalize_track(key), overlay
         return None, overlay
 
-    async def _process_tracked(
+    def _prepare_tracked(
         self,
         frame_image: NDArray[np.uint8],
         frame_id: int,
         timestamp: datetime,
         stream_epoch: int,
         tracked: TrackedDetection,
-    ) -> tuple[VehicleEvent | None, LiveVehicleOverlay | None]:
+    ) -> _TrackedVehicleContext | None:
         detection = tracked.detection
         clipped = detection.bbox.clip(frame_image.shape[1], frame_image.shape[0])
         if clipped is None:
-            return None, None
+            return None
         key = (stream_epoch, tracked.track_id)
         track = self._track_for(key, timestamp, stream_epoch, tracked.track_id)
         if clipped is not detection.bbox:
@@ -365,20 +432,36 @@ class VideoVehiclePipeline:
         track.update(tracked, frame_id, timestamp)
         vehicle_crop = self._crop(frame_image, clipped)
         self._consider_vehicle_images(track, frame_image, vehicle_crop, clipped, tracked)
-        plate = self._observe_plate(track, vehicle_crop, clipped, frame_id, timestamp)
+        return _TrackedVehicleContext(key, track, tracked, clipped, vehicle_crop)
 
-        direction = self._direction_estimator.estimate(tuple(track.trajectory))
-        track.direction = direction
+    async def _process_tracked(
+        self,
+        context: _TrackedVehicleContext,
+        plate_detections: list[PlateDetection],
+        frame_id: int,
+        timestamp: datetime,
+    ) -> tuple[VehicleEvent | None, LiveVehicleOverlay]:
+        plate = self._observe_plate(
+            context.track,
+            context.crop,
+            context.bbox,
+            plate_detections,
+            frame_id,
+            timestamp,
+        )
+
+        direction = self._direction_estimator.estimate(tuple(context.track.trajectory))
+        context.track.direction = direction
         live_vehicle = LiveVehicleOverlay(
-            track_id=track.logical_id,
-            bbox=clipped,
-            confidence=tracked.detection.confidence,
-            vehicle_type=tracked.detection.class_name,
+            track_id=context.track.logical_id,
+            bbox=context.bbox,
+            confidence=context.tracked.detection.confidence,
+            vehicle_type=context.tracked.detection.class_name,
             direction=direction,
             plate=plate,
         )
         if self._settings.camera.finalize_on_crossing and direction.value != "UNKNOWN":
-            return await self._finalize_track(key), live_vehicle
+            return await self._finalize_track(context.key), live_vehicle
         return None, live_vehicle
 
     def _track_for(
@@ -435,6 +518,10 @@ class VideoVehiclePipeline:
         bbox: BoundingBox,
         tracked: TrackedDetection,
     ) -> None:
+        store_snapshot = self._settings.storage.snapshots
+        store_vehicle_crop = self._settings.storage.vehicle_crops
+        if not store_snapshot and not store_vehicle_crop:
+            return
         score = self._selector.vehicle_score(
             vehicle_crop,
             bbox,
@@ -442,13 +529,16 @@ class VideoVehiclePipeline:
             frame.shape[0],
             tracked.detection.confidence,
         )
-        if track.best_snapshot is None or score > track.best_snapshot.score:
+        if store_snapshot and (track.best_snapshot is None or score > track.best_snapshot.score):
             track.best_snapshot = ImageCandidate(
                 frame_id=track.trajectory[-1].frame_id,
                 timestamp=track.last_seen,
                 score=score,
                 image=frame.copy(),
             )
+        if store_vehicle_crop and (
+            track.best_vehicle_crop is None or score > track.best_vehicle_crop.score
+        ):
             track.best_vehicle_crop = ImageCandidate(
                 frame_id=track.trajectory[-1].frame_id,
                 timestamp=track.last_seen,
@@ -464,6 +554,8 @@ class VideoVehiclePipeline:
         bbox: BoundingBox,
         detector_confidence: float,
     ) -> None:
+        if not self._settings.storage.snapshots:
+            return
         score = self._selector.vehicle_score(
             plate_crop,
             bbox,
@@ -499,15 +591,48 @@ class VideoVehiclePipeline:
         self._stats.plate_detections += len(detections)
         return detections
 
+    def _detect_plates_for_tracks(
+        self,
+        contexts: list[_TrackedVehicleContext],
+    ) -> list[list[PlateDetection]]:
+        if not contexts:
+            return []
+        if not isinstance(self._plate_detector, BatchPlateDetector):
+            return [self._detect_plates(context.crop, context.track) for context in contexts]
+
+        inference_started = time.perf_counter()
+        try:
+            detection_sets = self._plate_detector.detect_batch(
+                [context.crop for context in contexts]
+            )
+            if len(detection_sets) != len(contexts):
+                raise InferenceError("plate detector batch result count does not match input count")
+        except InferenceError:
+            logger.exception(
+                "plate_batch_detection_failed",
+                extra={
+                    "camera_id": self._settings.camera.id,
+                    "batch_size": len(contexts),
+                },
+            )
+        else:
+            self._stats.plate_detections += sum(len(items) for items in detection_sets)
+            return detection_sets
+        finally:
+            self._stats.plate_inference_seconds += time.perf_counter() - inference_started
+            self._stats.plate_inference_calls += 1
+
+        return [self._detect_plates(context.crop, context.track) for context in contexts]
+
     def _observe_plate(
         self,
         track: VehicleTrack,
         vehicle_crop: NDArray[np.uint8],
         vehicle_bbox: BoundingBox,
+        detections: list[PlateDetection],
         frame_id: int,
         timestamp: datetime,
     ) -> LivePlateOverlay | None:
-        detections = self._detect_plates(vehicle_crop, track)
         track.plate_detections_seen += len(detections)
         return self._evaluate_plate_detections(
             track,
@@ -527,9 +652,7 @@ class VideoVehiclePipeline:
         frame_id: int,
         timestamp: datetime,
     ) -> LivePlateOverlay | None:
-        evaluated: list[
-            tuple[PlateDetection, BoundingBox, NDArray[np.uint8], PlateQuality]
-        ] = []
+        evaluated: list[tuple[PlateDetection, BoundingBox, NDArray[np.uint8], PlateQuality]] = []
         for detection in detections:
             display_bbox = detection.bbox.clip(
                 detection_image.shape[1],
@@ -574,29 +697,52 @@ class VideoVehiclePipeline:
         )
         best_ocr: OCRResult | None = None
         best_normalization: PlateNormalization | None = None
-        for variant in self._preprocessor.variants(plate_crop, quality, detection):
-            self._stats.ocr_requests += 1
-            try:
-                inference_started = time.perf_counter()
-                result = self._ocr.recognize(variant.image)
-                self._stats.ocr_inference_seconds += time.perf_counter() - inference_started
-            except InferenceError:
-                self._stats.ocr_inference_seconds += time.perf_counter() - inference_started
-                self._stats.ocr_failures += 1
-                logger.exception(
-                    "ocr_failed",
-                    extra={"camera_id": track.camera_id, "track_id": track.logical_id},
-                )
-                continue
-            if result.confidence < self._settings.vision.ocr.minimum_confidence:
-                continue
-            normalized = self._normalizer.normalize(result.text)
-            if not normalized.valid:
-                continue
-            if best_ocr is None or result.confidence > best_ocr.confidence:
-                best_ocr = result
-                best_normalization = normalized
+        ocr_config = self._settings.vision.ocr
+        if self._ocr_is_due(track):
+            variants = self._preprocessor.variants(plate_crop, quality, detection)
+            if variants:
+                track.last_ocr_attempt_frame_seen = track.frames_seen
+                for variant in variants:
+                    self._stats.ocr_requests += 1
+                    inference_started = time.perf_counter()
+                    try:
+                        result = self._ocr.recognize(variant.image)
+                    except InferenceError:
+                        self._stats.ocr_failures += 1
+                        logger.exception(
+                            "ocr_failed",
+                            extra={
+                                "camera_id": track.camera_id,
+                                "track_id": track.logical_id,
+                            },
+                        )
+                        continue
+                    finally:
+                        self._stats.ocr_inference_seconds += time.perf_counter() - inference_started
+                    if result.confidence < ocr_config.minimum_confidence:
+                        continue
+                    normalized = self._normalizer.normalize(result.text)
+                    if not normalized.valid:
+                        continue
+                    if best_ocr is None or result.confidence > best_ocr.confidence:
+                        best_ocr = result
+                        best_normalization = normalized
+                    if (
+                        ocr_config.variant_early_stop_confidence is not None
+                        and result.confidence >= ocr_config.variant_early_stop_confidence
+                    ):
+                        break
         if best_ocr is None or best_normalization is None:
+            if prior is not None:
+                self._consider_plate_image(
+                    track,
+                    plate_crop,
+                    quality,
+                    detection.confidence,
+                    prior.ocr_confidence,
+                    frame_id,
+                    timestamp,
+                )
             return overlay
         observation = PlateObservation(
             frame_id=frame_id,
@@ -614,14 +760,15 @@ class VideoVehiclePipeline:
         )
         track.add_plate_observation(observation)
         self._stats.ocr_observations += 1
-        score = self._selector.plate_score(quality, best_ocr.confidence, detection.confidence)
-        if track.best_plate_crop is None or score > track.best_plate_crop.score:
-            track.best_plate_crop = ImageCandidate(
-                frame_id=frame_id,
-                timestamp=timestamp,
-                score=score,
-                image=plate_crop.copy(),
-            )
+        self._consider_plate_image(
+            track,
+            plate_crop,
+            quality,
+            detection.confidence,
+            best_ocr.confidence,
+            frame_id,
+            timestamp,
+        )
         return LivePlateOverlay(
             bbox=clipped.translate(detection_image_bbox.x1, detection_image_bbox.y1),
             detection_confidence=detection.confidence,
@@ -679,10 +826,11 @@ class VideoVehiclePipeline:
         return events
 
     async def _finalize_track(self, key: TrackKey) -> VehicleEvent | None:
-        track = self._active.pop(key, None)
+        track = self._active.get(key)
         if track is None:
             return None
         event = await self._finalizer.finalize(track)
+        self._active.pop(key, None)
         self._completed_track_ids[key] = track.last_seen
         if event is not None:
             self._stats.finalized_tracks += 1
@@ -731,6 +879,54 @@ class VideoVehiclePipeline:
 
     def _inside_roi(self, bbox: BoundingBox) -> bool:
         return self._roi is None or point_in_polygon(bbox.center, self._roi)
+
+    def _consider_plate_image(
+        self,
+        track: VehicleTrack,
+        plate_crop: NDArray[np.uint8],
+        quality: PlateQuality,
+        detector_confidence: float,
+        ocr_confidence: float,
+        frame_id: int,
+        timestamp: datetime,
+    ) -> None:
+        if not self._settings.storage.plate_crops:
+            return
+        score = self._selector.plate_score(
+            quality,
+            ocr_confidence,
+            detector_confidence,
+        )
+        if track.best_plate_crop is None or score > track.best_plate_crop.score:
+            track.best_plate_crop = ImageCandidate(
+                frame_id=frame_id,
+                timestamp=timestamp,
+                score=score,
+                image=plate_crop.copy(),
+            )
+
+    def _ocr_is_due(self, track: VehicleTrack) -> bool:
+        if self._has_stable_ocr_consensus(track):
+            return False
+        last_attempt = track.last_ocr_attempt_frame_seen
+        return (
+            last_attempt is None
+            or track.frames_seen - last_attempt >= self._settings.vision.ocr.track_frame_interval
+        )
+
+    def _has_stable_ocr_consensus(self, track: VehicleTrack) -> bool:
+        config = self._settings.vision.ocr
+        required = config.consensus_stop_min_observations
+        if required is None:
+            return False
+        counts = Counter(
+            observation.normalized_text
+            for observation in track.plate_observations
+            if not observation.partial
+            and observation.normalized_text is not None
+            and observation.ocr_confidence >= config.consensus_stop_min_confidence
+        )
+        return bool(counts) and max(counts.values()) >= required
 
     @classmethod
     def _pop_matching_plate(

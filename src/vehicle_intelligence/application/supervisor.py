@@ -15,6 +15,8 @@ from vehicle_intelligence.application.ports import (
     CameraRepository,
     CameraWorkerHandle,
     CameraWorkerLauncher,
+    InferenceServiceHandle,
+    InferenceServiceLauncher,
 )
 from vehicle_intelligence.domain import CameraHealth, CameraStatus
 from vehicle_intelligence.exceptions import CameraWorkerError, PersistenceError
@@ -32,6 +34,11 @@ class CameraSupervisorStats:
     workers_capacity_deferred: int = 0
     peak_active_workers: int = 0
     maximum_backoff_seconds_observed: float = 0.0
+    inference_services_started: int = 0
+    inference_services_stopped: int = 0
+    inference_services_restarted: int = 0
+    inference_service_start_failures: int = 0
+    inference_service_crashes: int = 0
 
 
 @dataclass(slots=True)
@@ -55,6 +62,7 @@ class CameraSupervisor:
         maximum_starts_per_reconcile: int = 4,
         monotonic_clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        inference_service_launcher: InferenceServiceLauncher | None = None,
     ) -> None:
         if (
             reconcile_interval_seconds <= 0
@@ -76,6 +84,12 @@ class CameraSupervisor:
         self._maximum_starts_per_reconcile = maximum_starts_per_reconcile
         self._monotonic = monotonic_clock
         self._wall_clock = wall_clock
+        self._inference_service_launcher = inference_service_launcher
+        self._inference_service: InferenceServiceHandle | None = None
+        self._inference_started_at: float | None = None
+        self._inference_restart_after = 0.0
+        self._inference_failure_count = 0
+        self._inference_ever_started = False
         self._active: dict[str, _ManagedWorker] = {}
         self._restart_after: dict[str, float] = {}
         self._failure_counts: dict[str, int] = {}
@@ -88,6 +102,7 @@ class CameraSupervisor:
     async def initialize(self) -> None:
         await self._cameras.ensure_indexes()
         await self._health.ensure_indexes()
+        await self._ensure_inference_service()
 
     async def run(self, stop_event: asyncio.Event) -> CameraSupervisorStats:
         try:
@@ -95,7 +110,7 @@ class CameraSupervisor:
                 try:
                     await self.initialize()
                     break
-                except PersistenceError:
+                except (PersistenceError, CameraWorkerError):
                     logger.exception("camera supervisor initialization failed; retrying")
                     await self._wait(stop_event)
             while not stop_event.is_set():
@@ -110,6 +125,7 @@ class CameraSupervisor:
         return self.stats
 
     async def reconcile_once(self) -> None:
+        await self._ensure_inference_service()
         desired = {camera.id: camera for camera in await self._cameras.list(enabled_only=True)}
         now = self._monotonic()
         for camera_id in set(self._restart_after) - set(desired):
@@ -218,9 +234,80 @@ class CameraSupervisor:
 
     async def close(self) -> None:
         try:
-            await self._cameras.close()
+            await self._stop_inference_service()
         finally:
-            await self._health.close()
+            try:
+                await self._cameras.close()
+            finally:
+                await self._health.close()
+
+    async def _ensure_inference_service(self) -> None:
+        launcher = self._inference_service_launcher
+        if launcher is None:
+            return
+        now = self._monotonic()
+        current = self._inference_service
+        if current is not None and current.running:
+            if (
+                self._inference_started_at is not None
+                and now - self._inference_started_at >= self._restart_stability
+            ):
+                self._inference_failure_count = 0
+            return
+        if current is not None:
+            self.stats.inference_service_crashes += 1
+            logger.error(
+                "shared inference service exited",
+                extra={"return_code": current.return_code},
+            )
+            for camera_id in self._active:
+                self._restart_after[camera_id] = 0
+            await self.stop_all()
+            try:
+                await current.stop()
+            except Exception:
+                logger.exception("shared inference service cleanup failed")
+            self._inference_service = None
+            self._inference_started_at = None
+            now = self._monotonic()
+            self._schedule_inference_failure(now)
+        if self._inference_restart_after > now:
+            raise CameraWorkerError("shared inference service restart is in backoff")
+        try:
+            self._inference_service = await launcher.start()
+        except Exception as exc:
+            self.stats.inference_service_start_failures += 1
+            self._schedule_inference_failure(self._monotonic())
+            raise CameraWorkerError("cannot start shared inference service") from exc
+        self._inference_started_at = self._monotonic()
+        self._inference_restart_after = 0
+        self.stats.inference_services_started += 1
+        if self._inference_ever_started:
+            self.stats.inference_services_restarted += 1
+        self._inference_ever_started = True
+        logger.info("shared inference service started")
+
+    def _schedule_inference_failure(self, now: float) -> None:
+        self._inference_failure_count += 1
+        delay = min(
+            self._restart_backoff * (2 ** min(self._inference_failure_count - 1, 20)),
+            self._restart_backoff_max,
+        )
+        self._inference_restart_after = now + delay
+        self.stats.maximum_backoff_seconds_observed = max(
+            self.stats.maximum_backoff_seconds_observed,
+            delay,
+        )
+
+    async def _stop_inference_service(self) -> None:
+        current, self._inference_service = self._inference_service, None
+        if current is None:
+            return
+        try:
+            await current.stop()
+            self.stats.inference_services_stopped += 1
+        except Exception:
+            logger.exception("shared inference service stop failed")
 
     async def _write_status(self, camera_id: str, status: CameraStatus) -> None:
         current = await self._health.get(camera_id)

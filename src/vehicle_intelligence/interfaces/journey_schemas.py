@@ -89,8 +89,7 @@ class VehicleJourneyPublic(APIModel):
         return cls(
             vehicleId=value.vehicle_id,
             observations=[
-                JourneyObservationPublic.from_domain(item)
-                for item in value.observations
+                JourneyObservationPublic.from_domain(item) for item in value.observations
             ],
             segments=[JourneySegmentPublic.from_domain(item) for item in value.segments],
             startedAt=value.started_at,

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NoReturn
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.encoders import jsonable_encoder
@@ -23,7 +24,10 @@ from vehicle_intelligence.application.dataset_registry import DatasetRegistrySer
 from vehicle_intelligence.application.dataset_review import DetectorDatasetReviewService
 from vehicle_intelligence.application.discovery import OnvifDiscoveryService
 from vehicle_intelligence.application.journeys import VehicleJourneyService
-from vehicle_intelligence.application.live_monitor import LiveMonitorService
+from vehicle_intelligence.application.live_monitor import (
+    LiveMonitorService,
+    LiveMonitorSourceState,
+)
 from vehicle_intelligence.application.media_access import VehicleEventMediaService
 from vehicle_intelligence.application.model_quality import ModelQualityService
 from vehicle_intelligence.application.model_training import ModelTrainingService
@@ -39,14 +43,20 @@ from vehicle_intelligence.application.ports import (
     CameraTopologyRepository,
     DatasetSampleRepository,
     EventQuery,
+    MediaStorage,
+    MediaUrlSigner,
     VectorRepository,
     VehicleEventRepository,
     VehicleIdentityRepository,
 )
-from vehicle_intelligence.application.realtime import RealtimeEventService
+from vehicle_intelligence.application.realtime import RealtimeEventService, RealtimeSourceState
 from vehicle_intelligence.application.reid import IdentityReviewService, ReIDScoringService
 from vehicle_intelligence.application.review import HumanPlateReviewService
 from vehicle_intelligence.application.rules import RuleEvaluator
+from vehicle_intelligence.application.runtime_health import (
+    RuntimeDependency,
+    RuntimeHealthService,
+)
 from vehicle_intelligence.application.security import (
     DevelopmentAuthenticator,
     Permission,
@@ -167,6 +177,8 @@ from vehicle_intelligence.interfaces.camera_schemas import (
     CameraConnectionTestPublic,
     CameraCreateRequest,
     CameraHealthPublic,
+    CameraHealthSnapshotItemPublic,
+    CameraHealthSnapshotPublic,
     CameraListPublic,
     CameraPublic,
     CameraUpdateRequest,
@@ -284,6 +296,8 @@ def _api_security(
     provider = authenticator
     if provider is None:
         if not settings.auth.enabled:
+            if settings.app.environment.strip().casefold() == "production":
+                raise ConfigurationError("API authentication cannot be disabled in production")
             provider = DevelopmentAuthenticator()
         elif settings.auth.provider == "oidc":
             if settings.auth.oidc is None:
@@ -313,13 +327,13 @@ def _live_monitor_service(settings: Settings) -> LiveMonitorService | None:
 def _media_access_service(
     settings: Settings,
     repository: VehicleEventRepository,
+    signer: MediaUrlSigner | None = None,
 ) -> VehicleEventMediaService | None:
     if settings.storage.backend != "minio":
         return None
-    signer = MinioMediaStorage(settings.minio)
     return VehicleEventMediaService(
         repository,
-        signer,
+        signer or MinioMediaStorage(settings.minio),
         settings.minio.presigned_url_ttl_seconds,
     )
 
@@ -331,8 +345,7 @@ def _dataset_repository(
 ) -> DatasetSampleRepository:
     return (
         MongoDatasetSampleRepository(mongo or settings.mongodb)
-        if settings.mongodb.enabled
-        and isinstance(repository, MongoVehicleEventRepository)
+        if settings.mongodb.enabled and isinstance(repository, MongoVehicleEventRepository)
         else InMemoryDatasetSampleRepository()
     )
 
@@ -342,13 +355,14 @@ def _human_review_service(
     repository: VehicleEventRepository,
     samples: DatasetSampleRepository,
     normalizer: VietnamPlateNormalizer,
+    media: MediaStorage | None = None,
 ) -> HumanPlateReviewService:
-    media = (
+    managed_media = media or (
         MinioMediaStorage(settings.minio)
         if settings.storage.backend == "minio"
         else LocalMediaStorage(settings.storage.output_directory)
     )
-    return HumanPlateReviewService(repository, samples, normalizer, media)
+    return HumanPlateReviewService(repository, samples, normalizer, managed_media)
 
 
 def _model_quality_service(
@@ -359,8 +373,7 @@ def _model_quality_service(
 ) -> ModelQualityService:
     quality_repository = (
         MongoModelQualityRepository(mongo or settings.mongodb)
-        if settings.mongodb.enabled
-        and isinstance(repository, MongoVehicleEventRepository)
+        if settings.mongodb.enabled and isinstance(repository, MongoVehicleEventRepository)
         else InMemoryModelQualityRepository(
             repository,
             samples,
@@ -368,6 +381,186 @@ def _model_quality_service(
         )
     )
     return ModelQualityService(quality_repository, settings.model_quality)
+
+
+async def _probe_event_store(mongodb_enabled: bool, mongo: MongoRuntime | None) -> bool:
+    if not mongodb_enabled:
+        return True
+    if mongo is None:
+        return False
+    await mongo.ping()
+    return True
+
+
+async def _probe_minio(minio: MinioMediaStorage | None) -> bool:
+    if minio is None:
+        return False
+    await minio.ping()
+    return True
+
+
+async def _probe_available(available: bool) -> bool:
+    return available
+
+
+async def _probe_realtime(service: RealtimeEventService | None) -> bool:
+    return service is not None and service.stats.source_state is RealtimeSourceState.ONLINE
+
+
+async def _probe_live_monitor(service: LiveMonitorService | None) -> bool:
+    return service is not None and service.stats.source_state is LiveMonitorSourceState.ONLINE
+
+
+def _configured_minio(settings: Settings) -> MinioMediaStorage | None:
+    if settings.storage.backend != "minio":
+        return None
+    return MinioMediaStorage(settings.minio)
+
+
+def _build_runtime_health(
+    settings: Settings,
+    mongo: MongoRuntime | None,
+    minio: MinioMediaStorage | None,
+    cameras: CameraService | None,
+    realtime: RealtimeEventService | None,
+    live_monitor: LiveMonitorService | None,
+    configured: RuntimeHealthService | None = None,
+) -> RuntimeHealthService:
+    if configured is not None:
+        return configured
+    return RuntimeHealthService(
+        (
+            RuntimeDependency(
+                "eventStore",
+                required=True,
+                probe=lambda: _probe_event_store(settings.mongodb.enabled, mongo),
+            ),
+            RuntimeDependency(
+                "cameraManagement",
+                required=False,
+                probe=lambda: _probe_available(cameras is not None),
+            ),
+            RuntimeDependency(
+                "minio",
+                required=False,
+                probe=(lambda: _probe_minio(minio))
+                if settings.storage.backend == "minio"
+                else None,
+            ),
+            RuntimeDependency(
+                "realtime",
+                required=False,
+                probe=(lambda: _probe_realtime(realtime)) if settings.realtime.enabled else None,
+            ),
+            RuntimeDependency(
+                "liveMonitor",
+                required=False,
+                probe=(lambda: _probe_live_monitor(live_monitor))
+                if settings.live_monitor.enabled
+                else None,
+            ),
+        )
+    )
+
+
+def _register_runtime_health_routes(
+    app: FastAPI,
+    runtime_health: RuntimeHealthService,
+    api_security: APISecurity,
+    cameras: CameraService | None,
+    onvif_discovery: OnvifDiscoveryService | None,
+    media_access: VehicleEventMediaService | None,
+    detector_reviews: DetectorDatasetReviewService | None,
+    dataset_registry: DatasetRegistryService | None,
+    model_training: ModelTrainingService | None,
+    live_monitor: LiveMonitorService | None,
+    realtime: RealtimeEventService | None,
+) -> None:
+    @app.get("/livez", include_in_schema=False)
+    async def liveness() -> JSONResponse:
+        return JSONResponse(
+            content={"status": "alive"},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/readyz", include_in_schema=False)
+    async def readiness() -> JSONResponse:
+        snapshot = await runtime_health.assess()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK
+            if snapshot.ready
+            else status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=snapshot.to_document(),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/api/system/health")
+    async def health() -> dict[str, object]:
+        return {
+            "status": "ok",
+            "phase": "4",
+            "authentication": "enabled" if api_security.enabled else "disabled",
+            "cameraManagement": "available" if cameras is not None else "unavailable",
+            "onvifDiscovery": "available" if onvif_discovery is not None else "disabled",
+            "policyEngine": "available",
+            "auditLog": "available",
+            "mediaAccess": "available" if media_access is not None else "unavailable",
+            "humanReview": "available",
+            "datasetReview": "available" if detector_reviews is not None else "disabled",
+            "datasetRegistry": "available" if dataset_registry is not None else "disabled",
+            "modelTraining": "available" if model_training is not None else "disabled",
+            "modelQuality": "available",
+            "liveMonitor": (
+                live_monitor.stats.source_state.value if live_monitor is not None else "DISABLED"
+            ),
+            "realtime": realtime.stats.source_state.value if realtime is not None else "DISABLED",
+        }
+
+
+def _register_camera_health_routes(
+    app: FastAPI,
+    camera_service: CameraService | None,
+    read_access: Callable[..., Awaitable[Principal]],
+) -> None:
+    @app.get("/api/camera-health", response_model=CameraHealthSnapshotPublic)
+    async def list_camera_health(
+        _principal: Principal = Depends(read_access),
+    ) -> CameraHealthSnapshotPublic:
+        service = _require_camera_service(camera_service)
+        try:
+            cameras, health_items = await asyncio.gather(service.list(), service.list_health())
+            health_by_camera = {item.camera_id: item for item in health_items}
+            return CameraHealthSnapshotPublic(
+                items=[
+                    CameraHealthSnapshotItemPublic(
+                        camera=CameraPublic.from_domain(camera),
+                        health=(
+                            CameraHealthPublic.from_domain(health)
+                            if (health := health_by_camera.get(camera.id)) is not None
+                            else None
+                        ),
+                    )
+                    for camera in cameras
+                ]
+            )
+        except Exception as exc:
+            _raise_camera_http(exc)
+
+    @app.get("/api/cameras/{camera_id}/health", response_model=CameraHealthPublic)
+    async def get_camera_health(
+        camera_id: str,
+        _principal: Principal = Depends(read_access),
+    ) -> CameraHealthPublic:
+        service = _require_camera_service(camera_service)
+        try:
+            camera_health = await service.get_health(camera_id)
+            if camera_health is None:
+                raise HTTPException(status_code=404, detail="camera health is not available")
+            return CameraHealthPublic.from_domain(camera_health)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            _raise_camera_http(exc)
 
 
 def create_app(
@@ -392,11 +585,11 @@ def create_app(
     detector_review_service: DetectorDatasetReviewService | None = None,
     dataset_registry_service: DatasetRegistryService | None = None,
     model_training_service: ModelTrainingService | None = None,
+    runtime_health_service: RuntimeHealthService | None = None,
 ) -> FastAPI:
     settings = settings or load_settings()
-    camera_credentials_configured = (
-        settings.security.camera_credential_key is not None
-        or bool(settings.security.camera_credential_keys)
+    camera_credentials_configured = settings.security.camera_credential_key is not None or bool(
+        settings.security.camera_credential_keys
     )
     valid_camera_credentials = False
     if camera_credentials_configured:
@@ -410,10 +603,7 @@ def create_app(
         or policy_services is None
         or audit_service is None
         or (camera_service is None and valid_camera_credentials)
-        or (
-            human_review_service is None
-            and isinstance(repository, MongoVehicleEventRepository)
-        )
+        or (human_review_service is None and isinstance(repository, MongoVehicleEventRepository))
     )
     managed_mongo = mongo_runtime or (
         MongoRuntime(settings.mongodb) if requires_composed_mongo else None
@@ -468,12 +658,12 @@ def create_app(
     api_security = _api_security(settings, authenticator)
     managed_realtime = realtime_service or _realtime_service(settings)
     managed_live_monitor = live_monitor_service or _live_monitor_service(settings)
-    managed_onvif_discovery = (
-        onvif_discovery_service or _onvif_discovery_service(settings)
-    )
+    managed_onvif_discovery = onvif_discovery_service or _onvif_discovery_service(settings)
+    managed_minio = _configured_minio(settings)
     managed_media_access = media_access_service or _media_access_service(
         settings,
         event_repository,
+        managed_minio,
     )
     managed_samples = _dataset_repository(settings, event_repository, managed_mongo)
     managed_reviews = human_review_service or _human_review_service(
@@ -481,6 +671,7 @@ def create_app(
         event_repository,
         managed_samples,
         normalizer,
+        managed_minio,
     )
     managed_quality = model_quality_service or _model_quality_service(
         settings,
@@ -512,16 +703,26 @@ def create_app(
     event_codec = JsonEventEnvelopeCodec()
     managed_metrics = prometheus_metrics or PrometheusMetrics()
     managed_tracing = tracing_runtime or build_tracing_runtime(settings.observability)
+    managed_runtime_health = _build_runtime_health(
+        settings,
+        managed_mongo,
+        managed_minio,
+        managed_cameras,
+        managed_realtime,
+        managed_live_monitor,
+        runtime_health_service,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        if managed_mongo is not None:
-            await managed_mongo.initialize()
-        await event_repository.ensure_indexes()
-        await managed_identities.ensure_indexes()
-        await managed_topology.initialize()
-        await managed_reid_scoring.initialize()
+        primary_error: BaseException | None = None
         try:
+            if managed_mongo is not None:
+                await managed_mongo.initialize()
+            await event_repository.ensure_indexes()
+            await managed_identities.ensure_indexes()
+            await managed_topology.initialize()
+            await managed_reid_scoring.initialize()
             if managed_cameras is not None:
                 await managed_cameras.initialize()
             await managed_policies.initialize()
@@ -529,6 +730,8 @@ def create_app(
             await managed_reviews.initialize()
             if managed_detector_reviews is not None:
                 await managed_detector_reviews.initialize()
+                await managed_detector_reviews.flush_pending_audits(managed_audits)
+                managed_detector_reviews.start_audit_relay(managed_audits)
             if managed_dataset_registry is not None:
                 await managed_dataset_registry.initialize()
             if managed_model_training is not None:
@@ -537,10 +740,14 @@ def create_app(
                 await managed_realtime.initialize()
             if managed_live_monitor is not None:
                 await managed_live_monitor.initialize()
+            managed_runtime_health.start()
             yield
+        except BaseException as exc:
+            primary_error = exc
+            raise
         finally:
             cleanup_error: BaseException | None = None
-            closers = []
+            closers = [("runtime health", managed_runtime_health.stop)]
             if managed_model_training is not None:
                 closers.append(("model training", managed_model_training.close))
             closers.extend(
@@ -561,6 +768,8 @@ def create_app(
                     ("policies", managed_policies.close),
                 )
             )
+            if managed_minio is not None:
+                closers.append(("media storage", managed_minio.close))
             if managed_cameras is not None:
                 closers.append(("cameras", managed_cameras.close))
             closers.extend(
@@ -589,7 +798,7 @@ def create_app(
             except BaseException as exc:
                 cleanup_error = cleanup_error or exc
                 logger.exception("MongoDB cleanup failed")
-            if cleanup_error is not None:
+            if cleanup_error is not None and primary_error is None:
                 raise cleanup_error
 
     async def mutation_transaction() -> AsyncIterator[None]:
@@ -685,7 +894,10 @@ def create_app(
     )
 
     @app.middleware("http")
-    async def observe_http_request(http_request: Request, call_next):
+    async def observe_http_request(
+        http_request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
         started = time.perf_counter()
         response_status = 500
         try:
@@ -704,7 +916,10 @@ def create_app(
                 )
 
     @app.middleware("http")
-    async def attach_request_id(http_request: Request, call_next):
+    async def attach_request_id(
+        http_request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
         http_request.state.request_id = resolve_request_id(http_request)
         span = trace.get_current_span()
         if span.is_recording():
@@ -727,41 +942,19 @@ def create_app(
             content={"detail": jsonable_encoder(_sanitize_validation_errors(exc.errors()))},
         )
 
-    @app.get("/api/system/health")
-    async def health() -> dict[str, object]:
-        return {
-            "status": "ok",
-            "phase": "4",
-            "authentication": "enabled" if api_security.enabled else "disabled",
-            "cameraManagement": "available" if managed_cameras is not None else "unavailable",
-            "onvifDiscovery": (
-                "available" if managed_onvif_discovery is not None else "disabled"
-            ),
-            "policyEngine": "available",
-            "auditLog": "available",
-            "mediaAccess": "available" if managed_media_access is not None else "unavailable",
-            "humanReview": "available",
-            "datasetReview": (
-                "available" if managed_detector_reviews is not None else "disabled"
-            ),
-            "datasetRegistry": (
-                "available" if managed_dataset_registry is not None else "disabled"
-            ),
-            "modelTraining": (
-                "available" if managed_model_training is not None else "disabled"
-            ),
-            "modelQuality": "available",
-            "liveMonitor": (
-                managed_live_monitor.stats.source_state.value
-                if managed_live_monitor is not None
-                else "DISABLED"
-            ),
-            "realtime": (
-                managed_realtime.stats.source_state.value
-                if managed_realtime is not None
-                else "DISABLED"
-            ),
-        }
+    _register_runtime_health_routes(
+        app,
+        managed_runtime_health,
+        api_security,
+        managed_cameras,
+        managed_onvif_discovery,
+        managed_media_access,
+        managed_detector_reviews,
+        managed_dataset_registry,
+        managed_model_training,
+        managed_live_monitor,
+        managed_realtime,
+    )
 
     if settings.observability.prometheus_enabled:
 
@@ -822,9 +1015,7 @@ def create_app(
     ) -> CameraBatchPublic:
         service = _require_camera_service(managed_cameras)
         try:
-            result = await service.create_many(
-                tuple(item.to_command() for item in request.items)
-            )
+            result = await service.create_many(tuple(item.to_command() for item in request.items))
             public_result = CameraBatchPublic.from_domain(result)
             for item in public_result.items:
                 if item.camera is None:
@@ -890,6 +1081,8 @@ def create_app(
             return CameraListPublic(items=[CameraPublic.from_domain(item) for item in cameras])
         except Exception as exc:
             _raise_camera_http(exc)
+
+    _register_camera_health_routes(app, managed_cameras, read_access)
 
     @app.get("/api/cameras/{camera_id}", response_model=CameraPublic)
     async def get_camera(
@@ -1049,22 +1242,6 @@ def create_app(
         except Exception as exc:
             _raise_camera_http(exc)
 
-    @app.get("/api/cameras/{camera_id}/health", response_model=CameraHealthPublic)
-    async def get_camera_health(
-        camera_id: str,
-        _principal: Principal = Depends(read_access),
-    ) -> CameraHealthPublic:
-        service = _require_camera_service(managed_cameras)
-        try:
-            camera_health = await service.get_health(camera_id)
-            if camera_health is None:
-                raise HTTPException(status_code=404, detail="camera health is not available")
-            return CameraHealthPublic.from_domain(camera_health)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            _raise_camera_http(exc)
-
     @app.get("/api/events")
     async def list_events(
         _principal: Principal = Depends(read_access),
@@ -1144,9 +1321,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="vehicle identity not found")
         result = identity_to_jsonable(identity)
         latest = await managed_journeys.latest(vehicle_id)
-        result["latestEvent"] = (
-            event_to_jsonable(latest) if latest is not None else None
-        )
+        result["latestEvent"] = event_to_jsonable(latest) if latest is not None else None
         return result
 
     @app.get("/api/vehicles/{vehicle_id}/fingerprints")
@@ -1192,7 +1367,7 @@ def _require_camera_service(service: CameraService | None) -> CameraService:
     return service
 
 
-def _raise_camera_http(exc: Exception) -> None:
+def _raise_camera_http(exc: Exception) -> NoReturn:
     if isinstance(exc, AuditWriteError):
         raise HTTPException(status_code=503, detail="audit persistence is unavailable") from exc
     if isinstance(exc, CameraNotFoundError):
@@ -1219,12 +1394,9 @@ def _sanitize_validation_errors(
     sanitized: list[dict[str, object]] = []
     for error in errors:
         item = dict(error)
-        location = item.get("loc") or ()
-        if any(
-            fragment in str(part).lower()
-            for part in location
-            for fragment in sensitive
-        ):
+        raw_location = item.get("loc")
+        location = raw_location if isinstance(raw_location, (list, tuple)) else ()
+        if any(fragment in str(part).lower() for part in location for fragment in sensitive):
             item["input"] = "[REDACTED]"
         elif "input" in item:
             item["input"] = _redact_sensitive_input(item["input"], sensitive)

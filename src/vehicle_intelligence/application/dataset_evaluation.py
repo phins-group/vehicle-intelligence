@@ -56,12 +56,8 @@ def evaluation_to_jsonable(evaluation: OCRDatasetEvaluation) -> dict[str, Any]:
     return {
         "schemaVersion": 1,
         "overall": _metrics_json(evaluation.overall),
-        "bySplit": {
-            key: _metrics_json(value) for key, value in evaluation.by_split.items()
-        },
-        "byModel": {
-            key: _metrics_json(value) for key, value in evaluation.by_model.items()
-        },
+        "bySplit": {key: _metrics_json(value) for key, value in evaluation.by_split.items()},
+        "byModel": {key: _metrics_json(value) for key, value in evaluation.by_model.items()},
         "caveat": evaluation.caveat,
     }
 

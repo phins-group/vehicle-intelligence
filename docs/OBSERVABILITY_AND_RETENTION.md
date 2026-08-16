@@ -66,11 +66,11 @@ it requires a credential-free HTTP(S) OTLP endpoint; URL user-info, query tokens
 fragments, and non-HTTP schemes are rejected. Sensitive exporter headers use a
 secret configuration value and are not logged.
 
-FastAPI route spans exclude `/metrics` and `/api/system/health`. The configured
-service name/version are resource attributes. A valid active span adds lowercase
-32-character `trace_id` and 16-character `span_id` fields to structured JSON
-logs. Request IDs remain a separate correlation signal and are added as a span
-attribute.
+FastAPI route spans exclude `/metrics`, `/api/system/health`, `/livez`, and
+`/readyz`. The configured service name/version are resource attributes. A valid
+active span adds lowercase 32-character `trace_id` and 16-character `span_id`
+fields to structured JSON logs. Request IDs remain a separate correlation
+signal and are added as a span attribute.
 
 The bundled collector uses the debug exporter only as local acceptance evidence.
 A production deployment should replace it with an authenticated trace backend;

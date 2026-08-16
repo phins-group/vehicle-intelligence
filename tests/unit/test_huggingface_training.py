@@ -6,6 +6,9 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
+from vehicle_intelligence.infrastructure.training.huggingface_jobs import (
+    HuggingFaceTrainingJobGateway,
+)
 from vehicle_intelligence.training.config import HuggingFaceConfig
 from vehicle_intelligence.training.domain import DetectorRole
 from vehicle_intelligence.training.huggingface import (
@@ -125,3 +128,97 @@ def test_huggingface_upload_can_be_enabled_without_jobs() -> None:
 def test_huggingface_jobs_require_image_and_persistent_output() -> None:
     with pytest.raises(ValidationError, match="job_image and a persistent output bucket"):
         HuggingFaceConfig(enabled=True, jobs_enabled=True)
+
+
+def test_huggingface_training_logs_redact_credentials_and_signed_urls() -> None:
+    configured_token = "hf_configuredSecret123456789"
+    bearer = "AlphabeticBearerCredential"
+    api_key = "api-secret-123456789"
+    password = "correct horse battery staple"
+    long_password = "x" * 9000
+    signed_url = (
+        "https://storage.example/train.bin?X-Amz-Credential=AKIAEXAMPLE%2Fscope"
+        "&X-Amz-Signature=deadbeef1234567890"
+    )
+    gateway = HuggingFaceTrainingJobGateway(
+        token=configured_token,
+        inspect_job=lambda **_kwargs: None,
+        fetch_job_logs=lambda **_kwargs: (
+            f"configured={configured_token}",
+            f"Authorization: Bearer {bearer}",
+            f'api_key="{api_key}" password="{password}"',
+            f"password={long_password}",
+            f"artifact={signed_url}",
+            "epoch=2 loss=0.125",
+        ),
+        cancel_job=lambda **_kwargs: None,
+    )
+
+    lines = gateway.logs("job-123", "phins", 10)
+    rendered = "\n".join(lines)
+
+    for secret in (configured_token, bearer, api_key, password, "deadbeef1234567890"):
+        assert secret not in rendered
+    assert "x" * 100 not in rendered
+    assert "artifact=https://storage.example/train.bin?[REDACTED]" in rendered
+    assert lines[-1] == "epoch=2 loss=0.125"
+    assert rendered.count("[REDACTED]") >= 6
+    assert all(len(line) <= 8000 for line in lines)
+
+
+def test_huggingface_training_logs_redact_before_line_truncation() -> None:
+    configured_token = "hf_boundarySecret123456789"
+    gateway = HuggingFaceTrainingJobGateway(
+        token=configured_token,
+        inspect_job=lambda **_kwargs: None,
+        fetch_job_logs=lambda **_kwargs: ("x" * 7985 + configured_token,),
+        cancel_job=lambda **_kwargs: None,
+    )
+
+    (line,) = gateway.logs("job-123", None, 10)
+
+    assert configured_token not in line
+    assert line.endswith("[REDACTED]")
+
+
+def test_huggingface_training_logs_do_not_over_redact_normal_diagnostics() -> None:
+    expected = (
+        "Tokenizer loaded; token count: 2048",
+        "password policy check passed",
+        "api_key_count=3",
+        "metrics=https://example.com/report?epoch=2&loss=0.125",
+    )
+    gateway = HuggingFaceTrainingJobGateway(
+        token="hf_unrelatedConfiguredSecret123",
+        inspect_job=lambda **_kwargs: None,
+        fetch_job_logs=lambda **_kwargs: expected,
+        cancel_job=lambda **_kwargs: None,
+    )
+
+    assert gateway.logs("job-123", None, 10) == expected
+
+
+def test_huggingface_training_status_message_is_redacted_before_persistence() -> None:
+    configured_token = "hf_statusSecret123456789"
+    job = SimpleNamespace(
+        id="job-123",
+        url="https://huggingface.co/jobs/job-123?token=url-secret-123",
+        status=SimpleNamespace(
+            stage="FAILED",
+            message=f"remote error token={configured_token}",
+        ),
+        started_at=None,
+        finished_at=None,
+    )
+    gateway = HuggingFaceTrainingJobGateway(
+        token=configured_token,
+        inspect_job=lambda **_kwargs: job,
+        fetch_job_logs=lambda **_kwargs: (),
+        cancel_job=lambda **_kwargs: None,
+    )
+
+    inspected = gateway.inspect("job-123", None)
+
+    assert inspected.message == "remote error token=[REDACTED]"
+    assert configured_token not in inspected.message
+    assert inspected.url == "https://huggingface.co/jobs/job-123"

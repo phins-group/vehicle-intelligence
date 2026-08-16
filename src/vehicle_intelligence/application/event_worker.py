@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from collections import defaultdict
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, replace
 
@@ -51,15 +54,26 @@ class VehicleEventWorker:
         retry_delay_seconds: float = 1.0,
         post_processor: VehicleEventPostProcessor | None = None,
         realtime_publisher: RealtimeEventPublisher | None = None,
+        maximum_concurrency: int = 8,
+        reclaim_interval_seconds: float = 5.0,
+        monotonic_clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if retry_delay_seconds <= 0:
             raise ValueError("event-worker retry delay must be positive")
+        if maximum_concurrency < 1:
+            raise ValueError("event-worker maximum concurrency must be positive")
+        if reclaim_interval_seconds <= 0:
+            raise ValueError("event-worker reclaim interval must be positive")
         self._consumer = consumer
         self._repository = repository
         self._codec = codec
         self._retry_delay_seconds = retry_delay_seconds
         self._post_processor = post_processor
         self._realtime_publisher = realtime_publisher
+        self._maximum_concurrency = maximum_concurrency
+        self._reclaim_interval_seconds = reclaim_interval_seconds
+        self._monotonic = monotonic_clock
+        self._next_reclaim_at = 0.0
         self._realtime_initialized = False
         self._stats = EventWorkerStats()
 
@@ -99,16 +113,53 @@ class VehicleEventWorker:
         return self.stats
 
     async def run_once(self) -> int:
-        messages = await self._consumer.reclaim_stale()
-        reclaimed = bool(messages)
+        reclaimed = False
+        messages: list[BrokerMessage] = []
+        now = float(self._monotonic())
+        if now >= self._next_reclaim_at:
+            messages = await self._consumer.reclaim_stale()
+            self._next_reclaim_at = now + self._reclaim_interval_seconds
+            reclaimed = bool(messages)
         if not messages:
             messages = await self._consumer.read_new()
         if reclaimed:
             self._stats.messages_reclaimed += len(messages)
         else:
             self._stats.messages_read += len(messages)
+        groups: dict[str, list[tuple[BrokerMessage, VehicleEvent]]] = defaultdict(list)
         for message in messages:
-            await self._process(message)
+            try:
+                event = self._codec.decode(message.payload)
+            except EventContractError as exc:
+                await self._dead_letter(message, exc)
+                continue
+            groups[event.camera.id].append((message, event))
+
+        semaphore = asyncio.Semaphore(self._maximum_concurrency)
+
+        async def process_group(
+            entries: list[tuple[BrokerMessage, VehicleEvent]],
+        ) -> tuple[str, ...]:
+            acknowledged: list[str] = []
+            async with semaphore:
+                for message, event in entries:
+                    if not await self._process_event(message, event):
+                        break
+                    acknowledged.append(message.message_id)
+            return tuple(acknowledged)
+
+        results = await asyncio.gather(
+            *(process_group(entries) for entries in groups.values()),
+            return_exceptions=True,
+        )
+        acknowledged = tuple(
+            message_id for result in results if isinstance(result, tuple) for message_id in result
+        )
+        if acknowledged:
+            await self._consumer.acknowledge_many(acknowledged)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
         return len(messages)
 
     async def close(self) -> None:
@@ -125,18 +176,7 @@ class VehicleEventWorker:
                 finally:
                     await self._consumer.close()
 
-    async def _process(self, message: BrokerMessage) -> None:
-        try:
-            event = self._codec.decode(message.payload)
-        except EventContractError as exc:
-            await self._consumer.dead_letter(message, str(exc))
-            self._stats.invalid_messages += 1
-            logger.warning(
-                "invalid event moved to dead-letter stream",
-                extra={"stream_message_id": message.message_id},
-            )
-            return
-
+    async def _process_event(self, message: BrokerMessage, event: VehicleEvent) -> bool:
         try:
             created = await self._repository.save(event)
         except PersistenceError:
@@ -150,7 +190,7 @@ class VehicleEventWorker:
                     "track_id": event.track_id,
                 },
             )
-            return
+            return False
 
         if created:
             self._stats.events_persisted += 1
@@ -187,13 +227,21 @@ class VehicleEventWorker:
                         "track_id": event.track_id,
                     },
                 )
-                return
+                return False
             self._stats.matched_rules += result.matched_rules
             self._stats.actions_succeeded += result.actions_succeeded
             self._stats.actions_skipped += result.actions_skipped
 
         await self._publish_realtime(event)
-        await self._consumer.acknowledge(message.message_id)
+        return True
+
+    async def _dead_letter(self, message: BrokerMessage, exc: EventContractError) -> None:
+        await self._consumer.dead_letter(message, str(exc))
+        self._stats.invalid_messages += 1
+        logger.warning(
+            "invalid event moved to dead-letter stream",
+            extra={"stream_message_id": message.message_id},
+        )
 
     async def _initialize_realtime(self) -> bool:
         if self._realtime_publisher is None or self._realtime_initialized:

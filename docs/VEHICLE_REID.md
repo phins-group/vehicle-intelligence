@@ -18,6 +18,11 @@ cosine is used only when both references have identical model
 name/version/dimension/hash. Scores and thresholds are configuration, not domain
 constants.
 
+A `MATCH` also requires the configured total-evidence and identifying-evidence
+coverage. Plate and compatible embedding are identifying evidence; vehicle type,
+color, and travel time can support a match but cannot produce one by themselves.
+The literal vehicle type `unknown` is treated as unavailable evidence.
+
 `MATCH` does not mean automatic merge. An OPERATOR or ADMIN submits a stable
 `reviewId`, source/target revisions, a reason, and optionally the exact scored
 fingerprint pair. The server recomputes feasibility and score for supplied

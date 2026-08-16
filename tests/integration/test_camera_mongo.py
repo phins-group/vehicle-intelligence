@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import os
 import uuid
@@ -6,6 +7,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from vehicle_intelligence.application.ports import CameraCreateOutcome
 from vehicle_intelligence.config import MongoConfig, SecurityConfig
 from vehicle_intelligence.domain import (
     Camera,
@@ -25,6 +27,7 @@ from vehicle_intelligence.infrastructure.security.aes_gcm import AesGcmCredentia
 async def test_mongo_camera_credentials_are_encrypted_and_health_is_latest_state() -> None:
     suffix = uuid.uuid4().hex
     camera_id = f"gate-mongo-{suffix}"
+    capacity_camera_ids = (f"capacity-a-{suffix}", f"capacity-b-{suffix}")
     secret = f"mongo-secret-{suffix}"
     config = MongoConfig(
         enabled=True,
@@ -53,13 +56,29 @@ async def test_mongo_camera_credentials_are_encrypted_and_health_is_latest_state
     try:
         await repository.ensure_indexes()
         await health_repository.ensure_indexes()
+        initial_camera_count = await repository.count()
         assert await repository.create(camera)
+        assert await repository.count() == initial_camera_count + 1
         raw = await repository._collection.find_one({"_id": camera_id})
         encrypted = raw["stream"]["rtspUrlEncrypted"]
         assert secret not in encrypted
         assert "rtspUrl" not in raw["stream"]
         assert encrypted.startswith("v1.test-key.")
         assert await repository.get(camera_id) == camera
+
+        capacity_limit = await repository.count() + 1
+        capacity_outcomes = await asyncio.gather(
+            *(
+                repository.create_with_capacity(
+                    replace(camera, id=candidate_id, name=f"Capacity {candidate_id}"),
+                    capacity_limit,
+                )
+                for candidate_id in capacity_camera_ids
+            )
+        )
+        assert capacity_outcomes.count(CameraCreateOutcome.CREATED) == 1
+        assert capacity_outcomes.count(CameraCreateOutcome.CAPACITY_REACHED) == 1
+        assert await repository.count() == capacity_limit
 
         updated = replace(camera, name="Updated Mongo Gate", revision=2)
         assert await repository.replace(updated, 1)
@@ -102,7 +121,8 @@ async def test_mongo_camera_credentials_are_encrypted_and_health_is_latest_state
         assert persisted_health.inference_fps == 6.1
         assert persisted_health.ocr_latency_ms == 21.5
     finally:
-        await repository._collection.delete_one({"_id": camera_id})
+        for persisted_camera_id in (camera_id, *capacity_camera_ids):
+            await repository.delete(persisted_camera_id)
         await health_repository._collection.delete_one({"_id": camera_id})
         await repository.close()
         await health_repository.close()

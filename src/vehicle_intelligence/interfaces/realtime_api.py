@@ -150,9 +150,7 @@ def build_realtime_router(
             )
             disconnect_task = asyncio.create_task(_wait_for_disconnect(websocket))
             while True:
-                delivery_task = asyncio.create_task(
-                    subscription.receive(config.heartbeat_seconds)
-                )
+                delivery_task = asyncio.create_task(subscription.receive(config.heartbeat_seconds))
                 done, _pending = await asyncio.wait(
                     {delivery_task, disconnect_task},
                     return_when=asyncio.FIRST_COMPLETED,
@@ -164,9 +162,7 @@ def build_realtime_router(
                     return
                 delivery = delivery_task.result()
                 if delivery is None:
-                    await websocket.send_text(
-                        _control_json("system.realtime.heartbeat", {})
-                    )
+                    await websocket.send_text(_control_json("system.realtime.heartbeat", {}))
                     continue
                 await websocket.send_text(_websocket_delivery(delivery, codec))
         except (RealtimeSubscriptionClosed, WebSocketDisconnect):

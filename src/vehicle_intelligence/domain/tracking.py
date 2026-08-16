@@ -45,6 +45,7 @@ class VehicleTrack:
     direction: Direction = Direction.UNKNOWN
     frames_seen: int = 0
     plate_detections_seen: int = 0
+    last_ocr_attempt_frame_seen: int | None = None
     latest_bbox: BoundingBox | None = None
     vehicle_type_scores: dict[str, float] = field(default_factory=dict)
     vehicle_confidence_sum: float = 0.0

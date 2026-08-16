@@ -204,6 +204,9 @@ datasets/reviews/detector/
       <review-id>/
         00000001.json
         00000002.json
+  audit-outbox/
+    delivered/
+      <audit-id>.json
 ```
 
 The UI supports four explicit outcomes:
@@ -219,7 +222,9 @@ Coordinates are always source-image pixels. The backend repeats bounds and
 action validation, binds every revision to the source manifest, queue checksum,
 image SHA-256 and authenticated actor, and rejects stale `expectedRevision`
 writes with HTTP `409`. The original suggestion and every human revision remain
-available in history.
+available in history. Each revision atomically embeds its sanitized audit intent;
+`X-Audit-Delivery` reports `delivered` or durable `pending`, and the background
+relay safely retries pending entries after an audit-store outage or restart.
 
 Recommended first pass for the current queue:
 

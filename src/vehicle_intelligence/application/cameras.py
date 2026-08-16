@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -10,6 +10,7 @@ from enum import StrEnum
 from vehicle_intelligence.application.ports import (
     CameraConnectionTester,
     CameraConnectionTestResult,
+    CameraCreateOutcome,
     CameraHealthRepository,
     CameraRepository,
 )
@@ -119,12 +120,6 @@ class CameraService:
 
     async def create(self, command: CameraCreate) -> Camera:
         camera_id = command.id.strip()
-        if await self._cameras.get(camera_id) is not None:
-            raise CameraConflictError(f"camera already exists: {camera_id}")
-        if len(await self._cameras.list()) >= self._maximum_cameras:
-            raise CameraCapacityError(
-                f"camera capacity reached: {self._maximum_cameras}"
-            )
         now = self._now()
         camera = Camera(
             id=camera_id,
@@ -145,17 +140,18 @@ class CameraService:
             created_at=now,
             updated_at=now,
         )
-        if not await self._cameras.create(camera):
+        outcome = await self._cameras.create_with_capacity(camera, self._maximum_cameras)
+        if outcome is CameraCreateOutcome.CONFLICT:
             raise CameraConflictError(f"camera already exists: {camera.id}")
+        if outcome is CameraCreateOutcome.CAPACITY_REACHED:
+            raise CameraCapacityError(f"camera capacity reached: {self._maximum_cameras}")
         return camera
 
     async def create_many(self, commands: tuple[CameraCreate, ...]) -> CameraBatchResult:
         if not commands:
             raise ValueError("camera batch cannot be empty")
         if len(commands) > self._batch_create_limit:
-            raise ValueError(
-                f"camera batch exceeds configured limit: {self._batch_create_limit}"
-            )
+            raise ValueError(f"camera batch exceeds configured limit: {self._batch_create_limit}")
         ids = [command.id.strip() for command in commands]
         if len(ids) != len(set(ids)):
             raise ValueError("camera batch IDs must be unique")
@@ -171,9 +167,7 @@ class CameraService:
             except CameraConflictError:
                 items.append(CameraBatchItem(command.id.strip(), CameraBatchStatus.CONFLICT))
             else:
-                items.append(
-                    CameraBatchItem(camera.id, CameraBatchStatus.CREATED, camera=camera)
-                )
+                items.append(CameraBatchItem(camera.id, CameraBatchStatus.CREATED, camera=camera))
         return CameraBatchResult(tuple(items))
 
     async def update(self, camera_id: str, command: CameraUpdate) -> Camera:
@@ -186,9 +180,7 @@ class CameraService:
             id=current.id,
             name=command.name.strip(),
             rtsp_url=(
-                SecretUri(command.rtsp_url)
-                if command.rtsp_url is not None
-                else current.rtsp_url
+                SecretUri(command.rtsp_url) if command.rtsp_url is not None else current.rtsp_url
             ),
             fps_limit=command.fps_limit,
             direction=command.direction,
@@ -243,7 +235,7 @@ class CameraService:
         await self._required(camera_id)
         return await self._health.get(camera_id)
 
-    async def list_health(self) -> list[CameraHealth]:
+    async def list_health(self) -> Sequence[CameraHealth]:
         return await self._health.list()
 
     async def _required(self, camera_id: str) -> Camera:

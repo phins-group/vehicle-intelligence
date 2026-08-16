@@ -48,11 +48,7 @@ class MongoModelQualityRepository:
             event_documents = [document async for document in event_cursor]
             feedback_cursor = await self._samples.aggregate(
                 [
-                    {
-                        "$match": {
-                            "review.reviewedAt": {"$gte": from_time, "$lt": to_time}
-                        }
-                    },
+                    {"$match": {"review.reviewedAt": {"$gte": from_time, "$lt": to_time}}},
                     {
                         "$group": {
                             "_id": {"status": "$status", "reason": "$reason"},

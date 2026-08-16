@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Never
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -151,7 +151,6 @@ def build_dataset_review_router(
         principal: Principal = Depends(review_access),
     ) -> dict[str, object]:
         try:
-            before = await service.get_item(source_id, review_id)
             annotations = tuple(
                 DetectorReviewAnnotation(
                     bbox=DetectorReviewBox(
@@ -163,7 +162,7 @@ def build_dataset_review_router(
                 )
                 for item in payload.annotations
             )
-            reviewed = await service.review(
+            prepared = await service.prepare_review(
                 source_id,
                 review_id,
                 DetectorReviewCommand(
@@ -174,22 +173,25 @@ def build_dataset_review_router(
                     note=payload.note,
                 ),
             )
-            await audits.record(
+            audit_entry = audits.prepare(
                 AuditRecord(
                     principal=principal,
                     action=AuditAction.DETECTOR_SAMPLE_REVIEWED,
                     resource_type=AuditResourceType.DETECTOR_DATASET_SAMPLE,
                     resource_id=f"{source_id}:{review_id}",
                     request_id=request_id(http_request),
-                    before=_item_json(before, include_dimensions=False),
-                    after=_item_json(reviewed, include_dimensions=False),
+                    before=_item_json(prepared.before, include_dimensions=False),
+                    after=_item_json(prepared.after, include_dimensions=False),
                     metadata={
                         "sourceId": source_id,
                         "reviewAction": payload.action.value,
-                        "reviewRevision": reviewed.revision,
+                        "reviewRevision": prepared.after.revision,
                     },
                 )
             )
+            reviewed = await service.commit_review(prepared, audit_entry)
+            delivered = await service.deliver_audit(audit_entry, audits)
+            response.headers["X-Audit-Delivery"] = "delivered" if delivered else "pending"
             response.headers["Cache-Control"] = "no-store, private"
             return _item_json(reviewed, include_dimensions=True)
         except Exception as exc:
@@ -218,18 +220,23 @@ def build_dataset_review_router(
         principal: Principal = Depends(promotion_access),
     ) -> dict[str, object]:
         try:
-            job = await service.start_promotion(source_id, payload.target_source_id, principal)
-            await audits.record(
-                AuditRecord(
-                    principal=principal,
-                    action=AuditAction.DETECTOR_DATASET_PROMOTION_STARTED,
-                    resource_type=AuditResourceType.DETECTOR_DATASET,
-                    resource_id=payload.target_source_id,
-                    request_id=request_id(http_request),
-                    after=_job_json(job),
-                    metadata={"sourceId": source_id, "promotionJobId": job.id},
+            job = await service.prepare_promotion(source_id, payload.target_source_id, principal)
+            try:
+                await audits.record(
+                    AuditRecord(
+                        principal=principal,
+                        action=AuditAction.DETECTOR_DATASET_PROMOTION_STARTED,
+                        resource_type=AuditResourceType.DETECTOR_DATASET,
+                        resource_id=payload.target_source_id,
+                        request_id=request_id(http_request),
+                        after=_job_json(job),
+                        metadata={"sourceId": source_id, "promotionJobId": job.id},
+                    )
                 )
-            )
+            except Exception:
+                await service.fail_prepared_promotion(job.id, "AUDIT_WRITE_FAILED")
+                raise
+            service.dispatch_promotion(job)
             response.headers["Cache-Control"] = "no-store, private"
             return _job_json(job)
         except Exception as exc:
@@ -317,7 +324,7 @@ def _job_json(job: DetectorPromotionJob) -> dict[str, object]:
     }
 
 
-def _raise_dataset_review_http(exc: Exception) -> None:
+def _raise_dataset_review_http(exc: Exception) -> Never:
     if isinstance(exc, DatasetReviewNotFoundError):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     if isinstance(exc, DatasetReviewConflictError):

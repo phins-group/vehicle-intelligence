@@ -22,9 +22,7 @@ class CredentialRepository:
         ids = sorted(
             item for item in self.values if after_camera_id is None or item > after_camera_id
         )
-        return tuple(
-            EncryptedCameraCredential(item, self.values[item]) for item in ids[:limit]
-        )
+        return tuple(EncryptedCameraCredential(item, self.values[item]) for item in ids[:limit])
 
     async def replace_encrypted_credential(
         self,

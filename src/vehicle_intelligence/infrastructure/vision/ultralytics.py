@@ -23,21 +23,19 @@ from vehicle_intelligence.exceptions import (
     InferenceError,
     ModelLoadError,
 )
+from vehicle_intelligence.infrastructure.vision.model_artifact import validated_model_artifact
 
 logger = logging.getLogger(__name__)
 
 
 class _UltralyticsAdapter:
     def __init__(self, config: DetectorConfig, *, model: Any | None = None) -> None:
-        if not config.model_path:
-            raise ModelLoadError(
-                f"model_path is required for {config.model_name}; supply a trained checkpoint"
-            )
         self._config = config
+        path, artifact_hash = validated_model_artifact(config.model_path, config.model_hash)
         self._metadata = ModelMetadata(
             name=config.model_name,
             version=config.model_version,
-            hash=config.model_hash,
+            hash=artifact_hash,
         )
         if model is None:
             try:
@@ -47,19 +45,19 @@ class _UltralyticsAdapter:
                     "Ultralytics is not installed; install the 'vision' extra"
                 ) from exc
             try:
-                model = YOLO(config.model_path)
+                model = YOLO(str(path))
             except Exception as exc:
                 logger.exception(
                     "detector_load_failed",
                     extra={
                         "provider": "ultralytics",
                         "model_name": config.model_name,
-                        "model_path": config.model_path,
+                        "model_path": str(path),
                         "device": config.device or "auto",
                     },
                 )
                 raise ModelLoadError(
-                    f"cannot load Ultralytics model '{config.model_path}' for {config.model_name}"
+                    f"cannot load Ultralytics model '{path}' for {config.model_name}"
                 ) from exc
         self._model = model
         logger.info(
@@ -67,7 +65,7 @@ class _UltralyticsAdapter:
             extra={
                 "provider": "ultralytics",
                 "model_name": config.model_name,
-                "model_path": config.model_path,
+                "model_path": str(path),
                 "device": config.device or "auto",
             },
         )

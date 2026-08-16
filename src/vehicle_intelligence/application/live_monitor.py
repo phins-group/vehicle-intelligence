@@ -140,7 +140,8 @@ class LiveMonitorService:
         if latest is None:
             status = (
                 LiveCameraStatus.OFFLINE
-                if self._source_state in {
+                if self._source_state
+                in {
                     LiveMonitorSourceState.OFFLINE,
                     LiveMonitorSourceState.STOPPED,
                 }
@@ -191,9 +192,7 @@ class LiveMonitorService:
                     self._source_state = LiveMonitorSourceState.ONLINE
                     while not self._stop_event.is_set():
                         try:
-                            packet = await self._source.receive(
-                                self._config.broker_poll_seconds
-                            )
+                            packet = await self._source.receive(self._config.broker_poll_seconds)
                         except EventContractError:
                             self._invalid_messages += 1
                             logger.warning("invalid live-preview packet ignored")

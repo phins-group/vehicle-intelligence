@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 from importlib.util import find_spec
 from typing import Any
@@ -16,10 +17,46 @@ from vehicle_intelligence.exceptions import (
     InferenceError,
     ModelLoadError,
 )
+from vehicle_intelligence.model_artifact import validated_model_directory
 
 
 class PaddleOCRProvider:
-    def __init__(self, config: OCRConfig) -> None:
+    def __init__(
+        self,
+        config: OCRConfig,
+        *,
+        require_local_artifacts: bool = False,
+    ) -> None:
+        required_values = (
+            config.detection_model_directory,
+            config.detection_model_hash,
+            config.recognition_model_directory,
+            config.recognition_model_hash,
+        )
+        if require_local_artifacts and not all(required_values):
+            raise ModelLoadError(
+                "production OCR requires local detection/recognition model directories "
+                "and SHA-256 manifest hashes"
+            )
+        model_arguments: dict[str, str] = {
+            "text_detection_model_name": config.detection_model_name,
+            "text_recognition_model_name": config.model_name,
+        }
+        verified_hashes: list[tuple[str, str]] = []
+        if config.detection_model_directory:
+            path, actual_hash = validated_model_directory(
+                config.detection_model_directory,
+                config.detection_model_hash,
+            )
+            model_arguments["text_detection_model_dir"] = str(path)
+            verified_hashes.append(("detection", actual_hash))
+        if config.recognition_model_directory:
+            path, actual_hash = validated_model_directory(
+                config.recognition_model_directory,
+                config.recognition_model_hash,
+            )
+            model_arguments["text_recognition_model_dir"] = str(path)
+            verified_hashes.append(("recognition", actual_hash))
         if find_spec("paddle") is None:
             raise DependencyUnavailableError(
                 "PaddleOCR local inference requires the PaddlePaddle engine; "
@@ -31,19 +68,25 @@ class PaddleOCRProvider:
             raise DependencyUnavailableError(
                 "PaddleOCR is not installed; install a compatible local inference engine"
             ) from exc
+        verified_stack_hash = (
+            hashlib.sha256(
+                "".join(f"{role}:{digest}\n" for role, digest in verified_hashes).encode()
+            ).hexdigest()
+            if verified_hashes
+            else None
+        )
         self._metadata = ModelMetadata(
             name=config.model_name,
             version=config.model_version,
-            hash=config.model_hash,
+            hash=verified_stack_hash,
         )
         try:
             self._ocr = PaddleOCR(
-                text_detection_model_name=config.detection_model_name,
-                text_recognition_model_name=config.model_name,
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False,
                 use_textline_orientation=False,
                 device=config.device,
+                **model_arguments,
             )
         except Exception as exc:
             raise ModelLoadError(f"cannot initialize PaddleOCR {config.model_name}") from exc

@@ -17,4 +17,3 @@ class DatasetHubSyncRequest(BaseModel):
     @classmethod
     def normalize_text(cls, value: str) -> str:
         return value.strip()
-

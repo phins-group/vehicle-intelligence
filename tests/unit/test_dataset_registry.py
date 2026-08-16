@@ -267,9 +267,7 @@ async def test_dataset_registry_pages_and_filters_checksum_verified_samples(
     repository, _uploader, source_id = _repository(tmp_path)
     await repository.initialize()
 
-    first = await repository.list_samples(
-        DetectorDatasetSampleQuery(source_id=source_id, limit=2)
-    )
+    first = await repository.list_samples(DetectorDatasetSampleQuery(source_id=source_id, limit=2))
     assert len(first.items) == 2
     assert first.next_cursor is not None
     assert all(item.image_width == 140 and item.image_height == 100 for item in first.items)

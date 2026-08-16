@@ -1,10 +1,10 @@
 services:
   mongodb:
-    image: mongo:8
+    image: mongo:8@sha256:e0ce8c35124d4a9f9785532d1f268f39e9728ffa1cb38f46fa482436424c4bd3
     restart: unless-stopped
     command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
     ports:
-      - "${MONGODB_HOST_PORT:-27017}:27017"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${MONGODB_HOST_PORT:-27017}:27017"
     volumes:
       - mongodb_data:/data/db
     healthcheck:
@@ -14,7 +14,7 @@ services:
       retries: 10
 
   mongodb-init:
-    image: mongo:8
+    image: mongo:8@sha256:e0ce8c35124d4a9f9785532d1f268f39e9728ffa1cb38f46fa482436424c4bd3
     restart: "no"
     depends_on:
       mongodb:
@@ -35,11 +35,11 @@ services:
         done
 
   redis:
-    image: redis:8-alpine
+    image: redis:8-alpine@sha256:978f0e01593e65eed801f2402944efcd936d43b5027e4908a7897baf88ed6241
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "${REDIS_HOST_PORT:-6379}:6379"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${REDIS_HOST_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -49,7 +49,7 @@ services:
       retries: 10
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
@@ -58,14 +58,17 @@ services:
       MINIO_API_STALE_UPLOADS_EXPIRY: ${MINIO_API_STALE_UPLOADS_EXPIRY:-24h}
       MINIO_API_STALE_UPLOADS_CLEANUP_INTERVAL: ${MINIO_API_STALE_UPLOADS_CLEANUP_INTERVAL:-6h}
     ports:
-      - "${MINIO_API_HOST_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_HOST_PORT:-9001}:9001"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${MINIO_API_HOST_PORT:-9000}:9000"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${MINIO_CONSOLE_HOST_PORT:-9001}:9001"
     volumes:
       - minio_data:/data
 
   api:
     build: .
     restart: unless-stopped
+    # Lifespan cleanup drains two Redis subscribers and closes the shared Mongo
+    # client. Transient network timeouts can exceed Compose's 10-second default.
+    stop_grace_period: 30s
     environment:
       VIP_MONGODB__ENABLED: "true"
       VIP_MONGODB__URI: mongodb://mongodb:27017/?replicaSet=rs0
@@ -111,7 +114,7 @@ services:
       VIP_DATASET_REGISTRY__RESTRICTED_PRIVATE_SYNC_ENABLED: ${VIP_DATASET_REGISTRY__RESTRICTED_PRIVATE_SYNC_ENABLED:-false}
       HF_TOKEN: ${HF_TOKEN:-}
     ports:
-      - "${API_HOST_PORT:-8000}:8000"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${API_HOST_PORT:-8000}:8000"
     volumes:
       - ./datasets:/app/datasets
     depends_on:
@@ -127,7 +130,7 @@ services:
       context: ./apps/web
     restart: unless-stopped
     ports:
-      - "${WEB_HOST_PORT:-4200}:80"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${WEB_HOST_PORT:-4200}:8080"
     depends_on:
       - api
 
@@ -187,7 +190,7 @@ services:
         condition: service_started
 
   prometheus:
-    image: prom/prometheus:v3.13.1
+    image: prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893
     profiles: ["observability"]
     restart: unless-stopped
     command:
@@ -198,28 +201,28 @@ services:
       - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     ports:
-      - "${PROMETHEUS_HOST_PORT:-9090}:9090"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${PROMETHEUS_HOST_PORT:-9090}:9090"
     depends_on:
       - api
 
   otel-collector:
-    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.153.0
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.153.0@sha256:93aad750175cbf1a973ae1c5886c3371f4d800f61be25cdd26870b8441ffe9fa
     profiles: ["observability"]
     restart: unless-stopped
     command: ["--config=/etc/otelcol/collector.yml"]
     volumes:
       - ./infrastructure/otel/collector.yml:/etc/otelcol/collector.yml:ro
     ports:
-      - "${OTEL_HTTP_HOST_PORT:-4318}:4318"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${OTEL_HTTP_HOST_PORT:-4318}:4318"
 
   mediamtx:
-    image: bluenviron/mediamtx:1
+    image: bluenviron/mediamtx:1@sha256:86e63af28616d5e5a18540d7b031b6510bd4cbf1a3c7d224f9e2976f02aefbfb
     profiles: ["rtsp-dev"]
     restart: unless-stopped
     environment:
       MTX_RTSPTRANSPORTS: tcp
     ports:
-      - "${RTSP_HOST_PORT:-8554}:8554"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${RTSP_HOST_PORT:-8554}:8554"
 
 volumes:
   mongodb_data:

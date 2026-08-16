@@ -40,9 +40,15 @@ async def test_mongo_identity_fingerprint_link_and_vector_candidates(sample_even
         id=f"evt-identity-{suffix}",
         track_id=f"gate-01:identity:{suffix}",
     )
-    model_v1 = EmbeddingModel("vehicle-reid", "1", 3)
-    model_v2 = EmbeddingModel("vehicle-reid", "2", 3)
-    vector_ids = (f"vec-a-{suffix}", f"vec-b-{suffix}", f"vec-v2-{suffix}")
+    model_v1 = EmbeddingModel("vehicle-reid", "1", 3, "a" * 64)
+    model_v2 = EmbeddingModel("vehicle-reid", "2", 3, "a" * 64)
+    wrong_artifact = EmbeddingModel("vehicle-reid", "1", 3, "b" * 64)
+    vector_ids = (
+        f"vec-a-{suffix}",
+        f"vec-b-{suffix}",
+        f"vec-v2-{suffix}",
+        f"vec-wrong-artifact-{suffix}",
+    )
     try:
         await events.ensure_indexes()
         await processor.initialize()
@@ -68,6 +74,9 @@ async def test_mongo_identity_fingerprint_link_and_vector_candidates(sample_even
         )
         assert await vectors.put(
             EmbeddingVector(vector_ids[2], model_v2, (1, 0, 0), event.occurred_at)
+        )
+        assert await vectors.put(
+            EmbeddingVector(vector_ids[3], wrong_artifact, (1, 0, 0), event.occurred_at)
         )
         neighbors = await vectors.search(
             VectorSearchQuery(

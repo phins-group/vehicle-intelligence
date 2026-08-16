@@ -11,7 +11,11 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from vehicle_intelligence.application.ports import EncodedLivePreview, ImageVariant
+from vehicle_intelligence.application.ports import (
+    DatasetImageTranscodeResult,
+    EncodedLivePreview,
+    ImageVariant,
+)
 from vehicle_intelligence.config import PreprocessingConfig
 from vehicle_intelligence.domain import PlateDetection, PlateQuality, VideoFrame
 from vehicle_intelligence.exceptions import MediaStorageError, VideoSourceError
@@ -171,6 +175,33 @@ class OpenCVImageEncoder:
         if not success:
             raise MediaStorageError("OpenCV could not encode JPEG media")
         return buffer.tobytes()
+
+
+class OpenCVDatasetImageTranscoder:
+    def normalize_jpeg(
+        self,
+        source: bytes,
+        *,
+        maximum_pixels: int,
+        jpeg_quality: int,
+    ) -> DatasetImageTranscodeResult:
+        if maximum_pixels < 1:
+            raise ValueError("maximum dataset image pixels must be positive")
+        if not 1 <= jpeg_quality <= 100:
+            raise ValueError("dataset JPEG quality must be in [1, 100]")
+        image = cv2.imdecode(np.frombuffer(source, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if image is None or image.size == 0:
+            return DatasetImageTranscodeResult(None, "MEDIA_INVALID")
+        if image.shape[0] * image.shape[1] > maximum_pixels:
+            return DatasetImageTranscodeResult(None, "MEDIA_DIMENSIONS_EXCEEDED")
+        encoded, buffer = cv2.imencode(
+            ".jpg",
+            image,
+            [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality],
+        )
+        if not encoded:
+            return DatasetImageTranscodeResult(None, "MEDIA_ENCODE_FAILED")
+        return DatasetImageTranscodeResult(bytes(buffer))
 
 
 class OpenCVLivePreviewEncoder:

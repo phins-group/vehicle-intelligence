@@ -48,9 +48,7 @@ def configured_rule(timestamp: datetime, action: RuleAction) -> Rule:
         name="Test rule",
         enabled=True,
         priority=10,
-        conditions=(
-            RuleCondition("camera.id", RuleConditionOperator.EQ, "gate-01"),
-        ),
+        conditions=(RuleCondition("camera.id", RuleConditionOperator.EQ, "gate-01"),),
         actions=(action,),
         created_at=timestamp,
         updated_at=timestamp,
@@ -81,9 +79,7 @@ async def test_action_engine_creates_one_alert_and_skips_completed_redelivery(
     page = await alerts.list(AlertQuery())
     assert len(page.items) == 1
     assert page.items[0].severity.value == "CRITICAL"
-    execution = await executions.get(
-        action_execution_id(sample_event.id, rule.id, action.id)
-    )
+    execution = await executions.get(action_execution_id(sample_event.id, rule.id, action.id))
     assert execution.status is ActionExecutionStatus.SUCCEEDED
     assert execution.attempt_count == 1
     await engine.close()
@@ -106,9 +102,7 @@ async def test_action_engine_retries_failed_execution_then_succeeds(sample_event
         await engine.execute(sample_event, rule, action, ())
     assert await engine.execute(sample_event, rule, action, ())
     assert not await engine.execute(sample_event, rule, action, ())
-    execution = await executions.get(
-        action_execution_id(sample_event.id, rule.id, action.id)
-    )
+    execution = await executions.get(action_execution_id(sample_event.id, rule.id, action.id))
     assert execution.status is ActionExecutionStatus.SUCCEEDED
     assert execution.attempt_count == 2
 
@@ -143,9 +137,7 @@ async def test_http_action_uses_allowlist_and_idempotency_header(sample_event) -
     await engine.initialize()
 
     assert await engine.execute(sample_event, rule, action, ())
-    assert captured["idempotency"] == action_execution_id(
-        sample_event.id, rule.id, action.id
-    )
+    assert captured["idempotency"] == action_execution_id(sample_event.id, rule.id, action.id)
     assert b'"eventId":"evt_test"' in captured["body"]
     await engine.close()
     await client.aclose()

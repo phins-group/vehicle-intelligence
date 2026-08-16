@@ -45,12 +45,12 @@
 
   <div class="vehicle-detail-layout">
     <section class="panel journey-panel">
-      <div class="panel-heading"><div><h2>Hành trình camera</h2><p>Chronological events; segment được kiểm tra bằng travel window</p></div><span class="timeline-count">{{ steps().length }} stops</span></div>
+      <div class="panel-heading"><div><h2>Hành trình camera</h2><p>Chronological events@if (journeyWindow().total) { · đang hiển thị {{ journeyWindow().start + 1 }}–{{ journeyWindow().end }} / {{ journeyWindow().total }} }</p></div><span class="timeline-count">{{ steps().length }} stops</span></div>
       @if (!steps().length) {
         <div class="empty-state">Identity chưa có canonical event khả dụng.</div>
       } @else {
         <ol class="journey-timeline">
-          @for (step of steps(); track step.observation.eventId) {
+          @for (step of journeyWindow().items; track step.observation.eventId) {
             <li>
               @if (step.segmentBefore; as segment) {
                 <div class="journey-segment" [attr.data-feasible]="segment.feasible">
@@ -71,6 +71,12 @@
             </li>
           }
         </ol>
+      }
+      @if (journeyWindow().hasPrevious || journeyWindow().hasNext) {
+        <div class="load-more heading-actions" aria-label="Điều hướng hành trình đã tải">
+          <button class="button ghost" type="button" (click)="showOlderJourney()" [disabled]="!journeyWindow().hasPrevious">100 điểm cũ hơn</button>
+          <button class="button ghost" type="button" (click)="showNewerJourney()" [disabled]="!journeyWindow().hasNext">100 điểm mới hơn</button>
+        </div>
       }
       @if (journey()?.truncated) { <div class="history-bound-notice"><svg lucideInfo aria-hidden="true"></svg> Journey bị giới hạn bởi cấu hình API; không suy diễn phần chưa tải.</div> }
     </section>
@@ -96,9 +102,9 @@
 }
 
 @if (selected(); as event) {
-  <button class="drawer-backdrop" type="button" aria-label="Đóng chi tiết" (click)="closeEvent()"></button>
-  <aside class="detail-drawer wide" aria-label="Chi tiết event hành trình">
-    <div class="drawer-heading"><div><p class="eyebrow">JOURNEY OBSERVATION</p><h2>{{ event.plate?.final || event.plate?.normalized || 'UNKNOWN PLATE' }}</h2></div><button class="icon-button" type="button" aria-label="Đóng" (click)="closeEvent()"><svg lucideX aria-hidden="true"></svg></button></div>
+  <button data-dialog-backdrop class="drawer-backdrop" type="button" aria-label="Đóng chi tiết" (click)="closeEvent()"></button>
+  <aside appAccessibleDialog class="detail-drawer wide" aria-labelledby="journey-event-title" (appDialogDismiss)="closeEvent()">
+    <div class="drawer-heading"><div><p class="eyebrow">JOURNEY OBSERVATION</p><h2 id="journey-event-title">{{ event.plate?.final || event.plate?.normalized || 'UNKNOWN PLATE' }}</h2></div><button data-dialog-initial-focus class="icon-button" type="button" aria-label="Đóng" (click)="closeEvent()"><svg lucideX aria-hidden="true"></svg></button></div>
     <dl class="detail-list"><div><dt>Camera</dt><dd>{{ event.camera.name }} · {{ event.camera.zone || event.camera.id }}</dd></div><div><dt>Thời gian</dt><dd>{{ event.occurredAt | date: 'dd/MM/yyyy HH:mm:ss' }}</dd></div><div><dt>Direction</dt><dd>{{ event.direction }}</dd></div><div><dt>Event ID</dt><dd class="mono break-all">{{ event._id }}</dd></div></dl>
     <app-media-evidence [event]="event"></app-media-evidence>
   </aside>

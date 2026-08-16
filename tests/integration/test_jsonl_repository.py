@@ -1,8 +1,11 @@
 from dataclasses import replace
 from datetime import timedelta
 
+import pytest
+
 from vehicle_intelligence.application.ports import EventQuery
 from vehicle_intelligence.domain import EventStatus, PlateReview
+from vehicle_intelligence.exceptions import PersistenceError
 from vehicle_intelligence.infrastructure.persistence.jsonl import JsonlVehicleEventRepository
 
 
@@ -61,3 +64,35 @@ async def test_jsonl_repository_durably_rewrites_one_reviewed_event(
     reloaded = JsonlVehicleEventRepository(path)
     await reloaded.ensure_indexes()
     assert await reloaded.get(reviewed.id) == reviewed
+
+
+async def test_jsonl_save_retry_persists_after_append_failure(
+    tmp_path,
+    sample_event,
+    monkeypatch,
+) -> None:
+    path = tmp_path / "events.jsonl"
+    repository = JsonlVehicleEventRepository(path)
+    await repository.ensure_indexes()
+    append = repository._append
+    attempts = 0
+
+    def fail_once(line: str) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("simulated append failure")
+        append(line)
+
+    monkeypatch.setattr(repository, "_append", fail_once)
+
+    with pytest.raises(PersistenceError, match="cannot append"):
+        await repository.save(sample_event)
+
+    assert await repository.get(sample_event.id) is None
+    assert await repository.save(sample_event)
+    assert attempts == 2
+
+    reloaded = JsonlVehicleEventRepository(path)
+    await reloaded.ensure_indexes()
+    assert await reloaded.get(sample_event.id) == sample_event

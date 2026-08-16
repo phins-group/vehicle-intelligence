@@ -80,9 +80,7 @@ def test_vehicle_raw_yolo_output_is_letterboxed_filtered_and_nms_applied(tmp_pat
 
 def test_plate_post_nms_output_is_restored_to_source_coordinates(tmp_path) -> None:
     path, _ = _artifact(tmp_path)
-    session = FakeSession(
-        np.asarray([[[100, 200, 300, 400, 0.88, 0]]], dtype=np.float32)
-    )
+    session = FakeSession(np.asarray([[[100, 200, 300, 400, 0.88, 0]]], dtype=np.float32))
     detector = OnnxRuntimePlateDetector(
         DetectorConfig(
             provider="onnxruntime",

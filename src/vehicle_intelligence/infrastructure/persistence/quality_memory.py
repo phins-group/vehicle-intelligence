@@ -44,9 +44,7 @@ class InMemoryModelQualityRepository:
         maximum_models: int,
     ) -> ModelQualityReport:
         total = QualityCounts()
-        models: dict[tuple[str, str, str | None] | None, QualityCounts] = defaultdict(
-            QualityCounts
-        )
+        models: dict[tuple[str, str, str | None] | None, QualityCounts] = defaultdict(QualityCounts)
         daily: dict[str, QualityCounts] = defaultdict(QualityCounts)
         cursor: str | None = None
         scanned = 0

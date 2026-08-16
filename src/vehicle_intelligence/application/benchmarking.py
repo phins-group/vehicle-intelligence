@@ -55,8 +55,7 @@ def compare_detector_reports(
     throughput_ratio = candidate_fps / baseline_fps
     if throughput_ratio < gate.minimum_throughput_ratio:
         failures.append(
-            f"throughput ratio {throughput_ratio:.3f} is below "
-            f"{gate.minimum_throughput_ratio:.3f}"
+            f"throughput ratio {throughput_ratio:.3f} is below {gate.minimum_throughput_ratio:.3f}"
         )
     return tuple(failures)
 

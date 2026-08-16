@@ -1,0 +1,230 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version-file: .python-version
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: "0.8.8"
+          enable-cache: true
+
+      - name: Verify lockfile is current
+        run: uv lock --check
+
+      - name: Install locked dependencies
+        run: uv sync --locked --extra dev --extra minio
+
+      - name: Verify supply-chain pins
+        run: uv run --locked python scripts/check_supply_chain_pins.py
+
+      - name: Audit locked Python environment
+        run: |
+          uv export --locked --extra dev --extra minio --no-emit-project \
+            --no-hashes --no-annotate --no-header \
+            --output-file /tmp/locked-requirements.txt
+          uvx --from pip-audit==2.10.1 pip-audit \
+            --requirement /tmp/locked-requirements.txt --strict \
+            --progress-spinner off
+
+      - name: Lint and format-check Python
+        run: |
+          uv run --locked ruff check .
+          uv run --locked ruff format --check .
+          uv run --locked mypy
+          uv run --locked python scripts/check_complexity.py
+
+      - name: Test Python
+        run: >-
+          uv run --locked pytest
+          -W error::starlette.exceptions.StarletteDeprecationWarning
+          -W error::pytest.PytestUnhandledThreadExceptionWarning
+
+      - name: Validate Compose profiles
+        run: |
+          docker compose --profile '*' config --quiet
+          docker compose -f docker-compose.edge.yml --profile '*' config --quiet
+
+  real-services:
+    name: Real services (MongoDB replica set, Redis, MinIO)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      COMPOSE_PROJECT_NAME: vehicle-intelligence-ci-services
+      TEST_MONGODB_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true
+      TEST_REDIS_URL: redis://127.0.0.1:6379/15
+      TEST_MINIO_ENDPOINT: 127.0.0.1:9000
+      TEST_MINIO_ACCESS_KEY: minioadmin
+      TEST_MINIO_SECRET_KEY: minioadmin
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version-file: .python-version
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: "0.8.8"
+          enable-cache: true
+
+      - name: Install locked test dependencies
+        run: uv sync --locked --extra dev --extra minio
+
+      - name: Start pinned real services
+        run: |
+          docker compose up -d mongodb redis minio
+          docker compose run --rm mongodb-init
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/ready >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl --fail --silent http://127.0.0.1:9000/minio/health/ready >/dev/null
+          test "$(docker compose exec -T redis redis-cli ping)" = "PONG"
+          docker compose exec -T mongodb mongosh --quiet --eval '
+            const hello = db.hello();
+            if (hello.setName !== "rs0" || hello.isWritablePrimary !== true) {
+              printjson(hello);
+              quit(1);
+            }
+          '
+
+      - name: Run required real-service integration gate
+        run: uv run --locked python scripts/run_real_service_tests.py
+
+      - name: Print service diagnostics on failure
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --no-color mongodb redis minio
+
+      - name: Stop real services
+        if: always()
+        run: docker compose down --volumes --remove-orphans
+
+  web:
+    name: Web
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Audit web dependencies
+        run: |
+          npm run test:contracts
+          npm audit --package-lock-only --omit=dev --audit-level=high
+          audit_report="$RUNNER_TEMP/npm-audit.json"
+          set +e
+          npm audit --package-lock-only --json > "$audit_report"
+          audit_status=$?
+          set -e
+          if [ "$audit_status" -ne 0 ] && [ "$audit_status" -ne 1 ]; then
+            cat "$audit_report"
+            exit "$audit_status"
+          fi
+          node scripts/check_npm_audit_policy.mjs "$audit_report"
+
+      - name: Test web
+        run: npm test
+
+      - name: Type-check web
+        run: npm run typecheck
+
+      - name: Build web
+        run: npm run build
+
+  container:
+    name: Containers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Build locked API image
+        run: docker build --tag vehicle-intelligence:ci .
+
+      - name: Verify non-root runtime and writable data directory
+        run: >-
+          docker run --rm --entrypoint python vehicle-intelligence:ci
+          -c "import os, pathlib, vehicle_intelligence;
+          assert os.getuid() != 0;
+          path = pathlib.Path('/app/datasets/.write-test');
+          path.write_text('ok'); path.unlink()"
+
+      - name: Build locked web image
+        run: docker build --tag vehicle-web:ci apps/web
+
+      - name: Smoke-test non-root web runtime
+        run: |
+          container_id="$(docker run --detach --name vehicle-web-ci --add-host api:127.0.0.1 --add-host minio:127.0.0.1 vehicle-web:ci)"
+          trap 'docker logs vehicle-web-ci; docker rm --force vehicle-web-ci >/dev/null' EXIT
+          status=starting
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+            status="$(docker inspect --format '{{.State.Health.Status}}' "$container_id")"
+            if [ "$status" = healthy ]; then
+              break
+            fi
+            if [ "$status" = unhealthy ]; then
+              exit 1
+            fi
+            sleep 1
+          done
+          test "$status" = healthy
+          docker exec vehicle-web-ci sh -c 'test "$(id -u)" -ne 0'
+
+      # Use the post-incident Trivy release by immutable image digest instead
+      # of the historically mutable trivy-action tag.
+      - name: Scan container images for critical vulnerabilities
+        run: |
+          docker volume create trivy-cache
+          for image in vehicle-intelligence:ci vehicle-web:ci; do
+            docker run --rm \
+              --volume /var/run/docker.sock:/var/run/docker.sock \
+              --volume trivy-cache:/root/.cache/trivy \
+              aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f \
+              image --scanners vuln --severity CRITICAL --exit-code 1 "$image"
+          done

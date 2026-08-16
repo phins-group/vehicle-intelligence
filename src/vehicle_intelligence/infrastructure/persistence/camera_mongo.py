@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
 
-from pymongo import ASCENDING, DESCENDING, IndexModel
+from pymongo import ASCENDING, DESCENDING, IndexModel, ReturnDocument
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
-from vehicle_intelligence.application.ports import CredentialCipher, EncryptedCameraCredential
+from vehicle_intelligence.application.ports import (
+    CameraCreateOutcome,
+    CredentialCipher,
+    EncryptedCameraCredential,
+)
 from vehicle_intelligence.config import MongoConfig
 from vehicle_intelligence.domain import (
     Camera,
@@ -20,7 +25,11 @@ from vehicle_intelligence.domain import (
     SecretUri,
 )
 from vehicle_intelligence.exceptions import PersistenceError
-from vehicle_intelligence.infrastructure.persistence.constants import CAMERA_HEALTH, CAMERAS
+from vehicle_intelligence.infrastructure.persistence.constants import (
+    CAMERA_HEALTH,
+    CAMERAS,
+    SYSTEM_CONFIG,
+)
 from vehicle_intelligence.infrastructure.persistence.mongo_runtime import MongoRuntime, bind_mongo
 
 
@@ -33,10 +42,13 @@ def _aware(value: datetime) -> datetime:
 class MongoCameraRepository:
     def __init__(self, config: MongoConfig | MongoRuntime, cipher: CredentialCipher) -> None:
         self._cipher = cipher
+        self._runtime = config if isinstance(config, MongoRuntime) else None
         binding = bind_mongo(config)
         self._client = binding.client
         self._owns_client = binding.owns_client
         self._collection = binding.database[CAMERAS]
+        self._capacity = binding.database[SYSTEM_CONFIG]
+        self._capacity_id = "camera-capacity"
 
     async def ensure_indexes(self) -> None:
         try:
@@ -50,17 +62,81 @@ class MongoCameraRepository:
                     IndexModel([("updatedAt", DESCENDING)], name="ix_updated_at"),
                 ]
             )
+            camera_count = await self._collection.count_documents({})
+            # Another repository can initialize the shared counter concurrently.
+            with suppress(DuplicateKeyError):
+                await self._capacity.update_one(
+                    {"_id": self._capacity_id},
+                    {"$setOnInsert": {"reservedCount": camera_count}},
+                    upsert=True,
+                )
         except PyMongoError as exc:
             raise PersistenceError("cannot initialize MongoDB camera indexes") from exc
 
     async def create(self, camera: Camera) -> bool:
+        if self._runtime is None:
+            outcome = await self._create(camera, maximum_cameras=None)
+        else:
+            async with self._runtime.transaction():
+                outcome = await self._create(camera, maximum_cameras=None)
+        return outcome is CameraCreateOutcome.CREATED
+
+    async def create_with_capacity(
+        self,
+        camera: Camera,
+        maximum_cameras: int,
+    ) -> CameraCreateOutcome:
+        if maximum_cameras < 1:
+            raise ValueError("camera capacity must be positive")
+        if self._runtime is None:
+            return await self._create(camera, maximum_cameras=maximum_cameras)
+        async with self._runtime.transaction():
+            return await self._create(camera, maximum_cameras=maximum_cameras)
+
+    async def _create(
+        self,
+        camera: Camera,
+        maximum_cameras: int | None,
+    ) -> CameraCreateOutcome:
         try:
-            await self._collection.insert_one(self._to_document(camera))
-            return True
-        except DuplicateKeyError:
-            return False
+            if await self._collection.find_one({"_id": camera.id}, {"_id": 1}) is not None:
+                return CameraCreateOutcome.CONFLICT
+            if not await self._reserve_capacity(maximum_cameras):
+                if await self._collection.find_one({"_id": camera.id}, {"_id": 1}) is not None:
+                    return CameraCreateOutcome.CONFLICT
+                return CameraCreateOutcome.CAPACITY_REACHED
+            try:
+                await self._collection.insert_one(self._to_document(camera))
+            except DuplicateKeyError:
+                await self._release_capacity()
+                return CameraCreateOutcome.CONFLICT
+            except PyMongoError:
+                await self._release_capacity()
+                raise
+            return CameraCreateOutcome.CREATED
         except PyMongoError as exc:
             raise PersistenceError(f"cannot create camera: {camera.id}") from exc
+
+    async def _reserve_capacity(self, maximum_cameras: int | None) -> bool:
+        if maximum_cameras is None:
+            await self._capacity.update_one(
+                {"_id": self._capacity_id},
+                {"$inc": {"reservedCount": 1}},
+                upsert=True,
+            )
+            return True
+        reservation = await self._capacity.find_one_and_update(
+            {"_id": self._capacity_id, "reservedCount": {"$lt": maximum_cameras}},
+            {"$inc": {"reservedCount": 1}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return reservation is not None
+
+    async def _release_capacity(self) -> None:
+        await self._capacity.update_one(
+            {"_id": self._capacity_id, "reservedCount": {"$gt": 0}},
+            {"$inc": {"reservedCount": -1}},
+        )
 
     async def replace(self, camera: Camera, expected_revision: int) -> bool:
         if camera.revision != expected_revision + 1:
@@ -93,6 +169,12 @@ class MongoCameraRepository:
         except PyMongoError as exc:
             raise PersistenceError("cannot list cameras") from exc
         return [self._from_document(document) for document in documents]
+
+    async def count(self) -> int:
+        try:
+            return await self._collection.count_documents({})
+        except PyMongoError as exc:
+            raise PersistenceError("cannot count cameras") from exc
 
     async def list_encrypted_credentials(
         self,
@@ -142,9 +224,18 @@ class MongoCameraRepository:
             raise PersistenceError(f"cannot rotate camera credential: {camera_id}") from exc
 
     async def delete(self, camera_id: str) -> bool:
+        if self._runtime is None:
+            return await self._delete(camera_id)
+        async with self._runtime.transaction():
+            return await self._delete(camera_id)
+
+    async def _delete(self, camera_id: str) -> bool:
         try:
             result = await self._collection.delete_one({"_id": camera_id})
-            return result.deleted_count == 1
+            if result.deleted_count != 1:
+                return False
+            await self._release_capacity()
+            return True
         except PyMongoError as exc:
             raise PersistenceError(f"cannot delete camera: {camera_id}") from exc
 
@@ -170,9 +261,7 @@ class MongoCameraRepository:
             },
             "geometry": {
                 "vehicleRoi": (
-                    [[point.x, point.y] for point in camera.roi]
-                    if camera.roi is not None
-                    else None
+                    [[point.x, point.y] for point in camera.roi] if camera.roi is not None else None
                 ),
                 "crossingLine": (
                     [[point.x, point.y] for point in camera.crossing_line]
@@ -209,9 +298,7 @@ class MongoCameraRepository:
             location=location.get("name"),
             zone=location.get("zone"),
             roi=tuple(Point(float(x), float(y)) for x, y in roi) if roi else None,
-            crossing_line=(
-                tuple(Point(float(x), float(y)) for x, y in line) if line else None
-            ),
+            crossing_line=(tuple(Point(float(x), float(y)) for x, y in line) if line else None),
             crossing_positive_to_negative=Direction(
                 geometry.get("crossingPositiveToNegative", "ENTER")
             ),
@@ -261,8 +348,7 @@ class MongoCameraHealthRepository:
     async def list(self) -> list[CameraHealth]:
         try:
             documents = [
-                document
-                async for document in self._collection.find().sort([("_id", ASCENDING)])
+                document async for document in self._collection.find().sort([("_id", ASCENDING)])
             ]
         except PyMongoError as exc:
             raise PersistenceError("cannot list camera health") from exc

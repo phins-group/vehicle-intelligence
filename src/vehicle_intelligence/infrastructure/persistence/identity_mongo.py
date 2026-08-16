@@ -144,9 +144,7 @@ class MongoVehicleIdentityRepository:
                         _identity_to_document(merged),
                     )
                     if result.matched_count != 1:
-                        raise PersistenceError(
-                            f"concurrent vehicle identity update: {identity.id}"
-                        )
+                        raise PersistenceError(f"concurrent vehicle identity update: {identity.id}")
             return True
         except DuplicateKeyError:
             return False
@@ -168,6 +166,31 @@ class MongoVehicleIdentityRepository:
         except PyMongoError as exc:
             raise PersistenceError(f"cannot read vehicle fingerprint: {fingerprint_id}") from exc
         return _document_to_fingerprint(document) if document is not None else None
+
+    async def get_fingerprints(
+        self,
+        fingerprint_ids: tuple[str, ...],
+    ) -> tuple[VehicleFingerprint, ...]:
+        unique_ids = tuple(dict.fromkeys(fingerprint_ids))
+        if len(unique_ids) > 1000:
+            raise ValueError("fingerprint batch is bounded to 1000 IDs")
+        if not unique_ids:
+            return ()
+        try:
+            cursor = self._fingerprints.find({"_id": {"$in": list(unique_ids)}}).limit(
+                len(unique_ids)
+            )
+            fingerprints: dict[str, VehicleFingerprint] = {}
+            async for document in cursor:
+                fingerprint = _document_to_fingerprint(document)
+                fingerprints[fingerprint.id] = fingerprint
+        except PyMongoError as exc:
+            raise PersistenceError("cannot read vehicle fingerprint batch") from exc
+        return tuple(
+            fingerprints[fingerprint_id]
+            for fingerprint_id in unique_ids
+            if fingerprint_id in fingerprints
+        )
 
     async def list_fingerprints(
         self,
@@ -242,12 +265,8 @@ class MongoVehicleIdentityRepository:
                     if not _review_matches(prior, review):
                         raise IdentityConflictError("identity review ID was reused")
                     return replace(_review_result(prior), idempotent=True)
-                source_document = await self._identities.find_one(
-                    {"_id": review.source_vehicle_id}
-                )
-                target_document = await self._identities.find_one(
-                    {"_id": review.target_vehicle_id}
-                )
+                source_document = await self._identities.find_one({"_id": review.source_vehicle_id})
+                target_document = await self._identities.find_one({"_id": review.target_vehicle_id})
                 if source_document is None or target_document is None:
                     raise IdentityNotFoundError("merge identity not found")
                 source = _document_to_identity(source_document)
@@ -265,13 +284,8 @@ class MongoVehicleIdentityRepository:
                 source_fingerprints = await self._bounded_fingerprints(source.id)
                 target_fingerprints = await self._bounded_fingerprints(target.id)
                 if not source_fingerprints or not target_fingerprints:
-                    raise IdentityConflictError(
-                        "identity merge requires fingerprint evidence"
-                    )
-                moved = tuple(
-                    replace(item, vehicle_id=target.id)
-                    for item in source_fingerprints
-                )
+                    raise IdentityConflictError("identity merge requires fingerprint evidence")
+                moved = tuple(replace(item, vehicle_id=target.id) for item in source_fingerprints)
                 merged = identity_from_fingerprints(
                     target.id,
                     tuple(target_fingerprints) + moved,
@@ -334,9 +348,7 @@ class MongoVehicleIdentityRepository:
                     if not _review_matches(prior, review):
                         raise IdentityConflictError("identity review ID was reused")
                     return replace(_review_result(prior), idempotent=True)
-                source_document = await self._identities.find_one(
-                    {"_id": review.source_vehicle_id}
-                )
+                source_document = await self._identities.find_one({"_id": review.source_vehicle_id})
                 if source_document is None:
                     raise IdentityNotFoundError("split identity not found")
                 source = _document_to_identity(source_document)
@@ -348,22 +360,13 @@ class MongoVehicleIdentityRepository:
                     raise IdentityConflictError("split destination identity already exists")
                 all_fingerprints = await self._bounded_fingerprints(source.id)
                 selected_ids = set(review.fingerprint_ids)
-                selected = tuple(
-                    item for item in all_fingerprints if item.id in selected_ids
-                )
-                remaining = tuple(
-                    item for item in all_fingerprints if item.id not in selected_ids
-                )
+                selected = tuple(item for item in all_fingerprints if item.id in selected_ids)
+                remaining = tuple(item for item in all_fingerprints if item.id not in selected_ids)
                 if len(selected) != len(selected_ids):
                     raise IdentityConflictError("split fingerprint ownership changed")
                 if not remaining:
-                    raise IdentityConflictError(
-                        "split must leave evidence on the source identity"
-                    )
-                moved = tuple(
-                    replace(item, vehicle_id=review.new_vehicle_id)
-                    for item in selected
-                )
+                    raise IdentityConflictError("split must leave evidence on the source identity")
+                moved = tuple(replace(item, vehicle_id=review.new_vehicle_id) for item in selected)
                 remaining_identity = identity_from_fingerprints(
                     source.id,
                     remaining,
@@ -637,8 +640,7 @@ def _review_matches(
             common
             and document.get("action") == IdentityReviewAction.MERGE.value
             and document.get("resultVehicleId") == review.target_vehicle_id
-            and document.get("expectedTargetRevision")
-            == review.expected_target_revision
+            and document.get("expectedTargetRevision") == review.expected_target_revision
             and fingerprints.get("source") == review.source_fingerprint_id
             and fingerprints.get("target") == review.target_fingerprint_id
         )
@@ -646,8 +648,7 @@ def _review_matches(
         common
         and document.get("action") == IdentityReviewAction.SPLIT.value
         and document.get("resultVehicleId") == review.new_vehicle_id
-        and sorted(document.get("fingerprintIds") or [])
-        == sorted(review.fingerprint_ids)
+        and sorted(document.get("fingerprintIds") or []) == sorted(review.fingerprint_ids)
     )
 
 

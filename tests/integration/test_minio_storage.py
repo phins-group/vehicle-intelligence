@@ -42,7 +42,10 @@ async def test_minio_media_storage_round_trip() -> None:
     )
 
     try:
+        with pytest.raises(MediaStorageError, match="readiness probe failed"):
+            await storage.ping()
         assert await storage.put(key, payload, "image/jpeg") == key
+        await storage.ping()
         assert await storage.exists(key)
         assert await storage.get(key, len(payload)) == payload
         with pytest.raises(MediaStorageError, match="read limit"):
@@ -59,10 +62,13 @@ async def test_minio_media_storage_round_trip() -> None:
             signed_response = await http.get(signed_url)
         assert signed_response.status_code == 200
         assert signed_response.content == payload
-        assert await storage.presign_get(
-            f"events/{uuid.uuid4().hex}/missing.jpg",
-            timedelta(seconds=60),
-        ) is None
+        assert (
+            await storage.presign_get(
+                f"events/{uuid.uuid4().hex}/missing.jpg",
+                timedelta(seconds=60),
+            )
+            is None
+        )
         assert not await storage.exists(f"events/{uuid.uuid4().hex}/missing.jpg")
         offline_public_signer = MinioMediaStorage(
             config.model_copy(update={"public_endpoint": "browser.invalid:9443"})

@@ -66,3 +66,20 @@ This is a static deployment-input gate. Production release still requires:
 The current workspace contains vehicle YOLO11n artifacts only. It has no
 representative video or licensed/evaluated Vietnamese plate checkpoint, so the
 default preflight correctly remains not ready for a live production ANPR rollout.
+
+## Runtime probes
+
+- `GET /livez` is process liveness only. Container healthchecks use it so a shared
+  dependency outage does not create process-restart loops.
+- `GET /readyz` is the traffic-admission probe. It returns `503` before lifespan
+  initialization completes and whenever the configured canonical MongoDB event
+  store cannot answer a bounded ping.
+- Camera management, MinIO media access, realtime, and live-monitor sources are
+  explicit non-critical checks. Their outage is reported as `degraded` while
+  `/readyz` remains `200`, preserving metadata/event queries and documented REST
+  recovery behavior.
+- `GET /api/system/health` remains the backward-compatible public capability
+  summary and is not a readiness gate.
+
+Probe responses expose only stable dependency names and states, never connection
+strings, credentials, exception text, or remote host details.

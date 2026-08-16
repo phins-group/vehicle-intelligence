@@ -31,9 +31,7 @@ def build_audit_router(audits: AuditService, security: APISecurity) -> APIRouter
         cursor: str | None = None,
         actor_id: Annotated[str | None, Query(alias="actorId")] = None,
         action: AuditAction | None = None,
-        resource_type: Annotated[
-            AuditResourceType | None, Query(alias="resourceType")
-        ] = None,
+        resource_type: Annotated[AuditResourceType | None, Query(alias="resourceType")] = None,
         resource_id: Annotated[str | None, Query(alias="resourceId")] = None,
         from_time: Annotated[datetime | None, Query(alias="from")] = None,
         to_time: Annotated[datetime | None, Query(alias="to")] = None,

@@ -11,6 +11,7 @@ import {
   CameraConnectionTest,
   CameraCreateRequest,
   CameraHealth,
+  CameraHealthSnapshot,
   EventFilters,
   EventMediaAccess,
   EventPage,
@@ -48,7 +49,7 @@ import {
   WatchlistEntry,
   WatchlistType,
   WatchlistUpdateRequest,
-  WatchlistWriteRequest
+  WatchlistWriteRequest,
 } from '../models/api.models';
 
 @Injectable({ providedIn: 'root' })
@@ -73,36 +74,40 @@ export class ApiClientService {
     return this.http.get<EventPage>('/api/events', { params });
   }
 
-  event(eventId: string): Observable<import('../models/api.models').VehicleEvent> {
+  event(
+    eventId: string,
+  ): Observable<import('../models/api.models').VehicleEvent> {
     return this.http.get<import('../models/api.models').VehicleEvent>(
-      '/api/events/' + encodeURIComponent(eventId)
+      '/api/events/' + encodeURIComponent(eventId),
     );
   }
 
   eventMedia(eventId: string): Observable<EventMediaAccess> {
     return this.http.get<EventMediaAccess>(
-      '/api/events/' + encodeURIComponent(eventId) + '/media'
+      '/api/events/' + encodeURIComponent(eventId) + '/media',
     );
   }
 
   reviewPlate(
     eventId: string,
-    request: PlateReviewRequest
+    request: PlateReviewRequest,
   ): Observable<PlateReviewResponse> {
     return this.http.put<PlateReviewResponse>(
       '/api/events/' + encodeURIComponent(eventId) + '/plate-review',
-      request
+      request,
     );
   }
 
-  datasetSamples(filters: {
-    limit?: number;
-    cursor?: string | null;
-    type?: 'PLATE_OCR';
-    status?: 'READY' | 'EXPORTING' | 'EXPORTED' | 'EXPORT_FAILED';
-    reason?: 'HUMAN_CORRECTION' | 'HUMAN_CONFIRMATION';
-    sourceEventId?: string;
-  } = {}): Observable<{ items: DatasetSample[]; nextCursor: string | null }> {
+  datasetSamples(
+    filters: {
+      limit?: number;
+      cursor?: string | null;
+      type?: 'PLATE_OCR';
+      status?: 'READY' | 'EXPORTING' | 'EXPORTED' | 'EXPORT_FAILED';
+      reason?: 'HUMAN_CORRECTION' | 'HUMAN_CONFIRMATION';
+      sourceEventId?: string;
+    } = {},
+  ): Observable<{ items: DatasetSample[]; nextCursor: string | null }> {
     let params = new HttpParams();
     for (const [key, value] of Object.entries(filters)) {
       if (value !== undefined && value !== null && value !== '') {
@@ -111,12 +116,14 @@ export class ApiClientService {
     }
     return this.http.get<{ items: DatasetSample[]; nextCursor: string | null }>(
       '/api/dataset-samples',
-      { params }
+      { params },
     );
   }
 
   detectorReviewSources(): Observable<{ items: DetectorReviewSource[] }> {
-    return this.http.get<{ items: DetectorReviewSource[] }>('/api/detector-review/sources');
+    return this.http.get<{ items: DetectorReviewSource[] }>(
+      '/api/detector-review/sources',
+    );
   }
 
   detectorReviewItems(filters: {
@@ -132,49 +139,66 @@ export class ApiClientService {
         params = params.set(key, String(value));
       }
     }
-    return this.http.get<DetectorReviewPage>('/api/detector-review/items', { params });
+    return this.http.get<DetectorReviewPage>('/api/detector-review/items', {
+      params,
+    });
   }
 
-  detectorReviewItem(sourceId: string, reviewId: string): Observable<DetectorReviewItem> {
-    return this.http.get<DetectorReviewItem>(this.detectorReviewItemUrl(sourceId, reviewId));
+  detectorReviewItem(
+    sourceId: string,
+    reviewId: string,
+  ): Observable<DetectorReviewItem> {
+    return this.http.get<DetectorReviewItem>(
+      this.detectorReviewItemUrl(sourceId, reviewId),
+    );
   }
 
   detectorReviewImage(sourceId: string, reviewId: string): Observable<Blob> {
-    return this.http.get(this.detectorReviewItemUrl(sourceId, reviewId) + '/image', {
-      responseType: 'blob'
-    });
+    return this.http.get(
+      this.detectorReviewItemUrl(sourceId, reviewId) + '/image',
+      {
+        responseType: 'blob',
+      },
+    );
   }
 
   reviewDetectorSample(
     sourceId: string,
     reviewId: string,
-    request: DetectorReviewRequest
+    request: DetectorReviewRequest,
   ): Observable<DetectorReviewItem> {
     return this.http.put<DetectorReviewItem>(
       this.detectorReviewItemUrl(sourceId, reviewId),
-      request
+      request,
     );
   }
 
   detectorReviewHistory(
     sourceId: string,
-    reviewId: string
-  ): Observable<{ items: import('../models/api.models').DetectorReviewDecision[] }> {
+    reviewId: string,
+  ): Observable<{
+    items: import('../models/api.models').DetectorReviewDecision[];
+  }> {
     return this.http.get<{
       items: import('../models/api.models').DetectorReviewDecision[];
     }>(this.detectorReviewItemUrl(sourceId, reviewId) + '/history');
   }
 
-  promoteDetectorSource(sourceId: string, targetSourceId: string): Observable<DetectorPromotionJob> {
+  promoteDetectorSource(
+    sourceId: string,
+    targetSourceId: string,
+  ): Observable<DetectorPromotionJob> {
     return this.http.post<DetectorPromotionJob>(
-      '/api/detector-review/sources/' + encodeURIComponent(sourceId) + '/promotions',
-      { targetSourceId }
+      '/api/detector-review/sources/' +
+        encodeURIComponent(sourceId) +
+        '/promotions',
+      { targetSourceId },
     );
   }
 
   detectorPromotion(jobId: string): Observable<DetectorPromotionJob> {
     return this.http.get<DetectorPromotionJob>(
-      '/api/detector-review/promotions/' + encodeURIComponent(jobId)
+      '/api/detector-review/promotions/' + encodeURIComponent(jobId),
     );
   }
 
@@ -189,7 +213,7 @@ export class ApiClientService {
       cursor?: string | null;
       kind?: DetectorDatasetSampleKind;
       lighting?: '' | 'DAY' | 'NIGHT' | 'UNKNOWN';
-    } = {}
+    } = {},
   ): Observable<DetectorDatasetSamplePage> {
     let params = new HttpParams();
     for (const [key, value] of Object.entries(filters)) {
@@ -199,18 +223,21 @@ export class ApiClientService {
     }
     return this.http.get<DetectorDatasetSamplePage>(
       '/api/datasets/' + encodeURIComponent(sourceId) + '/samples',
-      { params }
+      { params },
     );
   }
 
-  detectorDatasetSampleImage(sourceId: string, imageSha256: string): Observable<Blob> {
+  detectorDatasetSampleImage(
+    sourceId: string,
+    imageSha256: string,
+  ): Observable<Blob> {
     return this.http.get(
       '/api/datasets/' +
         encodeURIComponent(sourceId) +
         '/samples/' +
         encodeURIComponent(imageSha256) +
         '/image',
-      { responseType: 'blob' }
+      { responseType: 'blob' },
     );
   }
 
@@ -220,47 +247,52 @@ export class ApiClientService {
       exportId: string;
       revision: string;
       confirmRestrictedPrivateTransfer: boolean;
-    }
+    },
   ): Observable<DatasetHubSyncJob> {
     return this.http.post<DatasetHubSyncJob>(
       '/api/datasets/' + encodeURIComponent(sourceId) + '/syncs',
-      request
+      request,
     );
   }
 
   detectorDatasetSync(jobId: string): Observable<DatasetHubSyncJob> {
     return this.http.get<DatasetHubSyncJob>(
-      '/api/datasets/syncs/' + encodeURIComponent(jobId)
+      '/api/datasets/syncs/' + encodeURIComponent(jobId),
     );
   }
 
   modelTrainingOverview(limit = 100): Observable<ModelTrainingOverview> {
     return this.http.get<ModelTrainingOverview>('/api/model-training', {
-      params: { limit }
+      params: { limit },
     });
   }
 
-  startModelTraining(request: StartModelTrainingRequest): Observable<ModelTrainingRun> {
-    return this.http.post<ModelTrainingRun>('/api/model-training/runs', request);
+  startModelTraining(
+    request: StartModelTrainingRequest,
+  ): Observable<ModelTrainingRun> {
+    return this.http.post<ModelTrainingRun>(
+      '/api/model-training/runs',
+      request,
+    );
   }
 
   modelTrainingRun(runId: string): Observable<ModelTrainingRun> {
     return this.http.get<ModelTrainingRun>(
-      '/api/model-training/runs/' + encodeURIComponent(runId)
+      '/api/model-training/runs/' + encodeURIComponent(runId),
     );
   }
 
   modelTrainingLogs(runId: string, tail = 300): Observable<ModelTrainingLog> {
     return this.http.get<ModelTrainingLog>(
       '/api/model-training/runs/' + encodeURIComponent(runId) + '/logs',
-      { params: { tail } }
+      { params: { tail } },
     );
   }
 
   cancelModelTrainingRun(runId: string): Observable<ModelTrainingRun> {
     return this.http.post<ModelTrainingRun>(
       '/api/model-training/runs/' + encodeURIComponent(runId) + '/cancel',
-      {}
+      {},
     );
   }
 
@@ -274,7 +306,7 @@ export class ApiClientService {
   searchVehicleHistory(
     plate: string,
     limit = 50,
-    cursor: string | null = null
+    cursor: string | null = null,
   ): Observable<VehicleSearchPage> {
     let params = new HttpParams().set('plate', plate).set('limit', limit);
     if (cursor) params = params.set('cursor', cursor);
@@ -283,50 +315,60 @@ export class ApiClientService {
 
   vehicleIdentity(vehicleId: string): Observable<VehicleIdentity> {
     return this.http.get<VehicleIdentity>(
-      '/api/vehicles/' + encodeURIComponent(vehicleId)
+      '/api/vehicles/' + encodeURIComponent(vehicleId),
     );
   }
 
-  vehicleTimeline(vehicleId: string, limit = 1000): Observable<VehicleTimeline> {
+  vehicleTimeline(
+    vehicleId: string,
+    limit = 1000,
+  ): Observable<VehicleTimeline> {
     return this.http.get<VehicleTimeline>(
       '/api/vehicles/' + encodeURIComponent(vehicleId) + '/timeline',
-      { params: { limit } }
+      { params: { limit } },
     );
   }
 
   vehicleJourney(vehicleId: string, limit = 1000): Observable<VehicleJourney> {
     return this.http.get<VehicleJourney>(
       '/api/vehicles/' + encodeURIComponent(vehicleId) + '/journey',
-      { params: { limit } }
+      { params: { limit } },
     );
   }
 
   cameras(enabledOnly = false): Observable<{ items: Camera[] }> {
     return this.http.get<{ items: Camera[] }>('/api/cameras', {
-      params: { enabledOnly }
+      params: { enabledOnly },
     });
   }
 
   cameraHealth(cameraId: string): Observable<CameraHealth> {
     return this.http.get<CameraHealth>(
-      '/api/cameras/' + encodeURIComponent(cameraId) + '/health'
+      '/api/cameras/' + encodeURIComponent(cameraId) + '/health',
     );
+  }
+
+  cameraHealthSnapshot(): Observable<CameraHealthSnapshot> {
+    return this.http.get<CameraHealthSnapshot>('/api/camera-health');
   }
 
   liveMonitorState(cameraId: string): Observable<LiveMonitorState> {
     return this.http.get<LiveMonitorState>(
-      '/api/cameras/' + encodeURIComponent(cameraId) + '/live'
+      '/api/cameras/' + encodeURIComponent(cameraId) + '/live',
     );
   }
 
-  liveMonitorFrame(cameraId: string, sequence: number): Observable<HttpResponse<Blob>> {
+  liveMonitorFrame(
+    cameraId: string,
+    sequence: number,
+  ): Observable<HttpResponse<Blob>> {
     return this.http.get(
       '/api/cameras/' + encodeURIComponent(cameraId) + '/live/frame',
       {
         params: { sequence },
         observe: 'response',
-        responseType: 'blob'
-      }
+        responseType: 'blob',
+      },
     );
   }
 
@@ -338,8 +380,12 @@ export class ApiClientService {
     return this.http.post<Camera>('/api/cameras', request);
   }
 
-  createCameraBatch(requests: CameraCreateRequest[]): Observable<CameraBatchResult> {
-    return this.http.post<CameraBatchResult>('/api/cameras/batch', { items: requests });
+  createCameraBatch(
+    requests: CameraCreateRequest[],
+  ): Observable<CameraBatchResult> {
+    return this.http.post<CameraBatchResult>('/api/cameras/batch', {
+      items: requests,
+    });
   }
 
   discoverOnvifCameras(): Observable<OnvifDiscoveryResult> {
@@ -350,25 +396,27 @@ export class ApiClientService {
     const action = enabled ? 'enable' : 'disable';
     return this.http.post<Camera>(
       '/api/cameras/' + encodeURIComponent(cameraId) + '/' + action,
-      {}
+      {},
     );
   }
 
   testCamera(cameraId: string): Observable<CameraConnectionTest> {
     return this.http.post<CameraConnectionTest>(
       '/api/cameras/' + encodeURIComponent(cameraId) + '/test-connection',
-      {}
+      {},
     );
   }
 
-  alerts(filters: {
-    limit?: number;
-    cursor?: string | null;
-    status?: AlertStatus | '';
-    plate?: string;
-    cameraId?: string;
-    ruleId?: string;
-  } = {}): Observable<AlertPage> {
+  alerts(
+    filters: {
+      limit?: number;
+      cursor?: string | null;
+      status?: AlertStatus | '';
+      plate?: string;
+      cameraId?: string;
+      ruleId?: string;
+    } = {},
+  ): Observable<AlertPage> {
     let params = new HttpParams();
     for (const [key, value] of Object.entries(filters)) {
       if (value !== undefined && value !== null && value !== '') {
@@ -381,14 +429,14 @@ export class ApiClientService {
   acknowledgeAlert(alertId: string): Observable<Alert> {
     return this.http.post<Alert>(
       '/api/alerts/' + encodeURIComponent(alertId) + '/acknowledge',
-      {}
+      {},
     );
   }
 
   resolveAlert(alertId: string): Observable<Alert> {
     return this.http.post<Alert>(
       '/api/alerts/' + encodeURIComponent(alertId) + '/resolve',
-      {}
+      {},
     );
   }
 
@@ -396,36 +444,46 @@ export class ApiClientService {
     return this.http.get<RealtimeHealth>('/api/realtime/health');
   }
 
-  watchlists(filters: {
-    listType?: WatchlistType | '';
-    enabled?: boolean;
-    limit?: number;
-  } = {}): Observable<{ items: WatchlistEntry[] }> {
+  watchlists(
+    filters: {
+      listType?: WatchlistType | '';
+      enabled?: boolean;
+      limit?: number;
+    } = {},
+  ): Observable<{ items: WatchlistEntry[] }> {
     let params = new HttpParams();
     for (const [key, value] of Object.entries(filters)) {
-      if (value !== undefined && value !== '') params = params.set(key, String(value));
+      if (value !== undefined && value !== '')
+        params = params.set(key, String(value));
     }
-    return this.http.get<{ items: WatchlistEntry[] }>('/api/watchlists', { params });
+    return this.http.get<{ items: WatchlistEntry[] }>('/api/watchlists', {
+      params,
+    });
   }
 
   createWatchlist(request: WatchlistWriteRequest): Observable<WatchlistEntry> {
     return this.http.post<WatchlistEntry>('/api/watchlists', request);
   }
 
-  updateWatchlist(entryId: string, request: WatchlistUpdateRequest): Observable<WatchlistEntry> {
+  updateWatchlist(
+    entryId: string,
+    request: WatchlistUpdateRequest,
+  ): Observable<WatchlistEntry> {
     return this.http.put<WatchlistEntry>(
       '/api/watchlists/' + encodeURIComponent(entryId),
-      request
+      request,
     );
   }
 
   deleteWatchlist(entryId: string): Observable<void> {
-    return this.http.delete<void>('/api/watchlists/' + encodeURIComponent(entryId));
+    return this.http.delete<void>(
+      '/api/watchlists/' + encodeURIComponent(entryId),
+    );
   }
 
   rules(enabledOnly = false, limit = 200): Observable<{ items: Rule[] }> {
     return this.http.get<{ items: Rule[] }>('/api/rules', {
-      params: { enabledOnly, limit }
+      params: { enabledOnly, limit },
     });
   }
 
@@ -434,7 +492,10 @@ export class ApiClientService {
   }
 
   updateRule(ruleId: string, request: RuleUpdateRequest): Observable<Rule> {
-    return this.http.put<Rule>('/api/rules/' + encodeURIComponent(ruleId), request);
+    return this.http.put<Rule>(
+      '/api/rules/' + encodeURIComponent(ruleId),
+      request,
+    );
   }
 
   deleteRule(ruleId: string): Observable<void> {

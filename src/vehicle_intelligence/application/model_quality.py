@@ -30,9 +30,7 @@ class ModelQualityService:
         if generated_at.tzinfo is None:
             raise ValueError("quality service clock must be timezone-aware")
         generated_at = generated_at.astimezone(UTC)
-        if any(
-            value is not None and value.tzinfo is None for value in (from_time, to_time)
-        ):
+        if any(value is not None and value.tzinfo is None for value in (from_time, to_time)):
             raise ValueError("quality report timestamps must include a timezone")
         end = (to_time or generated_at).astimezone(UTC)
         start = (

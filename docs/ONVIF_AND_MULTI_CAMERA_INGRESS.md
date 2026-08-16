@@ -61,10 +61,14 @@ remain stable for the configured interval before its failure count resets. This
 prevents one crash loop or a large import from creating an unbounded process
 storm while preserving camera-level failure isolation.
 
-Capacity checks are application-level in this milestone. Multiple API replicas
-creating cameras concurrently require a transactional admission counter or a
-single writer to make the global configured-camera limit strict. MongoDB unique
-camera IDs still prevent duplicate records.
+Configured-camera admission is atomic across API replicas. The repository
+reserves a slot through one conditional MongoDB counter update before inserting
+the camera; duplicate/failed inserts compensate the reservation. Production's
+replica-set transaction commits the counter and camera together, and MongoDB's
+unique camera ID remains the independent duplicate barrier. Standalone
+development mode retains compensation but cannot guarantee recovery from a
+process crash between the two writes, so production capacity enforcement must
+keep transactions enabled.
 
 ## API and RBAC
 
@@ -82,4 +86,3 @@ The Angular camera screen presents scan results as temporary cards. Selecting a
 device only prefills a safe camera ID, name, location, and ONVIF provenance; the
 operator must provide the RTSP URL through the existing password input before
 creation.
-

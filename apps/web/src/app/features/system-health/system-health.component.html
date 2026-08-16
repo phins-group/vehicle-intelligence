@@ -9,16 +9,32 @@
   </div>
 </div>
 
-@if (error()) { <div class="notice error" role="alert">{{ error() }}</div> }
+@if (loading() && !loadState.hasLoaded()) {
+  <section class="panel empty-state" role="status" aria-live="polite">
+    Đang tải health của hệ thống…
+  </section>
+} @else if (loadState.initialError(); as loadError) {
+  <section class="panel empty-state" role="alert">
+    <strong>{{ loadError }}</strong>
+    <span>Chưa có health snapshot hợp lệ để hiển thị.</span>
+    <button class="button secondary" type="button" (click)="load()">Thử lại</button>
+  </section>
+} @else {
+  @if (loadState.staleError(); as loadError) {
+    <div class="notice error" role="alert">
+      {{ loadError }} Đang hiển thị health snapshot cập nhật lúc
+      {{ updatedAt() | date: 'HH:mm:ss' }}.
+    </div>
+  }
 
-<section class="metric-grid health-metrics">
+  <section class="metric-grid health-metrics">
   <article class="metric-card accent-green"><div class="metric-icon"><svg lucideServer aria-hidden="true"></svg></div><div><span>API</span><strong class="health-word">{{ system()?.status || 'UNKNOWN' }}</strong><small>Phase {{ system()?.phase || '—' }}</small></div></article>
   <article class="metric-card accent-blue"><div class="metric-icon"><svg lucideRadio aria-hidden="true"></svg></div><div><span>Realtime source</span><strong class="health-word">{{ realtime()?.status || 'UNKNOWN' }}</strong><small>{{ realtime()?.subscribers ?? 0 }} subscriber(s)</small></div></article>
   <article class="metric-card accent-violet"><div class="metric-icon"><svg lucideCamera aria-hidden="true"></svg></div><div><span>Camera online</span><strong>{{ onlineCameras() }} / {{ cameras().length }}</strong><small>{{ totalReconnects() }} lần reconnect</small></div></article>
   <article class="metric-card accent-amber"><div class="metric-icon"><svg lucideGauge aria-hidden="true"></svg></div><div><span>Frame đã drop</span><strong>{{ totalDropped() }}</strong><small>Tổng counter hiện tại</small></div></article>
-</section>
+  </section>
 
-<div class="health-grid">
+  <div class="health-grid">
   <section class="panel">
     <div class="panel-heading"><div><h2>Platform services</h2><p>Trạng thái public và authenticated probe</p></div><svg lucideServer aria-hidden="true"></svg></div>
     <div class="service-list">
@@ -41,9 +57,9 @@
       <div><dt>Received</dt><dd>{{ realtime()?.eventsReceived ?? 0 }}</dd></div><div><dt>Distributed</dt><dd>{{ realtime()?.eventsDistributed ?? 0 }}</dd></div><div><dt>Duplicates</dt><dd>{{ realtime()?.duplicateEvents ?? 0 }}</dd></div><div><dt>Client drops</dt><dd>{{ realtime()?.clientEventsDropped ?? 0 }}</dd></div><div><dt>Source failures</dt><dd>{{ realtime()?.sourceFailures ?? 0 }}</dd></div><div><dt>Reconnects</dt><dd>{{ realtime()?.reconnectCount ?? 0 }}</dd></div>
     </dl>
   </section>
-</div>
+  </div>
 
-<section class="panel table-panel">
+  <section class="panel table-panel">
   <div class="panel-heading"><div><h2>Camera telemetry</h2><p>Health document mới nhất, không phải metric theo từng frame</p></div><svg lucideCamera aria-hidden="true"></svg></div>
   @if (!cameras().length) {
     <div class="empty-state">Không có camera health để hiển thị.</div>
@@ -54,4 +70,5 @@
       }
     </tbody></table></div>
   }
-</section>
+  </section>
+}

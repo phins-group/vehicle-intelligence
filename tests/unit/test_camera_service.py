@@ -1,6 +1,8 @@
+import asyncio
 from datetime import UTC, datetime
 
 import pytest
+from pydantic import ValidationError
 
 from vehicle_intelligence.application.cameras import (
     CameraBatchStatus,
@@ -9,12 +11,17 @@ from vehicle_intelligence.application.cameras import (
     CameraUpdate,
 )
 from vehicle_intelligence.application.ports import CameraConnectionTestResult
-from vehicle_intelligence.domain import CameraDirection, CameraHealth, CameraStatus
-from vehicle_intelligence.exceptions import CameraConflictError, CameraNotFoundError
+from vehicle_intelligence.domain import Camera, CameraDirection, CameraHealth, CameraStatus, Point
+from vehicle_intelligence.exceptions import (
+    CameraCapacityError,
+    CameraConflictError,
+    CameraNotFoundError,
+)
 from vehicle_intelligence.infrastructure.persistence.camera_memory import (
     InMemoryCameraHealthRepository,
     InMemoryCameraRepository,
 )
+from vehicle_intelligence.interfaces.camera_schemas import CameraGeometryInput
 
 
 class FakeConnectionTester:
@@ -24,6 +31,27 @@ class FakeConnectionTester:
     async def test(self, camera):
         self.urls.append(camera.rtsp_url.reveal())
         return CameraConnectionTestResult(True, 12.5, camera.updated_at)
+
+
+class AtomicCreateCameraRepository(InMemoryCameraRepository):
+    async def get(self, camera_id: str) -> Camera | None:
+        del camera_id
+        raise AssertionError("camera creation must not preflight a separate get")
+
+    async def list(self, enabled_only: bool = False) -> list[Camera]:
+        del enabled_only
+        raise AssertionError("camera creation must not list cameras")
+
+    async def count(self) -> int:
+        raise AssertionError("camera creation must not preflight a separate count")
+
+
+@pytest.mark.parametrize("coordinate", [float("nan"), float("inf"), float("-inf")])
+def test_camera_geometry_rejects_non_finite_coordinates(coordinate: float) -> None:
+    with pytest.raises(ValidationError):
+        CameraGeometryInput.model_validate({"vehicleRoi": [[coordinate, 0], [100, 0], [100, 100]]})
+    with pytest.raises(ValueError, match="coordinates must be finite"):
+        Point(coordinate, 0)
 
 
 def create_command(camera_id: str = "gate-01") -> CameraCreate:
@@ -147,3 +175,40 @@ async def test_camera_batch_is_bounded_partial_and_capacity_aware() -> None:
         await service.create_many((create_command("same"), create_command("same")))
     with pytest.raises(ValueError, match="exceeds configured limit"):
         await service.create_many(tuple(create_command(f"gate-{i}") for i in range(4)))
+
+
+async def test_camera_creation_uses_one_atomic_repository_operation() -> None:
+    cameras = AtomicCreateCameraRepository()
+    service = CameraService(
+        cameras,
+        InMemoryCameraHealthRepository(),
+        FakeConnectionTester(),
+        maximum_cameras=1,
+    )
+
+    created = await service.create(create_command())
+    assert created.id == "gate-01"
+    assert await InMemoryCameraRepository.count(cameras) == 1
+
+    with pytest.raises(CameraCapacityError, match="capacity reached"):
+        await service.create(create_command("gate-02"))
+
+
+async def test_concurrent_camera_creation_cannot_exceed_capacity() -> None:
+    cameras = InMemoryCameraRepository()
+    service = CameraService(
+        cameras,
+        InMemoryCameraHealthRepository(),
+        FakeConnectionTester(),
+        maximum_cameras=1,
+    )
+
+    results = await asyncio.gather(
+        service.create(create_command("concurrent-a")),
+        service.create(create_command("concurrent-b")),
+        return_exceptions=True,
+    )
+
+    assert sum(isinstance(result, Camera) for result in results) == 1
+    assert sum(isinstance(result, CameraCapacityError) for result in results) == 1
+    assert await cameras.count() == 1

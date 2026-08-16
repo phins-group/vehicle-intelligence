@@ -62,9 +62,7 @@ class InMemoryWatchlistRepository:
         entries.sort(key=lambda item: (item.updated_at, item.id), reverse=True)
         return entries[:limit]
 
-    async def find_active_by_plate(
-        self, plate: str, timestamp: datetime
-    ) -> list[WatchlistEntry]:
+    async def find_active_by_plate(self, plate: str, timestamp: datetime) -> list[WatchlistEntry]:
         entries = [
             entry
             for entry in self._entries.values()
@@ -158,16 +156,12 @@ class InMemoryAlertRepository:
         if query.cursor:
             cursor_time, cursor_id = decode_cursor(query.cursor)
             alerts = [
-                alert
-                for alert in alerts
-                if (alert.created_at, alert.id) < (cursor_time, cursor_id)
+                alert for alert in alerts if (alert.created_at, alert.id) < (cursor_time, cursor_id)
             ]
         page = alerts[: query.limit + 1]
         has_more = len(page) > query.limit
         page = page[: query.limit]
-        next_cursor = (
-            encode_cursor(page[-1].created_at, page[-1].id) if has_more and page else None
-        )
+        next_cursor = encode_cursor(page[-1].created_at, page[-1].id) if has_more and page else None
         return AlertPage(tuple(page), next_cursor)
 
     async def close(self) -> None:

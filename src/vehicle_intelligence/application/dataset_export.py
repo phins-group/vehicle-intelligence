@@ -16,10 +16,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-import cv2
-import numpy as np
-
 from vehicle_intelligence.application.ports import (
+    DatasetImageTranscoder,
     DatasetSampleRepository,
     MediaObjectReader,
     VehicleEventRepository,
@@ -49,12 +47,14 @@ class OCRDatasetExportService:
         samples: DatasetSampleRepository,
         events: VehicleEventRepository,
         media: MediaObjectReader,
+        image_transcoder: DatasetImageTranscoder,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._config = config
         self._samples = samples
         self._events = events
         self._media = media
+        self._image_transcoder = image_transcoder
         self._clock = clock
         self._root = config.output_directory.expanduser().resolve()
 
@@ -216,15 +216,14 @@ class OCRDatasetExportService:
             return None, "MEDIA_READ_FAILED"
         if source is None:
             return None, "MEDIA_MISSING"
-        image = cv2.imdecode(np.frombuffer(source, dtype=np.uint8), cv2.IMREAD_COLOR)
-        if image is None or image.size == 0:
-            return None, "MEDIA_INVALID"
-        if image.shape[0] * image.shape[1] > self._config.maximum_image_pixels:
-            return None, "MEDIA_DIMENSIONS_EXCEEDED"
-        encoded, buffer = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 95])
-        if not encoded:
-            return None, "MEDIA_ENCODE_FAILED"
-        data = bytes(buffer)
+        normalized = self._image_transcoder.normalize_jpeg(
+            source,
+            maximum_pixels=self._config.maximum_image_pixels,
+            jpeg_quality=95,
+        )
+        if normalized.jpeg is None:
+            return None, normalized.error_code
+        data = normalized.jpeg
         split = self._split(event.camera.id)
         filename = f"{hashlib.sha256(sample.id.encode()).hexdigest()[:24]}.jpg"
         relative = PurePosixPath("images", split, filename)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+from vehicle_intelligence.application.ports import CameraCreateOutcome
 from vehicle_intelligence.domain import Camera, CameraHealth
 
 
@@ -22,6 +23,21 @@ class InMemoryCameraRepository:
             self._cameras[camera.id] = camera
             return True
 
+    async def create_with_capacity(
+        self,
+        camera: Camera,
+        maximum_cameras: int,
+    ) -> CameraCreateOutcome:
+        if maximum_cameras < 1:
+            raise ValueError("camera capacity must be positive")
+        async with self._lock:
+            if camera.id in self._cameras:
+                return CameraCreateOutcome.CONFLICT
+            if len(self._cameras) >= maximum_cameras:
+                return CameraCreateOutcome.CAPACITY_REACHED
+            self._cameras[camera.id] = camera
+            return CameraCreateOutcome.CREATED
+
     async def replace(self, camera: Camera, expected_revision: int) -> bool:
         if camera.revision != expected_revision + 1:
             raise ValueError("replacement camera revision must increment by one")
@@ -37,11 +53,12 @@ class InMemoryCameraRepository:
 
     async def list(self, enabled_only: bool = False) -> list[Camera]:
         cameras = [
-            camera
-            for camera in self._cameras.values()
-            if not enabled_only or camera.enabled
+            camera for camera in self._cameras.values() if not enabled_only or camera.enabled
         ]
         return sorted(cameras, key=lambda camera: (camera.name.casefold(), camera.id))
+
+    async def count(self) -> int:
+        return len(self._cameras)
 
     async def delete(self, camera_id: str) -> bool:
         async with self._lock:

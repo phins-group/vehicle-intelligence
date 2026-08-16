@@ -203,9 +203,7 @@ class FileDatasetRegistryRepository:
                 and job.repo_id == self._hub_repo_id
                 and job.requested_revision == revision
             ]
-            completed = [
-                job for job in exact if job.status is DatasetHubSyncStatus.COMPLETED
-            ]
+            completed = [job for job in exact if job.status is DatasetHubSyncStatus.COMPLETED]
             if completed:
                 return max(completed, key=lambda item: item.updated_at)
             active = [
@@ -493,9 +491,7 @@ class FileDatasetRegistryRepository:
         if not self._sources_root.is_dir() or self._sources_root.is_symlink():
             raise DatasetRegistryStorageError("dataset source catalog root is unsafe")
         roots = sorted(
-            path
-            for path in self._sources_root.iterdir()
-            if path.is_dir() and not path.is_symlink()
+            path for path in self._sources_root.iterdir() if path.is_dir() and not path.is_symlink()
         )
         if len(roots) > self._config.maximum_sources:
             raise DatasetRegistryStorageError("dataset source catalog exceeds configured limit")
@@ -574,9 +570,7 @@ class FileDatasetRegistryRepository:
         if not self._exports_root.is_dir() or self._exports_root.is_symlink():
             raise DatasetRegistryStorageError("dataset export catalog root is unsafe")
         roots = sorted(
-            path
-            for path in self._exports_root.iterdir()
-            if path.is_dir() and not path.is_symlink()
+            path for path in self._exports_root.iterdir() if path.is_dir() and not path.is_symlink()
         )
         if len(roots) > self._config.maximum_exports:
             raise DatasetRegistryStorageError("dataset export catalog exceeds configured limit")
@@ -656,8 +650,7 @@ class FileDatasetRegistryRepository:
             item.export
             for item in self._exports.values()
             if item.source_id == source.version.source_id
-            and item.export.source_manifest_sha256
-            == source.version.source_manifest_sha256
+            and item.export.source_manifest_sha256 == source.version.source_manifest_sha256
         ]
         export = (
             max(matching_exports, key=lambda item: (item.created_at, item.export_id))
@@ -728,8 +721,7 @@ class FileDatasetRegistryRepository:
             annotation_count=_count(manifest, "annotationCount"),
             negative_sample_count=_count(manifest, "negativeSampleCount"),
             split_counts={
-                str(key): int(value)
-                for key, value in dict(manifest.get("splitCounts", {})).items()
+                str(key): int(value) for key, value in dict(manifest.get("splitCounts", {})).items()
             },
             release_eligible=manifest.get("releaseEligible") is True,
             distribution_eligible=manifest.get("distributionEligible") is True,
@@ -882,9 +874,7 @@ def _sample_matches(
         return False
     lighting = sample.attributes.get("lighting")
     normalized_lighting = (
-        lighting.strip().upper()
-        if isinstance(lighting, str) and lighting.strip()
-        else "UNKNOWN"
+        lighting.strip().upper() if isinstance(lighting, str) and lighting.strip() else "UNKNOWN"
     )
     return query.lighting is None or normalized_lighting == query.lighting
 
@@ -984,11 +974,7 @@ def _identifier(value: str, description: str) -> str:
 
 def _revision(value: str) -> str:
     normalized = value.strip().strip("/")
-    if (
-        not _REVISION.fullmatch(normalized)
-        or ".." in normalized.split("/")
-        or "//" in normalized
-    ):
+    if not _REVISION.fullmatch(normalized) or ".." in normalized.split("/") or "//" in normalized:
         raise DatasetRegistryValidationError("Hugging Face revision is invalid")
     return normalized
 

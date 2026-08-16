@@ -54,11 +54,9 @@ def _matches(entry: AuditLog, query: AuditQuery) -> bool:
         (
             query.actor_id is not None and entry.actor.id != query.actor_id,
             query.action is not None and entry.action is not query.action,
-            query.resource_type is not None
-            and entry.resource_type is not query.resource_type,
+            query.resource_type is not None and entry.resource_type is not query.resource_type,
             query.resource_id is not None and entry.resource_id != query.resource_id,
             query.from_time is not None and entry.occurred_at < query.from_time,
             query.to_time is not None and entry.occurred_at > query.to_time,
         )
     )
-

@@ -157,20 +157,16 @@ class ReviewedFirstPartySourceBuilder:
                 files.append(_file_entry(destination, temporary))
                 pending_lines.append(_json_bytes(pending_record, pretty=False))
                 pending_auto_count += (
-                    pending_record.get("reason")
-                    == "MODEL_SUGGESTION_REQUIRES_HUMAN_REVIEW"
+                    pending_record.get("reason") == "MODEL_SUGGESTION_REQUIRES_HUMAN_REVIEW"
                 )
                 pending_conflict_count += (
-                    pending_record.get("reason")
-                    == "AUTO_LABEL_CONFLICT_REQUIRES_HUMAN_REVIEW"
+                    pending_record.get("reason") == "AUTO_LABEL_CONFLICT_REQUIRES_HUMAN_REVIEW"
                 )
                 pending_unlabeled_count += (
                     pending_record.get("reason") == "MISSING_VERIFIED_ANNOTATION"
                 )
                 continue
-            decision_lines.append(
-                _json_bytes(_decision_evidence(record, decision), pretty=False)
-            )
+            decision_lines.append(_json_bytes(_decision_evidence(record, decision), pretty=False))
             if decision.status is DetectorReviewStatus.REJECTED:
                 rejected_count += 1
                 rejected_lines.append(
@@ -191,9 +187,7 @@ class ReviewedFirstPartySourceBuilder:
                 continue
             digest = str(record["sourceImageSha256"])
             suffix = (
-                ".jpg"
-                if source_image.suffix.lower() == ".jpeg"
-                else source_image.suffix.lower()
+                ".jpg" if source_image.suffix.lower() == ".jpeg" else source_image.suffix.lower()
             )
             relative = PurePosixPath("images", digest[:2], f"{digest}{suffix}")
             destination = temporary.joinpath(*relative.parts)

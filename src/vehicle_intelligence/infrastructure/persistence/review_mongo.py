@@ -121,9 +121,7 @@ class MongoDatasetSampleRepository:
             document_to_dataset_sample(document) for document in documents[: query.limit]
         )
         next_cursor = (
-            encode_cursor(samples[-1].created_at, samples[-1].id)
-            if has_more and samples
-            else None
+            encode_cursor(samples[-1].created_at, samples[-1].id) if has_more and samples else None
         )
         return DatasetSamplePage(samples, next_cursor)
 

@@ -1,7 +1,7 @@
 import {
   DetectorReviewAnnotation,
   DetectorReviewBox,
-  DetectorReviewItem
+  DetectorReviewItem,
 } from '../models/api.models';
 
 export interface ImageDimensions {
@@ -21,6 +21,8 @@ export interface CanvasPoint {
   y: number;
 }
 
+export type BoxNudgeKey = 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown';
+
 export function editableBoxes(item: DetectorReviewItem): DetectorReviewBox[] {
   const annotations = item.decision?.annotations ?? item.suggestions;
   return annotations.map((annotation) => ({ ...annotation.bbox }));
@@ -30,13 +32,15 @@ export function pointerToImage(
   clientX: number,
   clientY: number,
   canvas: CanvasRectangle,
-  image: ImageDimensions
+  image: ImageDimensions,
 ): CanvasPoint {
-  const horizontal = canvas.width > 0 ? (clientX - canvas.left) / canvas.width : 0;
-  const vertical = canvas.height > 0 ? (clientY - canvas.top) / canvas.height : 0;
+  const horizontal =
+    canvas.width > 0 ? (clientX - canvas.left) / canvas.width : 0;
+  const vertical =
+    canvas.height > 0 ? (clientY - canvas.top) / canvas.height : 0;
   return {
     x: clamp(horizontal * image.width, 0, image.width),
-    y: clamp(vertical * image.height, 0, image.height)
+    y: clamp(vertical * image.height, 0, image.height),
   };
 }
 
@@ -44,7 +48,7 @@ export function boxFromPoints(
   start: CanvasPoint,
   end: CanvasPoint,
   image: ImageDimensions,
-  minimumSize = 2
+  minimumSize = 2,
 ): DetectorReviewBox | null {
   const x1 = clamp(Math.min(start.x, end.x), 0, image.width);
   const y1 = clamp(Math.min(start.y, end.y), 0, image.height);
@@ -55,28 +59,81 @@ export function boxFromPoints(
     x: round(x1),
     y: round(y1),
     width: round(x2 - x1),
-    height: round(y2 - y1)
+    height: round(y2 - y1),
   };
 }
 
-export function clampBox(box: DetectorReviewBox, image: ImageDimensions): DetectorReviewBox {
+export function clampBox(
+  box: DetectorReviewBox,
+  image: ImageDimensions,
+): DetectorReviewBox {
   const x = clamp(finite(box.x), 0, Math.max(0, image.width - 1));
   const y = clamp(finite(box.y), 0, Math.max(0, image.height - 1));
   const width = clamp(finite(box.width), 1, image.width - x);
   const height = clamp(finite(box.height), 1, image.height - y);
-  return { x: round(x), y: round(y), width: round(width), height: round(height) };
+  return {
+    x: round(x),
+    y: round(y),
+    width: round(width),
+    height: round(height),
+  };
+}
+
+export function defaultReviewBox(image: ImageDimensions): DetectorReviewBox {
+  const width = Math.max(1, round(image.width * 0.3));
+  const height = Math.max(1, round(image.height * 0.15));
+  return clampBox(
+    {
+      x: round((image.width - width) / 2),
+      y: round((image.height - height) / 2),
+      width,
+      height,
+    },
+    image,
+  );
+}
+
+export function nudgeReviewBox(
+  box: DetectorReviewBox,
+  image: ImageDimensions,
+  key: BoxNudgeKey,
+  step = 1,
+): DetectorReviewBox {
+  const current = clampBox(box, image);
+  const distance = Math.max(1, Math.abs(finite(step)));
+  const horizontal =
+    key === 'ArrowLeft' ? -distance : key === 'ArrowRight' ? distance : 0;
+  const vertical =
+    key === 'ArrowUp' ? -distance : key === 'ArrowDown' ? distance : 0;
+  return {
+    ...current,
+    x: round(
+      clamp(
+        current.x + horizontal,
+        0,
+        Math.max(0, image.width - current.width),
+      ),
+    ),
+    y: round(
+      clamp(
+        current.y + vertical,
+        0,
+        Math.max(0, image.height - current.height),
+      ),
+    ),
+  };
 }
 
 export function boxesMatchSuggestions(
   boxes: DetectorReviewBox[],
   suggestions: DetectorReviewAnnotation[],
-  tolerance = 0.01
+  tolerance = 0.01,
 ): boolean {
   if (!suggestions.length || boxes.length !== suggestions.length) return false;
   return boxes.every((box, index) => {
     const expected = suggestions[index].bbox;
     return (['x', 'y', 'width', 'height'] as const).every(
-      (field) => Math.abs(box[field] - expected[field]) <= tolerance
+      (field) => Math.abs(box[field] - expected[field]) <= tolerance,
     );
   });
 }
@@ -85,9 +142,10 @@ export function detectorReviewReason(reason: string): string {
   return (
     {
       MODEL_SUGGESTION_REQUIRES_HUMAN_REVIEW: 'Model đề xuất — cần xác nhận',
-      VIDEO_MODEL_SUGGESTION_REQUIRES_HUMAN_REVIEW: 'Video mới — model đề xuất, cần duyệt',
+      VIDEO_MODEL_SUGGESTION_REQUIRES_HUMAN_REVIEW:
+        'Video mới — model đề xuất, cần duyệt',
       AUTO_LABEL_CONFLICT_REQUIRES_HUMAN_REVIEW: 'Nhãn model xung đột',
-      MISSING_VERIFIED_ANNOTATION: 'Chưa có nhãn được xác minh'
+      MISSING_VERIFIED_ANNOTATION: 'Chưa có nhãn được xác minh',
     }[reason] ?? reason
   );
 }

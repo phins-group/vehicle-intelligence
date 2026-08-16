@@ -361,9 +361,7 @@ def build_policy_router(
         try:
             _validate_actor(request.actor_id, principal)
             before = AlertPublic.from_domain(await services.alerts.get(alert_id))
-            updated = AlertPublic.from_domain(
-                await services.alerts.resolve(alert_id, principal.id)
-            )
+            updated = AlertPublic.from_domain(await services.alerts.resolve(alert_id, principal.id))
             await audits.record(
                 AuditRecord(
                     principal=principal,

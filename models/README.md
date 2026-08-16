@@ -7,8 +7,13 @@ checkpoints in this directory or pass an absolute path.
 
 The default `yolo11n.pt` is an Ultralytics COCO detector. The adapter filters to
 `car`, `motorcycle`, `bus`, and `truck`. Production deployments should pin the
-resolved model file, version, optional SHA-256, class mapping, and evaluation
+resolved model file, version, SHA-256, class mapping, and evaluation
 report instead of relying on an implicit download.
+
+The Ultralytics runtime now resolves a local checkpoint and computes its SHA-256
+before loading it. When `model_hash` is configured, a mismatch fails closed;
+the verified digest, rather than an unverified configuration string, is written
+to event model metadata.
 
 PicoDet uses `provider: picodet` with a PaddleDetection-compatible ONNX export.
 Set the exact ordered `model_classes`, input size, model version, and SHA-256.
@@ -160,5 +165,29 @@ configured hash and refuses a requested accelerator that is unavailable. See
 ## OCR
 
 Defaults are `PP-OCRv5_mobile_det` plus `PP-OCRv5_mobile_rec`. PaddleOCR model
-files download into its configured cache on first use. Raw text remains separate
-from Vietnamese normalization and temporal voting.
+files may download into its configured cache on first use during development.
+Production runs must instead set explicit local `detection_model_directory` and
+`recognition_model_directory` values and pin each directory manifest hash. This
+prevents a provider cache refresh or runtime download from silently changing the
+OCR stack.
+
+Calculate the deterministic hash after reviewing each extracted model directory:
+
+```bash
+python scripts/hash_model_artifact.py models/PP-OCRv5_mobile_det_infer
+python scripts/hash_model_artifact.py models/PP-OCRv5_mobile_rec_infer
+```
+
+The hash covers every relative file path and file SHA-256. Symlinks and empty
+directories are rejected. Deploy the verified directories read-only, then set:
+
+```yaml
+vision:
+  ocr:
+    detection_model_directory: models/PP-OCRv5_mobile_det_infer
+    detection_model_hash: <64-hex-manifest-hash>
+    recognition_model_directory: models/PP-OCRv5_mobile_rec_infer
+    recognition_model_hash: <64-hex-manifest-hash>
+```
+
+Raw OCR text remains separate from Vietnamese normalization and temporal voting.

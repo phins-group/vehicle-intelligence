@@ -114,9 +114,7 @@ def test_watchlist_and_rule_api_crud_with_validation() -> None:
         listed_rules = client.get("/api/rules", params={"enabledOnly": True})
         unsafe_rule = dict(rule_payload)
         unsafe_rule["id"] = "rule-unsafe"
-        unsafe_rule["conditions"] = [
-            {"field": "metadata.any", "operator": "EQ", "value": "x"}
-        ]
+        unsafe_rule["conditions"] = [{"field": "metadata.any", "operator": "EQ", "value": "x"}]
         rejected_rule = client.post("/api/rules", json=unsafe_rule)
         audit_logs = client.get("/api/audit-logs", params={"limit": 20})
 

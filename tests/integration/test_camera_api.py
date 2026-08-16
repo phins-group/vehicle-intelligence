@@ -149,6 +149,62 @@ def test_camera_api_crud_never_returns_rtsp_credentials() -> None:
     assert stale.status_code == 409
 
 
+def test_bulk_camera_health_left_joins_cameras_without_health() -> None:
+    cameras = InMemoryCameraRepository()
+    health = InMemoryCameraHealthRepository()
+    service = CameraService(cameras, health, ConnectedTester())
+    timestamp = datetime(2026, 8, 9, tzinfo=UTC)
+    asyncio.run(
+        health.save(
+            CameraHealth(
+                camera_id="gate-01",
+                status=CameraStatus.ONLINE,
+                source_fps=25,
+                decode_fps=24,
+                queue_size=1,
+                dropped_frames=0,
+                reconnect_count=0,
+                connection_failures=0,
+                stream_epoch=0,
+                last_frame_at=timestamp,
+                updated_at=timestamp,
+            )
+        )
+    )
+    app = create_app(load_settings(), InMemoryVehicleEventRepository(), service)
+    second = camera_payload("second-secret")
+    second["id"] = "gate-02"
+    second["name"] = "Secondary Gate"
+
+    with TestClient(app) as client:
+        assert client.post("/api/cameras", json=camera_payload()).status_code == 201
+        assert client.post("/api/cameras", json=second).status_code == 201
+        response = client.get("/api/camera-health")
+
+    assert response.status_code == 200
+    rows = {item["camera"]["id"]: item for item in response.json()["items"]}
+    assert rows["gate-01"]["health"]["status"] == "ONLINE"
+    assert rows["gate-02"]["health"] is None
+
+
+def test_camera_named_health_remains_addressable() -> None:
+    service = CameraService(
+        InMemoryCameraRepository(),
+        InMemoryCameraHealthRepository(),
+        ConnectedTester(),
+    )
+    app = create_app(load_settings(), InMemoryVehicleEventRepository(), service)
+    payload = camera_payload()
+    payload["id"] = "health"
+
+    with TestClient(app) as client:
+        assert client.post("/api/cameras", json=payload).status_code == 201
+        response = client.get("/api/cameras/health")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == "health"
+
+
 def test_onvif_discovery_and_batch_camera_import_are_bounded_and_audited() -> None:
     cameras = InMemoryCameraRepository()
     health = InMemoryCameraHealthRepository()

@@ -31,9 +31,7 @@ def acquire_bootstrap_samples(
     if role is DetectorRole.VEHICLE:
         return (
             VEHICLE_SOURCE_INFO,
-            OpenImagesVehicleSampleSource(http).acquire(
-                samples_per_class=samples_per_class
-            ),
+            OpenImagesVehicleSampleSource(http).acquire(samples_per_class=samples_per_class),
         )
     return (
         PLATE_SOURCE_INFO,

@@ -23,15 +23,18 @@ import { VehicleEvent } from '../../core/models/api.models';
 import { ApiClientService } from '../../core/services/api-client.service';
 import { apiErrorMessage } from '../../core/utils/api-error';
 import { mergeVehicleEvents } from '../../core/utils/event-utils';
+import { listWindow } from '../../core/utils/list-window-utils';
 import { finalPlate } from '../../core/utils/plate-review-utils';
 import {
   chronologicalVehicleEvents,
   summarizePlateHistory
 } from '../../core/utils/vehicle-history-utils';
+import { AccessibleDialogDirective } from '../../shared/accessibility/accessible-dialog.directive';
 import { MediaEvidenceComponent } from '../../shared/media-evidence/media-evidence.component';
 
 const PAGE_SIZE = 50;
 const CLIENT_HISTORY_LIMIT = 500;
+const TIMELINE_WINDOW_SIZE = 100;
 
 @Component({
   selector: 'app-vehicle-search',
@@ -40,6 +43,7 @@ const CLIENT_HISTORY_LIMIT = 500;
     PercentPipe,
     FormsModule,
     RouterLink,
+    AccessibleDialogDirective,
     MediaEvidenceComponent,
     LucideArrowDownRight,
     LucideCamera,
@@ -70,6 +74,10 @@ export class VehicleSearchComponent {
   readonly selected = signal<VehicleEvent | null>(null);
   readonly summary = computed(() => summarizePlateHistory(this.events()));
   readonly timeline = computed(() => chronologicalVehicleEvents(this.events()));
+  readonly timelineWindowStart = signal(0);
+  readonly timelineWindow = computed(() =>
+    listWindow(this.timeline(), this.timelineWindowStart(), TIMELINE_WINDOW_SIZE)
+  );
   readonly clientBoundReached = computed(
     () => this.events().length >= CLIENT_HISTORY_LIMIT && this.nextCursor() !== null
   );
@@ -135,6 +143,16 @@ export class VehicleSearchComponent {
     this.selected.set(null);
   }
 
+  showOlderTimeline(): void {
+    const window = this.timelineWindow();
+    this.timelineWindowStart.set(Math.max(0, window.start - TIMELINE_WINDOW_SIZE));
+  }
+
+  showNewerTimeline(): void {
+    const window = this.timelineWindow();
+    this.timelineWindowStart.set(window.start + TIMELINE_WINDOW_SIZE);
+  }
+
   displayPlate(event: VehicleEvent): string {
     return finalPlate(event) ?? this.resultQuery() ?? 'Không đọc được';
   }
@@ -146,6 +164,7 @@ export class VehicleSearchComponent {
       this.loadingMore.set(false);
       this.searched.set(true);
       this.events.set([]);
+      this.timelineWindowStart.set(0);
       this.resultQuery.set(null);
       this.nextCursor.set(null);
       this.selected.set(null);
@@ -167,6 +186,7 @@ export class VehicleSearchComponent {
           ? page.items
           : mergeVehicleEvents(this.events(), page.items, CLIENT_HISTORY_LIMIT)
       );
+      if (!reset) this.timelineWindowStart.set(0);
       this.nextCursor.set(page.nextCursor);
     } catch (error) {
       if (generation === this.requestGeneration) {
@@ -184,6 +204,7 @@ export class VehicleSearchComponent {
     this.requestGeneration += 1;
     this.searched.set(false);
     this.events.set([]);
+    this.timelineWindowStart.set(0);
     this.resultQuery.set(null);
     this.nextCursor.set(null);
     this.selected.set(null);

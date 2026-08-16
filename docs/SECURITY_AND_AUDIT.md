@@ -54,8 +54,9 @@ Authorization: Bearer <raw-high-entropy-key>
 The server hashes the presented value and performs constant-time comparisons
 against active verifiers. Missing/invalid credentials return `401` with a generic
 message; authorization failures return `403`. Neither response contains the
-credential. `/api/system/health` remains public; `/api/auth/me` returns the
-authenticated principal.
+credential. `/api/system/health`, `/livez`, and `/readyz` remain public and expose
+only bounded capability/dependency states; `/api/auth/me` returns the authenticated
+principal.
 
 Bearer keys provide no confidentiality on the wire. TLS termination is mandatory
 outside isolated local development. Keys should have at least the entropy
@@ -154,6 +155,7 @@ Audited actions:
 - alert acknowledge and resolve.
 - plate correction or confirmation, including before/after prediction, final
   value, review revision, and deterministic dataset-sample ID when present.
+- detector-label review and immutable detector-dataset promotion.
 
 `X-Request-ID` is accepted when it contains only safe identifier characters and
 is at most 128 characters. Otherwise the API generates a new ID. Every response
@@ -202,6 +204,18 @@ Human review spans an event amendment, optional deterministic dataset-sample
 upsert, and audit append in the same transaction when production transactions are
 enabled. Development may deliberately keep transactions disabled; that mode is
 not the strict production audit profile.
+
+Detector-label review is filesystem-backed, so it uses a transactional outbox
+instead of pretending a filesystem/Mongo transaction exists. The immutable
+decision revision contains the sanitized `AuditLog` intent in the same exclusive,
+fsynced JSON write. The API then delivers it to the audit repository and returns
+`X-Audit-Delivery: delivered`; an audit outage returns a successful committed
+review with `pending`. A bounded background relay retries pending intents, and a
+checksum-bound delivery marker records completion without rewriting review
+history. Audit append retries are idempotent by audit ID, covering a crash after
+append but before marker creation. Promotion remains prepare-audit-dispatch: if
+its mandatory pre-dispatch audit fails, the queued job is marked failed and is
+never started.
 
 The current milestone does not provide:
 

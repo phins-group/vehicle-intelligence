@@ -108,10 +108,9 @@ class AttestedVideoReviewPromotionBuilder:
         review_manifest, review_digest = verify_video_plate_review_source(self._review)
         if self._target in {self._base, self._review}:
             raise DetectorDatasetError("attested promotion output must be a new source")
-        if (
-            base_manifest.get("ownerNamespace") != review_manifest.get("ownerNamespace")
-            or base_manifest.get("founderId") != review_manifest.get("founderId")
-        ):
+        if base_manifest.get("ownerNamespace") != review_manifest.get(
+            "ownerNamespace"
+        ) or base_manifest.get("founderId") != review_manifest.get("founderId"):
             raise DetectorDatasetError("base and video review ownership metadata do not match")
         queue = _read_jsonl_by_key(self._review / "REVIEW_QUEUE.jsonl", "reviewId")
         provenance = _read_jsonl_by_key(self._review / "PROVENANCE.jsonl", "reviewId")
@@ -582,15 +581,23 @@ def _validate_decisions(
             raise DetectorDatasetError("video review decision revision is invalid")
         if decision.status is DetectorReviewStatus.PENDING_REVIEW:
             raise DetectorDatasetError("video review decision is still pending")
-        if decision.status in {
-            DetectorReviewStatus.APPROVED,
-            DetectorReviewStatus.CORRECTED,
-        } and not decision.annotations:
+        if (
+            decision.status
+            in {
+                DetectorReviewStatus.APPROVED,
+                DetectorReviewStatus.CORRECTED,
+            }
+            and not decision.annotations
+        ):
             raise DetectorDatasetError("positive video review decision has no annotation")
-        if decision.status in {
-            DetectorReviewStatus.NEGATIVE,
-            DetectorReviewStatus.REJECTED,
-        } and decision.annotations:
+        if (
+            decision.status
+            in {
+                DetectorReviewStatus.NEGATIVE,
+                DetectorReviewStatus.REJECTED,
+            }
+            and decision.annotations
+        ):
             raise DetectorDatasetError("negative/rejected video decision contains annotations")
         image_sha = record.get("sourceImageSha256")
         if not isinstance(image_sha, str) or not _SHA256.fullmatch(image_sha):

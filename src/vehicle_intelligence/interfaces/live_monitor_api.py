@@ -81,9 +81,7 @@ class LiveFramePublic(_PublicModel):
 class LiveMonitorStatePublic(_PublicModel):
     camera_id: str = Field(alias="cameraId")
     status: Literal["DISABLED", "WAITING", "LIVE", "STALE", "OFFLINE"]
-    source_state: Literal["STARTING", "ONLINE", "OFFLINE", "STOPPED"] = Field(
-        alias="sourceState"
-    )
+    source_state: Literal["STARTING", "ONLINE", "OFFLINE", "STOPPED"] = Field(alias="sourceState")
     latest: LiveFramePublic | None
 
 
@@ -201,9 +199,7 @@ def _state_public(snapshot: LiveCameraSnapshot) -> LiveMonitorStatePublic:
                 if metadata.crossing_line is not None
                 else None
             ),
-            frameUrl=(
-                f"/api/cameras/{snapshot.camera_id}/live/frame?sequence={buffered.sequence}"
-            ),
+            frameUrl=(f"/api/cameras/{snapshot.camera_id}/live/frame?sequence={buffered.sequence}"),
         )
     return LiveMonitorStatePublic(
         cameraId=snapshot.camera_id,
@@ -211,4 +207,3 @@ def _state_public(snapshot: LiveCameraSnapshot) -> LiveMonitorStatePublic:
         sourceState=snapshot.source_state.value,
         latest=latest,
     )
-

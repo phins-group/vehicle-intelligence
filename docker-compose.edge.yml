@@ -9,6 +9,8 @@ services:
     profiles: ["edge"]
     init: true
     restart: unless-stopped
+    # Outbox shutdown gets a 60s delivery deadline plus a short bounded SDK tail.
+    stop_grace_period: 75s
     environment:
       VIP_EDGE_MANIFEST: /run/edge/manifest.json
       VIP_EDGE_MODEL_ROOT: /models
@@ -16,6 +18,7 @@ services:
       VIP_EVENT_BUS__BACKEND: redis
       VIP_REDIS__URL: ${EDGE_REDIS_URL:-redis://host.docker.internal:6379/0}
       VIP_STORAGE__BACKEND: minio
+      VIP_FINALIZATION_OUTBOX__ENABLED: "true"
       VIP_MINIO__ENDPOINT: ${EDGE_MINIO_ENDPOINT:-host.docker.internal:9000}
       VIP_MINIO__ACCESS_KEY: ${VIP_MINIO__ACCESS_KEY:-minioadmin}
       VIP_MINIO__SECRET_KEY: ${VIP_MINIO__SECRET_KEY:-minioadmin}

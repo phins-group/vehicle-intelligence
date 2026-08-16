@@ -92,7 +92,11 @@ def test_queue_prefers_latest_and_drops_stale_frames() -> None:
 
 def test_capacity_is_explicit_and_unregister_is_bounded() -> None:
     scheduler = FairLatestFrameScheduler(
-        GPUSchedulerConfig(maximum_cameras=1, maximum_batch_size=1)
+        GPUSchedulerConfig(
+            maximum_cameras=1,
+            maximum_batch_size=1,
+            provider_failure_minimum_cameras=1,
+        )
     )
     scheduler.submit(frame("a", 0))
     with pytest.raises(SchedulerCapacityError, match="capacity"):

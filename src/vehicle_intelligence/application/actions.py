@@ -162,9 +162,7 @@ class ActionEngine:
         await self._repository.mark_succeeded(claimed.id, self._now())
         return True
 
-    async def _record_failure(
-        self, execution_id: str, error: ActionHandlerError
-    ) -> None:
+    async def _record_failure(self, execution_id: str, error: ActionHandlerError) -> None:
         await self._repository.mark_failed(
             execution_id,
             _safe_code(error.code),
@@ -354,8 +352,10 @@ class HttpActionHandler:
             or parsed.password is not None
             or parsed.fragment
             or not parsed.path.startswith("/")
-            or parsed_port is not None and not 1 <= parsed_port <= 65_535
-            or target.require_https and parsed.scheme != "https"
+            or parsed_port is not None
+            and not 1 <= parsed_port <= 65_535
+            or target.require_https
+            and parsed.scheme != "https"
         ):
             raise ActionHandlerError("EXTERNAL_HOST_NOT_ALLOWED", retryable=False)
         method = str(context.action.parameters.get("method", "POST")).upper()

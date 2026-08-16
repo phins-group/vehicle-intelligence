@@ -76,40 +76,45 @@ class ReIDScoringService:
         requested = self._config.maximum_scored_candidates if limit is None else limit
         if not 1 <= requested <= self._config.maximum_scored_candidates:
             raise ValueError(
-                "scored candidate limit must be in "
-                f"[1, {self._config.maximum_scored_candidates}]"
+                f"scored candidate limit must be in [1, {self._config.maximum_scored_candidates}]"
             )
         source = await self._identities.get_fingerprint(source_fingerprint_id)
         if source is None:
-            raise IdentityNotFoundError(
-                f"vehicle fingerprint not found: {source_fingerprint_id}"
-            )
+            raise IdentityNotFoundError(f"vehicle fingerprint not found: {source_fingerprint_id}")
         feasible = await self._candidates.generate(source_fingerprint_id, requested)
-        results: list[ReIDScore] = []
-        for candidate in feasible:
-            fingerprint = await self._identities.get_fingerprint(candidate.fingerprint_id)
-            if fingerprint is None:
-                continue
-            results.append(
-                await self._score_pair(
-                    source,
-                    fingerprint,
-                    candidate.time_score,
-                    candidate.topology_edge_id,
-                )
+        fingerprints = await self._identities.get_fingerprints(
+            tuple(candidate.fingerprint_id for candidate in feasible)
+        )
+        fingerprints_by_id = {fingerprint.id: fingerprint for fingerprint in fingerprints}
+        embedding_scores = await self._embedding_similarities(source, fingerprints)
+        results = [
+            self._score_pair(
+                source,
+                fingerprint,
+                candidate.time_score,
+                candidate.topology_edge_id,
+                (
+                    embedding_scores.get(fingerprint.embedding.id)
+                    if fingerprint.embedding is not None
+                    else None
+                ),
             )
+            for candidate in feasible
+            if (fingerprint := fingerprints_by_id.get(candidate.fingerprint_id)) is not None
+        ]
         results.sort(
             key=lambda item: (item.score, item.candidate_fingerprint_id),
             reverse=True,
         )
         return tuple(results[:requested])
 
-    async def _score_pair(
+    def _score_pair(
         self,
         source: VehicleFingerprint,
         candidate: VehicleFingerprint,
         time_score: float,
         topology_edge_id: str,
+        embedding_similarity: float | None,
     ) -> ReIDScore:
         signals = ReIDSignals(
             plate=(
@@ -117,13 +122,13 @@ class ReIDScoringService:
                 if source.plate is not None and candidate.plate is not None
                 else None
             ),
-            embedding=await self._embedding_similarity(source, candidate),
-            vehicle_type=(1.0 if source.vehicle_type == candidate.vehicle_type else 0.0),
+            embedding=embedding_similarity,
+            vehicle_type=_vehicle_type_similarity(source.vehicle_type, candidate.vehicle_type),
             color=_attribute_similarity(source.color, candidate.color),
             travel_time=time_score,
         )
         score = _weighted_score(signals, self._config)
-        if score >= self._config.match_threshold:
+        if score >= self._config.match_threshold and _has_match_evidence(signals, self._config):
             verdict = ReIDVerdict.MATCH
         elif score >= self._config.review_threshold:
             verdict = ReIDVerdict.REVIEW
@@ -141,30 +146,36 @@ class ReIDScoringService:
             topology_edge_id=topology_edge_id,
         )
 
-    async def _embedding_similarity(
+    async def _embedding_similarities(
         self,
         source: VehicleFingerprint,
-        candidate: VehicleFingerprint,
-    ) -> float | None:
-        if source.embedding is None or candidate.embedding is None:
-            return None
-        if source.embedding.model != candidate.embedding.model:
-            return None
+        candidates: tuple[VehicleFingerprint, ...],
+    ) -> dict[str, float]:
+        if source.embedding is None:
+            return {}
+        candidate_ids = tuple(
+            dict.fromkeys(
+                candidate.embedding.id
+                for candidate in candidates
+                if candidate.embedding is not None
+                and candidate.embedding.model == source.embedding.model
+            )
+        )
+        if not candidate_ids:
+            return {}
         source_vector = await self._vectors.get(source.embedding.id)
         if source_vector is None:
-            return None
+            return {}
         neighbors = await self._vectors.search(
             VectorSearchQuery(
                 vector=source_vector.normalized_values,
                 model=source.embedding.model,
-                candidate_ids=(candidate.embedding.id,),
-                limit=1,
+                candidate_ids=candidate_ids,
+                limit=len(candidate_ids),
                 minimum_score=-1,
             )
         )
-        if not neighbors:
-            return None
-        return min(1.0, max(0.0, neighbors[0].score))
+        return {neighbor.vector_id: min(1.0, max(0.0, neighbor.score)) for neighbor in neighbors}
 
 
 class IdentityReviewService:
@@ -184,9 +195,7 @@ class IdentityReviewService:
         principal: Principal,
     ) -> IdentityReviewResult:
         score: float | None = None
-        if (command.source_fingerprint_id is None) != (
-            command.target_fingerprint_id is None
-        ):
+        if (command.source_fingerprint_id is None) != (command.target_fingerprint_id is None):
             raise ValueError("both merge fingerprints must be supplied together")
         if await self._identities.get_review(command.review_id) is not None:
             retry = IdentityMergeReview(
@@ -310,6 +319,44 @@ def _weighted_score(signals: ReIDSignals, config: ReIDConfig) -> float:
         1.0,
         max(0.0, sum(value * weight for value, weight in available) / total_weight),
     )
+
+
+def _has_match_evidence(signals: ReIDSignals, config: ReIDConfig) -> bool:
+    weighted = (
+        (signals.plate, config.plate_weight),
+        (signals.embedding, config.embedding_weight),
+        (signals.vehicle_type, config.vehicle_type_weight),
+        (signals.color, config.color_weight),
+        (signals.travel_time, config.travel_time_weight),
+    )
+    total_weight = sum(weight for _, weight in weighted)
+    if total_weight <= 0:
+        return False
+    available_weight = sum(weight for value, weight in weighted if value is not None and weight > 0)
+    identifying_weight = sum(
+        weight
+        for value, weight in (
+            (signals.plate, config.plate_weight),
+            (signals.embedding, config.embedding_weight),
+        )
+        if value is not None and weight > 0
+    )
+    return (
+        available_weight / total_weight >= config.minimum_match_evidence_coverage
+        and identifying_weight / total_weight >= config.minimum_match_identifying_coverage
+    )
+
+
+def _vehicle_type_similarity(left: str, right: str) -> float | None:
+    left_normalized = left.strip().casefold()
+    right_normalized = right.strip().casefold()
+    if (
+        not left_normalized
+        or not right_normalized
+        or "unknown" in {left_normalized, right_normalized}
+    ):
+        return None
+    return 1.0 if left_normalized == right_normalized else 0.0
 
 
 def _attribute_similarity(left: str | None, right: str | None) -> float | None:

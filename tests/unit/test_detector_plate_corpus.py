@@ -101,9 +101,7 @@ def test_corpus_polygon_reaches_coco_but_unknown_license_blocks_hub_upload(
     assert manifest["releaseEligible"] is False
     assert manifest["distributionEligible"] is False
     assert all(
-        "segmentation" in annotation
-        for item in documents
-        for annotation in item["annotations"]
+        "segmentation" in annotation for item in documents for annotation in item["annotations"]
     )
     with pytest.raises(ModelRegistryError, match="not distribution-eligible"):
         HuggingFacePrivateRegistry(api=_NoUploadApi()).upload_dataset(

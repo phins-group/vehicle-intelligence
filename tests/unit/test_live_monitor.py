@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
@@ -112,6 +113,12 @@ class FakeLiveEncoder:
         return EncodedLivePreview(b"preview", 320, 180)
 
 
+class FailingLiveEncoder:
+    def encode(self, image, maximum_width, jpeg_quality):
+        del image, maximum_width, jpeg_quality
+        raise RuntimeError("unexpected encoder failure")
+
+
 class FakeLivePublisher:
     def __init__(self) -> None:
         self.initialized = False
@@ -154,6 +161,33 @@ async def test_live_preview_reporter_throttles_without_blocking_pipeline() -> No
     assert reporter.stats.throttled_frames == 1
 
 
+async def test_live_preview_close_does_not_hang_or_leak_after_worker_failure() -> None:
+    monotonic = [10.0]
+    publisher = FakeLivePublisher()
+    reporter = LivePreviewReporter(
+        LiveMonitorConfig(preview_fps=2, maximum_payload_bytes=32_768),
+        FailingLiveEncoder(),
+        publisher,
+        monotonic_clock=lambda: monotonic[0],
+    )
+    image = np.zeros((180, 320, 3), dtype=np.uint8)
+    await reporter.initialize()
+    assert await reporter.report(image, live_packet().metadata)
+    task = reporter._task
+    assert task is not None
+    for _ in range(10):
+        if task.done():
+            break
+        await asyncio.sleep(0)
+    assert task.done()
+
+    monotonic[0] += 1
+    assert await reporter.report(image, live_packet(frame_id=43).metadata)
+    await asyncio.wait_for(reporter.close(), timeout=0.2)
+
+    assert publisher.closed is True
+
+
 def test_opencv_live_preview_encoder_resizes_and_emits_jpeg() -> None:
     image = np.zeros((600, 1200, 3), dtype=np.uint8)
 
@@ -161,4 +195,3 @@ def test_opencv_live_preview_encoder_resizes_and_emits_jpeg() -> None:
 
     assert (preview.width, preview.height) == (600, 300)
     assert preview.jpeg.startswith(b"\xff\xd8")
-

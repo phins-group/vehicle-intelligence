@@ -16,8 +16,13 @@ from datetime import UTC, datetime
 
 from redis.asyncio import Redis
 
-from vehicle_intelligence.application.event_worker import VehicleEventWorker
-from vehicle_intelligence.config import MongoConfig, RedisConfig
+from vehicle_intelligence.config import (
+    IdentityConfig,
+    MongoConfig,
+    RealtimeConfig,
+    RedisConfig,
+    RuleEngineConfig,
+)
 from vehicle_intelligence.domain import (
     AITrace,
     CameraSnapshot,
@@ -27,16 +32,21 @@ from vehicle_intelligence.domain import (
     MediaReferences,
     ModelMetadata,
     PlateEvidence,
+    Rule,
+    RuleAction,
+    RuleActionType,
+    RuleCondition,
+    RuleConditionOperator,
     VehicleEvent,
     VehicleEvidence,
 )
 from vehicle_intelligence.infrastructure.messaging.codec import JsonEventEnvelopeCodec
 from vehicle_intelligence.infrastructure.messaging.redis_streams import (
     EVENT_PAYLOAD_FIELD,
-    RedisStreamEventConsumer,
     RedisStreamEventPublisher,
 )
-from vehicle_intelligence.infrastructure.persistence.mongo import MongoVehicleEventRepository
+from vehicle_intelligence.infrastructure.persistence.mongo_runtime import MongoRuntime
+from vehicle_intelligence.interfaces.event_worker_composition import build_event_worker
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +55,9 @@ class BenchmarkResult:
     requested_events: int
     persisted_events: int
     duplicate_deliveries: int
+    identity_fingerprints: int
+    matched_rules: int
+    realtime_published: int
     dead_lettered: int
     pending_messages: int
     elapsed_seconds: float
@@ -130,17 +143,32 @@ async def run(args: argparse.Namespace) -> BenchmarkResult:
         block_ms=10,
         claim_idle_ms=1000,
     )
+    benchmark_database = f"{args.mongodb_database[:45]}_{run_id}"
     mongo_config = MongoConfig(
         enabled=True,
         uri=args.mongodb_uri,
-        database=args.mongodb_database,
+        database=benchmark_database,
         server_selection_timeout_ms=5000,
     )
     codec = JsonEventEnvelopeCodec()
     publisher = RedisStreamEventPublisher(redis_config, codec)
-    consumer = RedisStreamEventConsumer(redis_config, f"benchmark-{run_id}")
-    repository = MongoVehicleEventRepository(mongo_config)
-    worker = VehicleEventWorker(consumer, repository, codec, retry_delay_seconds=0.05)
+    mongo_runtime = MongoRuntime(mongo_config)
+    components = build_event_worker(
+        mongo_runtime,
+        redis_config,
+        IdentityConfig(enabled=True),
+        RuleEngineConfig(enabled=True, external_actions_enabled=False),
+        RealtimeConfig(
+            enabled=True,
+            redis_channel=f"vehicle.events.benchmark.realtime.{run_id}",
+        ),
+        f"benchmark-{run_id}",
+        codec,
+    )
+    worker = components.worker
+    repository = components.events
+    if components.rules is None or components.identities is None:
+        raise RuntimeError("benchmark production processors were not composed")
     admin = Redis.from_url(args.redis_url, decode_responses=True)
     events = [_event(run_id, index) for index in range(count)]
     duplicates = events[: math.floor(count * args.duplicate_ratio)]
@@ -149,8 +177,22 @@ async def run(args: argparse.Namespace) -> BenchmarkResult:
     rss_before = _rss_mb()
     started = time.perf_counter()
     try:
+        await mongo_runtime.initialize()
         await publisher.initialize()
         await worker.initialize()
+        timestamp = datetime.now(UTC)
+        await components.rules.create(
+            Rule(
+                id=f"rule-benchmark-{run_id}",
+                name="Event path benchmark",
+                enabled=True,
+                priority=1,
+                conditions=(RuleCondition("camera.id", RuleConditionOperator.EXISTS, True),),
+                actions=(RuleAction("log", RuleActionType.LOG),),
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+        )
         await _publish(
             publisher,
             events,
@@ -175,8 +217,9 @@ async def run(args: argparse.Namespace) -> BenchmarkResult:
 
         await admin.xadd(stream, {EVENT_PAYLOAD_FIELD: "not-a-valid-event"})
         await worker.run_once()
-        persisted = await repository._collection.count_documents(
-            {"metadata.benchmarkRun": run_id}
+        persisted = await repository._collection.count_documents({"metadata.benchmarkRun": run_id})
+        identity_fingerprints = await components.identities._fingerprints.count_documents(
+            {"sourceEventId": {"$regex": f"^evt_benchmark_{run_id}_"}}
         )
         pending = await admin.xpending(stream, redis_config.consumer_group)
         dead_lettered = await admin.xlen(dead_letter)
@@ -186,11 +229,27 @@ async def run(args: argparse.Namespace) -> BenchmarkResult:
             failures.append("pending_messages")
         if dead_lettered != 1:
             failures.append("dead_letter")
+        expected_deliveries = count + duplicate_target
+        if identity_fingerprints != count:
+            failures.append("identity_path")
+        if worker.stats.matched_rules != expected_deliveries:
+            failures.append("policy_path")
+        if (
+            worker.stats.actions_succeeded != count
+            or worker.stats.actions_skipped != duplicate_target
+        ):
+            failures.append("action_idempotency")
+        if worker.stats.realtime_published != expected_deliveries:
+            failures.append("realtime_path")
 
         elapsed = time.perf_counter() - started
         throughput = count / elapsed if elapsed else 0
         p95 = _p95(batch_latencies)
-        error_count = worker.stats.persistence_failures + worker.stats.policy_failures
+        error_count = (
+            worker.stats.persistence_failures
+            + worker.stats.policy_failures
+            + worker.stats.realtime_failures
+        )
         error_rate = error_count / max(1, count)
         rss_growth = max(0.0, _rss_mb() - rss_before)
         if throughput < args.minimum_throughput:
@@ -206,6 +265,9 @@ async def run(args: argparse.Namespace) -> BenchmarkResult:
             requested_events=count,
             persisted_events=persisted,
             duplicate_deliveries=worker.stats.duplicate_events,
+            identity_fingerprints=identity_fingerprints,
+            matched_rules=worker.stats.matched_rules,
+            realtime_published=worker.stats.realtime_published,
             dead_lettered=dead_lettered,
             pending_messages=int(pending["pending"]),
             elapsed_seconds=round(elapsed, 4),
@@ -217,11 +279,18 @@ async def run(args: argparse.Namespace) -> BenchmarkResult:
             failures=tuple(dict.fromkeys(failures)),
         )
     finally:
-        await repository._collection.delete_many({"metadata.benchmarkRun": run_id})
-        await worker.close()
-        await publisher.close()
-        await admin.delete(stream, dead_letter)
-        await admin.aclose()
+        try:
+            await worker.close()
+        finally:
+            try:
+                await publisher.close()
+            finally:
+                try:
+                    await admin.delete(stream, dead_letter)
+                    await admin.aclose()
+                finally:
+                    await mongo_runtime.client.drop_database(benchmark_database)
+                    await mongo_runtime.close()
 
 
 def _parser() -> argparse.ArgumentParser:

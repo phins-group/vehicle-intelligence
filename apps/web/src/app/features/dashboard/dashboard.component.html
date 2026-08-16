@@ -12,6 +12,18 @@
 @if (error()) {
   <div class="notice error" role="alert">{{ error() }}</div>
 }
+@if (alertLoadState.error(); as alertError) {
+  <div class="notice error" role="alert">
+    {{ alertError }}
+    @if (alertLoadState.hasLoaded()) { Dữ liệu cảnh báo đã tải trước đó vẫn được giữ nguyên. }
+  </div>
+}
+@if (cameraLoadState.error(); as cameraError) {
+  <div class="notice error" role="alert">
+    {{ cameraError }}
+    @if (cameraLoadState.hasLoaded()) { Dữ liệu camera đã tải trước đó vẫn được giữ nguyên. }
+  </div>
+}
 
 <section class="metric-grid" aria-label="Chỉ số hôm nay">
   <article class="metric-card accent-blue">

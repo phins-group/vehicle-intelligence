@@ -89,9 +89,7 @@ def apply_overrides(settings: Settings, args: argparse.Namespace) -> Settings:
     event_backend = getattr(args, "event_backend", None)
     event_bus_updates = {"backend": event_backend} if event_backend is not None else {}
     vision_updates: dict[str, object] = {
-        "vehicle_detection": settings.vision.vehicle_detection.model_copy(
-            update=vehicle_updates
-        ),
+        "vehicle_detection": settings.vision.vehicle_detection.model_copy(update=vehicle_updates),
         "plate_detection": settings.vision.plate_detection.model_copy(update=plate_updates),
         "ocr": settings.vision.ocr.model_copy(update=ocr_updates),
     }

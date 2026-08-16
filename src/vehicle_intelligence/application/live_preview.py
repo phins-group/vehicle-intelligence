@@ -47,9 +47,9 @@ class LivePreviewReporter:
         self._publisher = publisher
         self._monotonic = monotonic_clock
         self._last_attempt: float | None = None
-        self._queue: asyncio.Queue[
-            tuple[NDArray[np.uint8], LiveFrameMetadata] | object
-        ] = asyncio.Queue(maxsize=1)
+        self._queue: asyncio.Queue[tuple[NDArray[np.uint8], LiveFrameMetadata] | object] = (
+            asyncio.Queue(maxsize=1)
+        )
         self._task: asyncio.Task[None] | None = None
         self.stats = LivePreviewReporterStats()
 
@@ -84,17 +84,28 @@ class LivePreviewReporter:
         return True
 
     async def close(self) -> None:
-        if self._task is not None:
-            await self._queue.put(_CLOSED)
+        task, self._task = self._task, None
+        try:
+            if task is None:
+                return
             timeout = self._config.publish_timeout_seconds + 1
             try:
-                await asyncio.wait_for(asyncio.shield(self._task), timeout=timeout)
+                async with asyncio.timeout(timeout):
+                    if not task.done():
+                        await self._queue.put(_CLOSED)
+                    await asyncio.shield(task)
             except TimeoutError:
-                self._task.cancel()
+                task.cancel()
                 with suppress(asyncio.CancelledError):
-                    await self._task
-            self._task = None
-        await self._publisher.close()
+                    await task
+            except asyncio.CancelledError:
+                if not task.cancelled():
+                    raise
+                logger.warning("live_preview_worker_cancelled")
+            except Exception:
+                logger.exception("live_preview_worker_failed")
+        finally:
+            await self._publisher.close()
 
     async def _run(self) -> None:
         while True:

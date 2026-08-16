@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from contextlib import suppress
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Protocol
 
-from vehicle_intelligence.domain import Principal
+from vehicle_intelligence.domain import AuditLog, Principal
 from vehicle_intelligence.domain.dataset_review import (
     DetectorPromotionJob,
+    DetectorPromotionStatus,
     DetectorReviewAction,
     DetectorReviewAnnotation,
     DetectorReviewDecision,
@@ -21,6 +24,8 @@ from vehicle_intelligence.domain.dataset_review import (
     DetectorReviewStatus,
 )
 from vehicle_intelligence.exceptions import DatasetReviewValidationError
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +44,20 @@ class DetectorReviewCommand:
     reviewer: Principal
     annotations: tuple[DetectorReviewAnnotation, ...] = ()
     note: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedDetectorReview:
+    source_id: str
+    review_id: str
+    expected_revision: int
+    before: DetectorReviewItem
+    after: DetectorReviewItem
+    decision: DetectorReviewDecision
+
+
+class AuditEntrySink(Protocol):
+    async def persist(self, entry: AuditLog) -> AuditLog: ...
 
 
 class DetectorReviewRepository(Protocol):
@@ -60,7 +79,12 @@ class DetectorReviewRepository(Protocol):
         review_id: str,
         decision: DetectorReviewDecision,
         expected_revision: int,
+        audit_entry: AuditLog | None = None,
     ) -> DetectorReviewItem: ...
+
+    async def pending_audits(self, limit: int = 100) -> tuple[AuditLog, ...]: ...
+
+    async def mark_audit_delivered(self, entry_id: str) -> None: ...
 
     async def decision_history(
         self,
@@ -79,6 +103,8 @@ class DetectorReviewRepository(Protocol):
 
     async def get_promotion_job(self, job_id: str) -> DetectorPromotionJob: ...
 
+    async def fail_queued_promotion_job(self, job_id: str, error_code: str) -> None: ...
+
 
 class DetectorDatasetReviewService:
     def __init__(
@@ -90,11 +116,17 @@ class DetectorDatasetReviewService:
         self._repository = repository
         self._clock = clock
         self._tasks: set[asyncio.Task[None]] = set()
+        self._audit_relay_task: asyncio.Task[None] | None = None
 
     async def initialize(self) -> None:
         await self._repository.initialize()
 
     async def close(self) -> None:
+        if self._audit_relay_task is not None:
+            self._audit_relay_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._audit_relay_task
+            self._audit_relay_task = None
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
         await self._repository.close()
@@ -117,6 +149,15 @@ class DetectorDatasetReviewService:
         review_id: str,
         command: DetectorReviewCommand,
     ) -> DetectorReviewItem:
+        prepared = await self.prepare_review(source_id, review_id, command)
+        return await self.commit_review(prepared)
+
+    async def prepare_review(
+        self,
+        source_id: str,
+        review_id: str,
+        command: DetectorReviewCommand,
+    ) -> PreparedDetectorReview:
         item = await self._repository.get_item(source_id, review_id)
         annotations = self._annotations_for(command, item)
         reviewed_at = self._clock()
@@ -132,12 +173,85 @@ class DetectorDatasetReviewService:
             reviewed_at=reviewed_at.astimezone(UTC),
             note=_normalized_note(command.note),
         )
-        return await self._repository.save_decision(
-            source_id,
-            review_id,
-            decision,
-            command.expected_revision,
+        after = replace(
+            item,
+            status=decision.status,
+            revision=decision.revision,
+            decision=decision,
         )
+        return PreparedDetectorReview(
+            source_id=source_id,
+            review_id=review_id,
+            expected_revision=command.expected_revision,
+            before=item,
+            after=after,
+            decision=decision,
+        )
+
+    async def commit_review(
+        self,
+        prepared: PreparedDetectorReview,
+        audit_entry: AuditLog | None = None,
+    ) -> DetectorReviewItem:
+        return await self._repository.save_decision(
+            prepared.source_id,
+            prepared.review_id,
+            prepared.decision,
+            prepared.expected_revision,
+            audit_entry,
+        )
+
+    async def deliver_audit(self, entry: AuditLog, audits: AuditEntrySink) -> bool:
+        try:
+            await audits.persist(entry)
+            await self._repository.mark_audit_delivered(entry.id)
+        except Exception:
+            logger.exception(
+                "detector review audit delivery deferred",
+                extra={"audit_id": entry.id},
+            )
+            return False
+        return True
+
+    async def flush_pending_audits(
+        self,
+        audits: AuditEntrySink,
+        *,
+        limit: int = 100,
+    ) -> int:
+        delivered = 0
+        for entry in await self._repository.pending_audits(limit):
+            if not await self.deliver_audit(entry, audits):
+                break
+            delivered += 1
+        return delivered
+
+    def start_audit_relay(
+        self,
+        audits: AuditEntrySink,
+        *,
+        retry_seconds: float = 5.0,
+    ) -> None:
+        if retry_seconds <= 0:
+            raise ValueError("audit outbox retry interval must be positive")
+        if self._audit_relay_task is not None and not self._audit_relay_task.done():
+            return
+        self._audit_relay_task = asyncio.create_task(
+            self._run_audit_relay(audits, retry_seconds),
+            name="detector-review-audit-relay",
+        )
+
+    async def _run_audit_relay(
+        self,
+        audits: AuditEntrySink,
+        retry_seconds: float,
+    ) -> None:
+        while True:
+            try:
+                await self.flush_pending_audits(audits)
+            except Exception:
+                logger.exception("detector review audit relay failed; retry scheduled")
+            await asyncio.sleep(retry_seconds)
 
     async def history(
         self,
@@ -152,18 +266,41 @@ class DetectorDatasetReviewService:
         target_source_id: str,
         principal: Principal,
     ) -> DetectorPromotionJob:
-        job = await self._repository.create_promotion_job(
+        job = await self.prepare_promotion(source_id, target_source_id, principal)
+        self.dispatch_promotion(job)
+        return job
+
+    async def prepare_promotion(
+        self,
+        source_id: str,
+        target_source_id: str,
+        principal: Principal,
+    ) -> DetectorPromotionJob:
+        """Persist a validated promotion without starting the background task."""
+
+        return await self._repository.create_promotion_job(
             source_id,
             target_source_id,
             principal.id,
         )
+
+    def dispatch_promotion(self, job: DetectorPromotionJob) -> None:
+        """Start a queued promotion after its audit record is durable."""
+
+        name = f"detector-promotion-{job.id}"
+        if job.status is not DetectorPromotionStatus.QUEUED or any(
+            task.get_name() == name for task in self._tasks
+        ):
+            return
         task = asyncio.create_task(
             self._repository.run_promotion_job(job.id),
-            name=f"detector-promotion-{job.id}",
+            name=name,
         )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
-        return job
+
+    async def fail_prepared_promotion(self, job_id: str, error_code: str) -> None:
+        await self._repository.fail_queued_promotion_job(job_id, error_code)
 
     async def get_promotion(self, job_id: str) -> DetectorPromotionJob:
         return await self._repository.get_promotion_job(job_id)
@@ -197,9 +334,7 @@ class DetectorDatasetReviewService:
                     "negative and rejected samples cannot contain annotations"
                 )
             annotations = ()
-            if command.action is DetectorReviewAction.REJECT and not _normalized_note(
-                command.note
-            ):
+            if command.action is DetectorReviewAction.REJECT and not _normalized_note(command.note):
                 raise DatasetReviewValidationError("REJECT requires a review note")
         if len(annotations) > 16:
             raise DatasetReviewValidationError("one review image cannot contain over 16 plates")

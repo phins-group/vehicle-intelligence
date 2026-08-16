@@ -20,13 +20,19 @@ class InMemoryVehicleEventRepository:
         return None
 
     async def save(self, event: VehicleEvent) -> bool:
-        key = (event.camera.id, event.track_id, event.event_type.value)
+        key = self._semantic_key(event)
         async with self._lock:
             if event.id in self._events or key in self._semantic_keys:
                 return False
             self._events[event.id] = event
             self._semantic_keys.add(key)
             return True
+
+    async def conflicts_with(self, event: VehicleEvent) -> bool:
+        """Return whether the ID or idempotency key is already indexed."""
+        key = self._semantic_key(event)
+        async with self._lock:
+            return event.id in self._events or key in self._semantic_keys
 
     async def get(self, event_id: str) -> VehicleEvent | None:
         return self._events.get(event_id)
@@ -128,6 +134,10 @@ class InMemoryVehicleEventRepository:
     async def snapshot(self) -> tuple[VehicleEvent, ...]:
         async with self._lock:
             return tuple(self._events.values())
+
+    @staticmethod
+    def _semantic_key(event: VehicleEvent) -> tuple[str, str, str]:
+        return (event.camera.id, event.track_id, event.event_type.value)
 
     @staticmethod
     def _matches(event: VehicleEvent, query: EventQuery) -> bool:

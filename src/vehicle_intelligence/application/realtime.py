@@ -284,9 +284,7 @@ class RealtimeEventService:
                     self._source_state = RealtimeSourceState.ONLINE
                     while not self._stop_event.is_set():
                         try:
-                            event = await self._source.receive(
-                                self._config.broker_poll_seconds
-                            )
+                            event = await self._source.receive(self._config.broker_poll_seconds)
                         except EventContractError:
                             self._invalid_messages += 1
                             delay = self._config.reconnect_initial_seconds

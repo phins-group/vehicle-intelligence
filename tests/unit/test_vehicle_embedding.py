@@ -2,13 +2,16 @@ import hashlib
 
 import numpy as np
 import pytest
-import torch
 
 from vehicle_intelligence.config import VehicleEmbeddingConfig
 from vehicle_intelligence.exceptions import ModelLoadError
-from vehicle_intelligence.infrastructure.vision.vehicle_embedding import (
-    TorchScriptVehicleEmbeddingProvider,
+
+torch = pytest.importorskip("torch", reason="vehicle embedding tests require the reid extra")
+vehicle_embedding = pytest.importorskip(
+    "vehicle_intelligence.infrastructure.vision.vehicle_embedding",
+    reason="vehicle embedding tests require the reid extra",
 )
+TorchScriptVehicleEmbeddingProvider = vehicle_embedding.TorchScriptVehicleEmbeddingProvider
 
 
 class TinyEmbedding(torch.nn.Module):

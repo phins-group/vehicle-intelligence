@@ -7,8 +7,10 @@ from vehicle_intelligence.application.security import (
     RBACAuthorizer,
     StaticApiKeyAuthenticator,
 )
-from vehicle_intelligence.config import AuthConfig, AuthPrincipalConfig
+from vehicle_intelligence.config import AppConfig, AuthConfig, AuthPrincipalConfig, load_settings
 from vehicle_intelligence.domain import UserRole
+from vehicle_intelligence.exceptions import ConfigurationError
+from vehicle_intelligence.interfaces.api import _api_security
 
 
 def digest(token: str) -> str:
@@ -70,6 +72,16 @@ def test_invalid_auth_verifier_error_does_not_echo_supplied_value() -> None:
     assert accidental_raw_key not in str(captured.value)
 
 
+def test_production_api_cannot_fall_back_to_the_development_admin() -> None:
+    base = load_settings()
+    settings = base.model_copy(
+        update={"app": AppConfig(environment="production", config_version="prod-v1")}
+    )
+
+    with pytest.raises(ConfigurationError, match="cannot be disabled"):
+        _api_security(settings, None)
+
+
 async def test_rbac_permission_matrix_is_least_privilege() -> None:
     authorizer = RBACAuthorizer()
     tokens = {
@@ -78,8 +90,7 @@ async def test_rbac_permission_matrix_is_least_privilege() -> None:
         UserRole.VIEWER: "viewer-" + "v" * 40,
     }
     configs = [
-        principal_config(role.value.lower(), role.value, token)
-        for role, token in tokens.items()
+        principal_config(role.value.lower(), role.value, token) for role, token in tokens.items()
     ]
     auth = StaticApiKeyAuthenticator(AuthConfig(enabled=True, principals=configs))
 

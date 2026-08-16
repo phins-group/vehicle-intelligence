@@ -57,7 +57,16 @@
   </form>
 </section>
 
-@if (error()) { <div class="notice error" role="alert">{{ error() }}</div> }
+@if (loadState.staleError(); as loadError) {
+  <div class="notice error" role="alert">
+    {{ loadError }} Dữ liệu đã tải thành công trước đó vẫn được giữ nguyên.
+  </div>
+}
+@if (bufferLimitReached()) {
+  <div class="notice neutral" role="status">
+    Đang giữ 500 sự kiện mới nhất để giới hạn bộ nhớ. Thu hẹp bộ lọc để xem tập dữ liệu khác.
+  </div>
+}
 
 <section class="panel table-panel">
   <div class="panel-heading">
@@ -70,17 +79,23 @@
     </button>
   </div>
 
-  @if (loading() && !events().length) {
-    <div class="empty-state">Đang tải sự kiện…</div>
+  @if (loading() && !loadState.hasLoaded()) {
+    <div class="empty-state" role="status" aria-live="polite">Đang tải sự kiện…</div>
+  } @else if (loadState.initialError(); as loadError) {
+    <div class="empty-state" role="alert">
+      <strong>{{ loadError }}</strong>
+      <span>Kiểm tra kết nối API rồi thử lại.</span>
+      <button class="button secondary" type="button" (click)="load(true)">Thử lại</button>
+    </div>
   } @else if (!events().length) {
     <div class="empty-state"><svg lucideActivity aria-hidden="true"></svg><strong>Không có kết quả</strong><span>Thử thay đổi bộ lọc hoặc chờ event mới.</span></div>
   } @else {
     <div class="table-scroll">
       <table class="interactive-table">
-        <thead><tr><th>Thời gian</th><th>Biển số</th><th>Vehicle</th><th>Camera</th><th>Hướng</th><th>Confidence</th><th>Trạng thái</th><th></th></tr></thead>
+        <thead><tr><th>Thời gian</th><th>Biển số</th><th>Vehicle</th><th>Camera</th><th>Hướng</th><th>Confidence</th><th>Trạng thái</th><th><span class="visually-hidden">Thao tác</span></th></tr></thead>
         <tbody>
-          @for (event of events(); track event._id) {
-            <tr (click)="showDetails(event)" tabindex="0" (keydown.enter)="showDetails(event)">
+          @for (event of eventWindow().items; track event._id) {
+            <tr>
               <td><strong>{{ event.occurredAt | date: 'dd/MM HH:mm:ss' }}</strong><small class="mono">{{ event.trackId }}</small></td>
               <td><strong class="plate-text" [class.unknown]="!event.plate">{{ displayPlate(event) }}</strong><small>{{ event.plate?.raw || 'Không có OCR' }}</small></td>
               <td>{{ event.vehicle.type }}<small>{{ event.vehicle.color || 'Chưa rõ màu' }}</small></td>
@@ -88,24 +103,44 @@
               <td><span class="direction" [class.enter]="event.direction === 'ENTER'" [class.exit]="event.direction === 'EXIT'">{{ event.direction }}</span></td>
               <td>{{ (event.plate?.confidence ?? event.vehicle.confidence) | percent: '1.0-0' }}</td>
               <td><span class="status-pill" [attr.data-status]="event.status">{{ event.status }}</span></td>
-              <td><svg lucideChevronRight aria-hidden="true"></svg></td>
+              <td>
+                <button
+                  class="icon-button table-row-action"
+                  type="button"
+                  [attr.aria-label]="'Xem chi tiết sự kiện ' + displayPlate(event)"
+                  (click)="showDetails(event)"
+                >
+                  <svg lucideChevronRight aria-hidden="true"></svg>
+                </button>
+              </td>
             </tr>
           }
         </tbody>
       </table>
     </div>
-    @if (nextCursor()) {
-      <div class="load-more"><button class="button secondary" type="button" (click)="load(false)" [disabled]="loadingMore()">{{ loadingMore() ? 'Đang tải…' : 'Tải thêm' }}</button></div>
+    @if (eventWindow().hasPrevious || eventWindow().hasNext || (nextCursor() && !bufferLimitReached())) {
+      <div class="load-more">
+        @if (eventWindow().hasPrevious) {
+          <button class="button secondary" type="button" (click)="showNewerEvents()">100 sự kiện mới hơn</button>
+        }
+        <span class="subtle" role="status">Đang hiển thị {{ eventWindow().start + 1 }}–{{ eventWindow().end }} / {{ eventWindow().total }}</span>
+        @if (eventWindow().hasNext) {
+          <button class="button secondary" type="button" (click)="showOlderEvents()">100 sự kiện cũ hơn</button>
+        }
+        @if (nextCursor() && !bufferLimitReached()) {
+          <button class="button secondary" type="button" (click)="load(false)" [disabled]="loadingMore() || loading()">{{ loadingMore() ? 'Đang tải…' : 'Tải thêm từ máy chủ' }}</button>
+        }
+      </div>
     }
   }
 </section>
 
 @if (selected(); as event) {
-  <button class="drawer-backdrop" type="button" aria-label="Đóng chi tiết" (click)="closeDetails()"></button>
-  <aside class="detail-drawer wide" aria-label="Chi tiết sự kiện">
+  <button data-dialog-backdrop class="drawer-backdrop" type="button" aria-label="Đóng chi tiết" (click)="closeDetails()"></button>
+  <aside appAccessibleDialog class="detail-drawer wide" aria-labelledby="event-detail-title" (appDialogDismiss)="closeDetails()">
     <div class="drawer-heading">
-      <div><p class="eyebrow">VEHICLE EVENT</p><h2>{{ displayPlate(event) }}</h2></div>
-      <button class="icon-button" type="button" aria-label="Đóng" (click)="closeDetails()"><svg lucideX aria-hidden="true"></svg></button>
+      <div><p class="eyebrow">VEHICLE EVENT</p><h2 id="event-detail-title">{{ displayPlate(event) }}</h2></div>
+      <button data-dialog-initial-focus class="icon-button" type="button" aria-label="Đóng" (click)="closeDetails()"><svg lucideX aria-hidden="true"></svg></button>
     </div>
     <div class="detail-hero">
       <span class="direction" [class.enter]="event.direction === 'ENTER'" [class.exit]="event.direction === 'EXIT'">{{ event.direction }}</span>

@@ -17,4 +17,3 @@ class Principal:
             raise ValueError("principal id and display name are required")
         if len(self.id) > 128 or len(self.display_name) > 256:
             raise ValueError("principal identity fields are too long")
-

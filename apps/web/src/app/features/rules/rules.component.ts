@@ -13,7 +13,7 @@ import {
   LucideShieldCheck,
   LucideTrash2,
   LucideX,
-  LucideZap
+  LucideZap,
 } from '@lucide/angular';
 import { firstValueFrom } from 'rxjs';
 
@@ -27,17 +27,19 @@ import {
   RuleConditionField,
   RuleConditionOperator,
   RuleWriteRequest,
-  WatchlistType
+  WatchlistType,
 } from '../../core/models/api.models';
 import { ApiClientService } from '../../core/services/api-client.service';
 import { apiErrorMessage } from '../../core/utils/api-error';
+import { AsyncDataState } from '../../core/utils/async-data-state';
 import {
   RULE_FIELDS,
   isExternalAction,
   parseListInput,
   ruleActionIsValid,
-  ruleConditionIsValid
+  ruleConditionIsValid,
 } from '../../core/utils/policy-utils';
+import { AccessibleDialogDirective } from '../../shared/accessibility/accessible-dialog.directive';
 
 interface ConditionDraft {
   field: RuleConditionField;
@@ -72,7 +74,7 @@ const ACTION_TYPES: readonly RuleActionType[] = [
   'OPEN_BARRIER',
   'WEBHOOK',
   'HTTP_REQUEST',
-  'NOTIFICATION'
+  'NOTIFICATION',
 ];
 const WATCHLIST_TYPES: readonly WatchlistType[] = [
   'WHITELIST',
@@ -80,14 +82,14 @@ const WATCHLIST_TYPES: readonly WatchlistType[] = [
   'VIP',
   'STAFF',
   'CONTRACTOR',
-  'DELIVERY'
+  'DELIVERY',
 ];
 const ALERT_SEVERITIES: readonly AlertSeverity[] = [
   'INFO',
   'LOW',
   'MEDIUM',
   'HIGH',
-  'CRITICAL'
+  'CRITICAL',
 ];
 const FIELD_LABELS: Record<RuleConditionField, string> = {
   watchlist: 'Nhóm watchlist',
@@ -98,7 +100,7 @@ const FIELD_LABELS: Record<RuleConditionField, string> = {
   status: 'Trạng thái sự kiện',
   'plate.normalized': 'Biển số chuẩn hóa',
   'vehicle.type': 'Loại phương tiện',
-  'vehicle.color': 'Màu phương tiện'
+  'vehicle.color': 'Màu phương tiện',
 };
 
 @Component({
@@ -106,6 +108,7 @@ const FIELD_LABELS: Record<RuleConditionField, string> = {
   imports: [
     DatePipe,
     FormsModule,
+    AccessibleDialogDirective,
     LucideBell,
     LucideBraces,
     LucideGitBranch,
@@ -117,9 +120,9 @@ const FIELD_LABELS: Record<RuleConditionField, string> = {
     LucideShieldCheck,
     LucideTrash2,
     LucideX,
-    LucideZap
+    LucideZap,
   ],
-  templateUrl: './rules.component.html'
+  templateUrl: './rules.component.html',
 })
 export class RulesComponent implements OnInit {
   readonly auth = inject(AuthService);
@@ -130,12 +133,14 @@ export class RulesComponent implements OnInit {
   readonly alertSeverities = ALERT_SEVERITIES;
   readonly rules = signal<Rule[]>([]);
   readonly loading = signal(true);
+  readonly loadState = new AsyncDataState();
   readonly saving = signal(false);
   readonly deleting = signal(false);
   readonly editorOpen = signal(false);
   readonly editingId = signal<string | null>(null);
   readonly pendingDelete = signal<Rule | null>(null);
-  readonly error = signal<string | null>(null);
+  readonly editorError = signal<string | null>(null);
+  readonly deleteError = signal<string | null>(null);
   readonly notice = signal<string | null>(null);
   search = '';
   enabledFilter: 'ALL' | 'ENABLED' | 'DISABLED' = 'ALL';
@@ -148,12 +153,13 @@ export class RulesComponent implements OnInit {
 
   async load(): Promise<void> {
     this.loading.set(true);
-    this.error.set(null);
+    this.loadState.begin();
     try {
       const page = await firstValueFrom(this.api.rules(false, 200));
       this.rules.set(this.sortRules(page.items));
+      this.loadState.succeed();
     } catch (error) {
-      this.error.set(apiErrorMessage(error, 'Không thể tải rules.'));
+      this.loadState.fail(apiErrorMessage(error, 'Không thể tải rules.'));
     } finally {
       this.loading.set(false);
     }
@@ -164,7 +170,11 @@ export class RulesComponent implements OnInit {
     return this.rules().filter((rule) => {
       if (this.enabledFilter === 'ENABLED' && !rule.enabled) return false;
       if (this.enabledFilter === 'DISABLED' && rule.enabled) return false;
-      return !query || rule.name.toLocaleUpperCase().includes(query) || rule.id.toLocaleUpperCase().includes(query);
+      return (
+        !query ||
+        rule.name.toLocaleUpperCase().includes(query) ||
+        rule.id.toLocaleUpperCase().includes(query)
+      );
     });
   }
 
@@ -173,11 +183,15 @@ export class RulesComponent implements OnInit {
   }
 
   alertRuleCount(): number {
-    return this.rules().filter((rule) => rule.actions.some((action) => action.type === 'CREATE_ALERT')).length;
+    return this.rules().filter((rule) =>
+      rule.actions.some((action) => action.type === 'CREATE_ALERT'),
+    ).length;
   }
 
   externalRuleCount(): number {
-    return this.rules().filter((rule) => rule.actions.some((action) => isExternalAction(action.type))).length;
+    return this.rules().filter((rule) =>
+      rule.actions.some((action) => isExternalAction(action.type)),
+    ).length;
   }
 
   clearFilters(): void {
@@ -188,7 +202,7 @@ export class RulesComponent implements OnInit {
   openCreate(): void {
     this.draft = this.emptyDraft();
     this.editingId.set(null);
-    this.error.set(null);
+    this.editorError.set(null);
     this.editorOpen.set(true);
   }
 
@@ -198,13 +212,15 @@ export class RulesComponent implements OnInit {
       name: rule.name,
       enabled: rule.enabled,
       priority: rule.priority,
-      conditions: rule.conditions.map((condition) => this.conditionToDraft(condition)),
+      conditions: rule.conditions.map((condition) =>
+        this.conditionToDraft(condition),
+      ),
       actions: rule.actions.map((action) => this.actionToDraft(action)),
       metadata: { ...rule.metadata },
-      revision: rule.revision
+      revision: rule.revision,
     };
     this.editingId.set(rule.id);
-    this.error.set(null);
+    this.editorError.set(null);
     this.editorOpen.set(true);
   }
 
@@ -212,6 +228,7 @@ export class RulesComponent implements OnInit {
     if (this.saving()) return;
     this.editorOpen.set(false);
     this.editingId.set(null);
+    this.editorError.set(null);
     this.draft = this.emptyDraft();
   }
 
@@ -221,7 +238,8 @@ export class RulesComponent implements OnInit {
   }
 
   removeCondition(index: number): void {
-    if (this.draft.conditions.length > 1) this.draft.conditions.splice(index, 1);
+    if (this.draft.conditions.length > 1)
+      this.draft.conditions.splice(index, 1);
   }
 
   conditionFieldChanged(index: number): void {
@@ -232,14 +250,20 @@ export class RulesComponent implements OnInit {
       condition.value = 'WHITELIST';
     } else {
       if (condition.operator === 'CONTAINS') condition.operator = 'EQ';
-      condition.value = this.defaultConditionValue(condition.field, condition.operator);
+      condition.value = this.defaultConditionValue(
+        condition.field,
+        condition.operator,
+      );
     }
   }
 
   conditionOperatorChanged(index: number): void {
     const condition = this.draft.conditions[index];
     if (!condition) return;
-    condition.value = this.defaultConditionValue(condition.field, condition.operator);
+    condition.value = this.defaultConditionValue(
+      condition.field,
+      condition.operator,
+    );
   }
 
   operatorsFor(condition: ConditionDraft): readonly RuleConditionOperator[] {
@@ -249,14 +273,31 @@ export class RulesComponent implements OnInit {
   }
 
   conditionChoices(condition: ConditionDraft): readonly string[] {
-    if (condition.operator === 'IN' || condition.operator === 'NOT_IN' || condition.operator === 'EXISTS') return [];
+    if (
+      condition.operator === 'IN' ||
+      condition.operator === 'NOT_IN' ||
+      condition.operator === 'EXISTS'
+    )
+      return [];
     switch (condition.field) {
-      case 'watchlist': return WATCHLIST_TYPES;
-      case 'direction': return ['ENTER', 'EXIT', 'UNKNOWN'];
-      case 'eventType': return ['VEHICLE_ENTER', 'VEHICLE_EXIT', 'VEHICLE_DETECTED'];
-      case 'status': return ['CONFIRMED', 'LOW_CONFIDENCE', 'NEEDS_REVIEW', 'NO_PLATE', 'UNREADABLE'];
-      case 'vehicle.type': return ['car', 'motorcycle', 'bus', 'truck'];
-      default: return [];
+      case 'watchlist':
+        return WATCHLIST_TYPES;
+      case 'direction':
+        return ['ENTER', 'EXIT', 'UNKNOWN'];
+      case 'eventType':
+        return ['VEHICLE_ENTER', 'VEHICLE_EXIT', 'VEHICLE_DETECTED'];
+      case 'status':
+        return [
+          'CONFIRMED',
+          'LOW_CONFIDENCE',
+          'NEEDS_REVIEW',
+          'NO_PLATE',
+          'UNREADABLE',
+        ];
+      case 'vehicle.type':
+        return ['car', 'motorcycle', 'bus', 'truck'];
+      default:
+        return [];
     }
   }
 
@@ -265,7 +306,8 @@ export class RulesComponent implements OnInit {
   }
 
   conditionPlaceholder(condition: ConditionDraft): string {
-    if (condition.operator === 'IN' || condition.operator === 'NOT_IN') return 'Giá trị 1, Giá trị 2';
+    if (condition.operator === 'IN' || condition.operator === 'NOT_IN')
+      return 'Giá trị 1, Giá trị 2';
     if (condition.field === 'camera.id') return 'gate-01';
     if (condition.field === 'camera.zone') return 'ZONE_A';
     if (condition.field === 'plate.normalized') return '51H-123.45';
@@ -296,7 +338,8 @@ export class RulesComponent implements OnInit {
   }
 
   actionSummary(action: RuleAction): string {
-    if (action.type === 'CREATE_ALERT') return String(action.parameters['severity'] ?? 'HIGH');
+    if (action.type === 'CREATE_ALERT')
+      return String(action.parameters['severity'] ?? 'HIGH');
     if (isExternalAction(action.type)) {
       const method = String(action.parameters['method'] ?? 'POST');
       const url = String(action.parameters['url'] ?? 'URL chưa cấu hình');
@@ -306,23 +349,44 @@ export class RulesComponent implements OnInit {
   }
 
   conditionSummary(condition: RuleCondition): string {
-    const value = Array.isArray(condition.value) ? condition.value.join(', ') : String(condition.value);
-    return this.conditionLabel(condition.field) + ' ' + condition.operator + ' ' + value;
+    const value = Array.isArray(condition.value)
+      ? condition.value.join(', ')
+      : String(condition.value);
+    return (
+      this.conditionLabel(condition.field) +
+      ' ' +
+      condition.operator +
+      ' ' +
+      value
+    );
   }
 
   draftValidation(): string | null {
     if (!this.draft.name.trim()) return 'Tên rule là bắt buộc.';
-    if (!Number.isInteger(this.draft.priority) || this.draft.priority < -10000 || this.draft.priority > 10000) {
+    if (
+      !Number.isInteger(this.draft.priority) ||
+      this.draft.priority < -10000 ||
+      this.draft.priority > 10000
+    ) {
       return 'Priority phải là số nguyên từ -10000 đến 10000.';
     }
-    if (!this.draft.conditions.length || this.draft.conditions.length > 32) return 'Rule cần từ 1 đến 32 conditions.';
-    if (!this.draft.actions.length || this.draft.actions.length > 16) return 'Rule cần từ 1 đến 16 actions.';
+    if (!this.draft.conditions.length || this.draft.conditions.length > 32)
+      return 'Rule cần từ 1 đến 32 conditions.';
+    if (!this.draft.actions.length || this.draft.actions.length > 16)
+      return 'Rule cần từ 1 đến 16 actions.';
     const actionIds = this.draft.actions.map((action) => action.id.trim());
-    if (new Set(actionIds).size !== actionIds.length) return 'Action ID phải duy nhất trong một rule.';
-    const invalidCondition = this.draft.conditions.findIndex((condition) => !ruleConditionIsValid(this.conditionFromDraft(condition)));
-    if (invalidCondition >= 0) return 'Condition ' + (invalidCondition + 1) + ' chưa có giá trị hợp lệ.';
-    const invalidAction = this.draft.actions.findIndex((action) => !ruleActionIsValid(this.actionFromDraft(action)));
-    if (invalidAction >= 0) return 'Action ' + (invalidAction + 1) + ' chưa có cấu hình hợp lệ.';
+    if (new Set(actionIds).size !== actionIds.length)
+      return 'Action ID phải duy nhất trong một rule.';
+    const invalidCondition = this.draft.conditions.findIndex(
+      (condition) => !ruleConditionIsValid(this.conditionFromDraft(condition)),
+    );
+    if (invalidCondition >= 0)
+      return 'Condition ' + (invalidCondition + 1) + ' chưa có giá trị hợp lệ.';
+    const invalidAction = this.draft.actions.findIndex(
+      (action) => !ruleActionIsValid(this.actionFromDraft(action)),
+    );
+    if (invalidAction >= 0)
+      return 'Action ' + (invalidAction + 1) + ' chưa có cấu hình hợp lệ.';
     return null;
   }
 
@@ -330,60 +394,85 @@ export class RulesComponent implements OnInit {
     if (this.saving()) return;
     const validation = this.draftValidation();
     if (validation) {
-      this.error.set(validation);
+      this.editorError.set(validation);
       return;
     }
     this.saving.set(true);
-    this.error.set(null);
+    this.editorError.set(null);
     const request: RuleWriteRequest = {
       name: this.draft.name.trim(),
       enabled: this.draft.enabled,
       priority: this.draft.priority,
-      conditions: this.draft.conditions.map((condition) => this.conditionFromDraft(condition)),
+      conditions: this.draft.conditions.map((condition) =>
+        this.conditionFromDraft(condition),
+      ),
       actions: this.draft.actions.map((action) => this.actionFromDraft(action)),
-      metadata: { ...this.draft.metadata }
+      metadata: { ...this.draft.metadata },
     };
     const editingId = this.editingId();
     try {
       let saved: Rule;
       if (editingId !== null && this.draft.revision !== null) {
-        saved = await firstValueFrom(this.api.updateRule(editingId, { ...request, revision: this.draft.revision }));
-        this.rules.update((items) => this.sortRules(items.map((item) => (item.id === saved.id ? saved : item))));
-        this.notice.set('Đã cập nhật rule ' + saved.name + ' tại revision ' + saved.revision + '.');
+        saved = await firstValueFrom(
+          this.api.updateRule(editingId, {
+            ...request,
+            revision: this.draft.revision,
+          }),
+        );
+        this.rules.update((items) =>
+          this.sortRules(
+            items.map((item) => (item.id === saved.id ? saved : item)),
+          ),
+        );
+        this.notice.set(
+          'Đã cập nhật rule ' +
+            saved.name +
+            ' tại revision ' +
+            saved.revision +
+            '.',
+        );
       } else {
         const requestedId = this.draft.id.trim();
-        saved = await firstValueFrom(this.api.createRule(requestedId ? { ...request, id: requestedId } : request));
+        saved = await firstValueFrom(
+          this.api.createRule(
+            requestedId ? { ...request, id: requestedId } : request,
+          ),
+        );
         this.rules.update((items) => this.sortRules([saved, ...items]));
         this.notice.set('Đã tạo rule ' + saved.name + '.');
       }
       this.closeEditorAfterSave();
     } catch (error) {
-      this.error.set(apiErrorMessage(error, 'Không thể lưu rule.'));
+      this.editorError.set(apiErrorMessage(error, 'Không thể lưu rule.'));
     } finally {
       this.saving.set(false);
     }
   }
 
   requestDelete(rule: Rule): void {
+    this.deleteError.set(null);
     this.pendingDelete.set(rule);
   }
 
   cancelDelete(): void {
-    if (!this.deleting()) this.pendingDelete.set(null);
+    if (!this.deleting()) {
+      this.pendingDelete.set(null);
+      this.deleteError.set(null);
+    }
   }
 
   async confirmDelete(): Promise<void> {
     const rule = this.pendingDelete();
     if (!rule || this.deleting()) return;
     this.deleting.set(true);
-    this.error.set(null);
+    this.deleteError.set(null);
     try {
       await firstValueFrom(this.api.deleteRule(rule.id));
       this.rules.update((items) => items.filter((item) => item.id !== rule.id));
       this.notice.set('Đã xóa rule ' + rule.name + '.');
       this.pendingDelete.set(null);
     } catch (error) {
-      this.error.set(apiErrorMessage(error, 'Không thể xóa rule.'));
+      this.deleteError.set(apiErrorMessage(error, 'Không thể xóa rule.'));
     } finally {
       this.deleting.set(false);
     }
@@ -392,7 +481,8 @@ export class RulesComponent implements OnInit {
   private conditionFromDraft(draft: ConditionDraft): RuleCondition {
     let value: unknown = draft.value.trim();
     if (draft.operator === 'EXISTS') value = draft.value === 'true';
-    if (draft.operator === 'IN' || draft.operator === 'NOT_IN') value = parseListInput(draft.value);
+    if (draft.operator === 'IN' || draft.operator === 'NOT_IN')
+      value = parseListInput(draft.value);
     return { field: draft.field, operator: draft.operator, value };
   }
 
@@ -410,34 +500,59 @@ export class RulesComponent implements OnInit {
   }
 
   private conditionToDraft(condition: RuleCondition): ConditionDraft {
-    const value = Array.isArray(condition.value) ? condition.value.join(', ') : String(condition.value);
+    const value = Array.isArray(condition.value)
+      ? condition.value.join(', ')
+      : String(condition.value);
     return { field: condition.field, operator: condition.operator, value };
   }
 
   private actionToDraft(action: RuleAction): ActionDraft {
-    const severityValue = String(action.parameters['severity'] ?? 'HIGH') as AlertSeverity;
-    const methodValue = String(action.parameters['method'] ?? 'POST').toUpperCase() as ActionDraft['method'];
+    const severityValue = String(
+      action.parameters['severity'] ?? 'HIGH',
+    ) as AlertSeverity;
+    const methodValue = String(
+      action.parameters['method'] ?? 'POST',
+    ).toUpperCase() as ActionDraft['method'];
     return {
       uiId: 'row_' + this.nextIdentifierSuffix(),
       id: action.id,
       type: action.type,
-      severity: ALERT_SEVERITIES.includes(severityValue) ? severityValue : 'HIGH',
-      message: typeof action.parameters['message'] === 'string' ? action.parameters['message'] : '',
-      url: typeof action.parameters['url'] === 'string' ? action.parameters['url'] : '',
-      method: ['GET', 'POST', 'PUT', 'PATCH'].includes(methodValue) ? methodValue : 'POST'
+      severity: ALERT_SEVERITIES.includes(severityValue)
+        ? severityValue
+        : 'HIGH',
+      message:
+        typeof action.parameters['message'] === 'string'
+          ? action.parameters['message']
+          : '',
+      url:
+        typeof action.parameters['url'] === 'string'
+          ? action.parameters['url']
+          : '',
+      method: ['GET', 'POST', 'PUT', 'PATCH'].includes(methodValue)
+        ? methodValue
+        : 'POST',
     };
   }
 
-  private defaultConditionValue(field: RuleConditionField, operator: RuleConditionOperator): string {
+  private defaultConditionValue(
+    field: RuleConditionField,
+    operator: RuleConditionOperator,
+  ): string {
     if (operator === 'EXISTS') return 'true';
     if (operator === 'IN' || operator === 'NOT_IN') return '';
     switch (field) {
-      case 'watchlist': return 'WHITELIST';
-      case 'direction': return 'ENTER';
-      case 'eventType': return 'VEHICLE_ENTER';
-      case 'status': return 'CONFIRMED';
-      case 'vehicle.type': return 'car';
-      default: return '';
+      case 'watchlist':
+        return 'WHITELIST';
+      case 'direction':
+        return 'ENTER';
+      case 'eventType':
+        return 'VEHICLE_ENTER';
+      case 'status':
+        return 'CONFIRMED';
+      case 'vehicle.type':
+        return 'car';
+      default:
+        return '';
     }
   }
 
@@ -454,13 +569,16 @@ export class RulesComponent implements OnInit {
       severity: 'HIGH',
       message: '',
       url: '',
-      method: 'POST'
+      method: 'POST',
     };
   }
 
   private nextIdentifierSuffix(): string {
     this.actionSequence += 1;
-    return globalThis.crypto?.randomUUID?.().replaceAll('-', '') ?? (Date.now().toString(36) + this.actionSequence);
+    return (
+      globalThis.crypto?.randomUUID?.().replaceAll('-', '') ??
+      Date.now().toString(36) + this.actionSequence
+    );
   }
 
   private emptyDraft(): RuleDraft {
@@ -472,17 +590,23 @@ export class RulesComponent implements OnInit {
       conditions: [this.newCondition()],
       actions: [this.newAction()],
       metadata: {},
-      revision: null
+      revision: null,
     };
   }
 
   private sortRules(items: Rule[]): Rule[] {
-    return [...items].sort((left, right) => right.priority - left.priority || left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+    return [...items].sort(
+      (left, right) =>
+        right.priority - left.priority ||
+        left.name.localeCompare(right.name) ||
+        left.id.localeCompare(right.id),
+    );
   }
 
   private closeEditorAfterSave(): void {
     this.editorOpen.set(false);
     this.editingId.set(null);
+    this.editorError.set(null);
     this.draft = this.emptyDraft();
   }
 }

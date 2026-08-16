@@ -21,17 +21,85 @@ from vehicle_intelligence.infrastructure.vision.model_artifact import validated_
 from vehicle_intelligence.infrastructure.vision.postprocessing import nms_indices
 
 _COCO_CLASSES = (
-    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck",
-    "boat", "traffic light", "fire hydrant", "stop sign", "parking meter", "bench",
-    "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra",
-    "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
-    "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove",
-    "skateboard", "surfboard", "tennis racket", "bottle", "wine glass", "cup",
-    "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
-    "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch",
-    "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse",
-    "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
-    "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier",
+    "person",
+    "bicycle",
+    "car",
+    "motorcycle",
+    "airplane",
+    "bus",
+    "train",
+    "truck",
+    "boat",
+    "traffic light",
+    "fire hydrant",
+    "stop sign",
+    "parking meter",
+    "bench",
+    "bird",
+    "cat",
+    "dog",
+    "horse",
+    "sheep",
+    "cow",
+    "elephant",
+    "bear",
+    "zebra",
+    "giraffe",
+    "backpack",
+    "umbrella",
+    "handbag",
+    "tie",
+    "suitcase",
+    "frisbee",
+    "skis",
+    "snowboard",
+    "sports ball",
+    "kite",
+    "baseball bat",
+    "baseball glove",
+    "skateboard",
+    "surfboard",
+    "tennis racket",
+    "bottle",
+    "wine glass",
+    "cup",
+    "fork",
+    "knife",
+    "spoon",
+    "bowl",
+    "banana",
+    "apple",
+    "sandwich",
+    "orange",
+    "broccoli",
+    "carrot",
+    "hot dog",
+    "pizza",
+    "donut",
+    "cake",
+    "chair",
+    "couch",
+    "potted plant",
+    "bed",
+    "dining table",
+    "toilet",
+    "tv",
+    "laptop",
+    "mouse",
+    "remote",
+    "keyboard",
+    "cell phone",
+    "microwave",
+    "oven",
+    "toaster",
+    "sink",
+    "refrigerator",
+    "book",
+    "clock",
+    "vase",
+    "scissors",
+    "teddy bear",
+    "hair drier",
     "toothbrush",
 )
 
@@ -65,8 +133,7 @@ def select_execution_providers(
     primary = aliases.get(values[0].lower(), values[0])
     if primary not in available_set:
         raise DependencyUnavailableError(
-            f"ONNX execution provider '{primary}' is unavailable; "
-            f"available={sorted(available_set)}"
+            f"ONNX execution provider '{primary}' is unavailable; available={sorted(available_set)}"
         )
     resolved: list[str] = []
     for value in values:
@@ -177,9 +244,7 @@ class _OnnxRuntimeAdapter:
         selected[:, [1, 3]] = np.clip(selected[:, [1, 3]], 0, image.shape[0])
         return selected
 
-    def _preprocess(
-        self, image: NDArray[np.uint8]
-    ) -> tuple[NDArray[Any], float, float, float]:
+    def _preprocess(self, image: NDArray[np.uint8]) -> tuple[NDArray[Any], float, float, float]:
         target = self._config.image_size
         height, width = image.shape[:2]
         scale = min(target / width, target / height)
@@ -214,9 +279,7 @@ class _OnnxRuntimeAdapter:
                 f"unsupported ONNX detector output shape: {tuple(predictions.shape)}"
             )
         output_format = self._config.onnx_output_format
-        if output_format == "nms" or (
-            output_format == "auto" and predictions.shape[1] in {6, 7}
-        ):
+        if output_format == "nms" or (output_format == "auto" and predictions.shape[1] in {6, 7}):
             if predictions.shape[1] < 6:
                 raise InferenceError("NMS detector output must contain at least six columns")
             if predictions.shape[1] == 7:

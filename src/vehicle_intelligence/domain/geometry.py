@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
 
 @dataclass(frozen=True, slots=True)
 class Point:
     x: float
     y: float
+
+    def __post_init__(self) -> None:
+        if not isfinite(self.x) or not isfinite(self.y):
+            raise ValueError("point coordinates must be finite")
 
 
 @dataclass(frozen=True, slots=True)

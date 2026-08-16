@@ -71,4 +71,3 @@ async def test_redis_live_preview_reaches_bounded_api_state() -> None:
     finally:
         await publisher.close()
         await service.close()
-

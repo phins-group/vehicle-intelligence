@@ -18,6 +18,35 @@ from vehicle_intelligence.domain import (
 )
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    quality = parser.getgroup("quality gates")
+    quality.addoption(
+        "--fail-on-skip",
+        action="store_true",
+        default=False,
+        help="Fail the test session when any selected test is skipped.",
+    )
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    del exitstatus
+    if not session.config.getoption("--fail-on-skip"):
+        return
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    skipped = reporter.stats.get("skipped", ()) if reporter is not None else ()
+    if not skipped:
+        return
+    if reporter is not None:
+        reporter.write_sep(
+            "!",
+            f"--fail-on-skip rejected {len(skipped)} skipped test(s)",
+            red=True,
+            bold=True,
+        )
+    if session.exitstatus == pytest.ExitCode.OK:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
 @pytest.fixture
 def model_metadata() -> ModelMetadata:
     return ModelMetadata(name="test-model", version="1")

@@ -10,6 +10,7 @@ from vehicle_intelligence.domain import (
     CameraStatus,
     SecretUri,
 )
+from vehicle_intelligence.exceptions import CameraWorkerError
 from vehicle_intelligence.infrastructure.persistence.camera_memory import (
     InMemoryCameraHealthRepository,
     InMemoryCameraRepository,
@@ -47,6 +48,32 @@ class FakeLauncher:
     async def start(self, camera):
         handle = FakeHandle()
         self.handles.setdefault(camera.id, []).append(handle)
+        return handle
+
+
+class FakeInferenceLauncher:
+    def __init__(self) -> None:
+        self.handles: list[FakeHandle] = []
+
+    async def start(self):
+        handle = FakeHandle()
+        self.handles.append(handle)
+        return handle
+
+
+class AdvancingInferenceLauncher:
+    def __init__(self, now: list[float]) -> None:
+        self._now = now
+        self.handles: list[FakeHandle] = []
+        self.attempts = 0
+
+    async def start(self):
+        self.attempts += 1
+        self._now[0] += 100
+        if self.attempts == 1:
+            raise RuntimeError("slow startup failure")
+        handle = FakeHandle()
+        self.handles.append(handle)
         return handle
 
 
@@ -195,4 +222,96 @@ async def test_supervisor_uses_capped_exponential_restart_backoff() -> None:
     assert launcher.attempts == 4
     assert supervisor.stats.maximum_backoff_seconds_observed == pytest.approx(8)
     assert (await health.get("gate-01")).status is CameraStatus.OFFLINE
+    await supervisor.close()
+
+
+async def test_supervisor_restarts_shared_inference_before_camera_workers() -> None:
+    cameras = InMemoryCameraRepository()
+    health = InMemoryCameraHealthRepository()
+    workers = FakeLauncher()
+    inference = FakeInferenceLauncher()
+    now = [0.0]
+    await cameras.create(camera("gate-01"))
+    supervisor = CameraSupervisor(
+        cameras,
+        health,
+        workers,
+        reconcile_interval_seconds=1,
+        restart_backoff_seconds=2,
+        monotonic_clock=lambda: now[0],
+        inference_service_launcher=inference,
+    )
+
+    await supervisor.initialize()
+    await supervisor.reconcile_once()
+    assert len(inference.handles) == 1
+    assert len(workers.handles["gate-01"]) == 1
+
+    inference.handles[0].crash()
+    with pytest.raises(Exception, match="backoff"):
+        await supervisor.reconcile_once()
+    assert workers.handles["gate-01"][0].stop_count == 1
+    assert len(inference.handles) == 1
+
+    now[0] = 2
+    await supervisor.reconcile_once()
+
+    assert len(inference.handles) == 2
+    assert inference.handles[1].running
+    assert len(workers.handles["gate-01"]) == 2
+    assert workers.handles["gate-01"][1].running
+    assert supervisor.stats.inference_service_crashes == 1
+    assert supervisor.stats.inference_services_restarted == 1
+
+    await supervisor.stop_all()
+    await supervisor.close()
+    assert inference.handles[1].stop_count == 1
+    assert supervisor.stats.inference_services_stopped == 1
+
+
+async def test_inference_backoff_and_stability_start_after_slow_launcher_finishes() -> None:
+    cameras = InMemoryCameraRepository()
+    health = InMemoryCameraHealthRepository()
+    workers = FakeLauncher()
+    now = [0.0]
+    inference = AdvancingInferenceLauncher(now)
+    supervisor = CameraSupervisor(
+        cameras,
+        health,
+        workers,
+        reconcile_interval_seconds=1,
+        restart_backoff_seconds=5,
+        restart_stability_seconds=60,
+        monotonic_clock=lambda: now[0],
+        inference_service_launcher=inference,
+    )
+
+    with pytest.raises(CameraWorkerError, match="cannot start"):
+        await supervisor.initialize()
+    assert now[0] == 100
+
+    now[0] = 104
+    with pytest.raises(CameraWorkerError, match="backoff"):
+        await supervisor.initialize()
+    assert inference.attempts == 1
+
+    now[0] = 105
+    await supervisor.initialize()
+    assert now[0] == 205
+    assert inference.attempts == 2
+
+    now[0] = 264
+    await supervisor.reconcile_once()
+    inference.handles[0].crash()
+    with pytest.raises(CameraWorkerError, match="backoff"):
+        await supervisor.reconcile_once()
+
+    now[0] = 269
+    with pytest.raises(CameraWorkerError, match="backoff"):
+        await supervisor.reconcile_once()
+    assert inference.attempts == 2
+
+    now[0] = 274
+    await supervisor.reconcile_once()
+    assert inference.attempts == 3
     await supervisor.close()

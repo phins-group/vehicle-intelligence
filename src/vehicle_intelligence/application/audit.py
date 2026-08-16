@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
+from math import isfinite
 from urllib.parse import urlsplit, urlunsplit
 
 from vehicle_intelligence.application.ports import (
@@ -73,11 +74,13 @@ class AuditService:
     async def close(self) -> None:
         await self._repository.close()
 
-    async def record(self, command: AuditRecord) -> AuditLog:
+    def prepare(self, command: AuditRecord) -> AuditLog:
+        """Create a sanitized audit entry before its owning mutation commits."""
+
         now = self._clock()
         if now.tzinfo is None:
             raise ValueError("audit service clock must be timezone-aware")
-        entry = AuditLog(
+        return AuditLog(
             id=self._id_factory(),
             actor=AuditActor(
                 id=command.principal.id,
@@ -94,11 +97,24 @@ class AuditService:
             after=_snapshot(command.after),
             metadata=_snapshot(command.metadata) or {},
         )
+
+    async def persist(self, entry: AuditLog) -> AuditLog:
+        """Append once, treating an identical existing entry as a delivered retry."""
+
         try:
             await self._repository.append(entry)
         except PersistenceError as exc:
+            try:
+                existing = await self._repository.get(entry.id)
+            except PersistenceError:
+                existing = None
+            if existing == entry:
+                return entry
             raise AuditWriteError("required audit record could not be persisted") from exc
         return entry
+
+    async def record(self, command: AuditRecord) -> AuditLog:
+        return await self.persist(self.prepare(command))
 
     async def get(self, entry_id: str) -> AuditLog:
         entry = await self._repository.get(entry_id)
@@ -144,7 +160,7 @@ def _sanitize(value: object, depth: int) -> object:
     if isinstance(value, datetime):
         if value.tzinfo is None:
             raise ValueError("audit snapshot datetimes must be timezone-aware")
-        return value.astimezone(UTC)
+        return value.astimezone(UTC).isoformat()
     if isinstance(value, str):
         if value.casefold().startswith(("bearer ", "rtsp://", "rtsps://")):
             return "[REDACTED]"
@@ -156,6 +172,8 @@ def _sanitize(value: object, depth: int) -> object:
                 :_MAX_STRING_LENGTH
             ]
         return value[:_MAX_STRING_LENGTH]
+    if isinstance(value, float) and not isfinite(value):
+        return "[NON_FINITE]"
     if value is None or isinstance(value, (bool, int, float)):
         return value
     return "[UNSUPPORTED]"

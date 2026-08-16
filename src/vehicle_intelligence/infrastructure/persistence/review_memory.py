@@ -45,9 +45,7 @@ class InMemoryDatasetSampleRepository:
         page = items[: query.limit + 1]
         has_more = len(page) > query.limit
         page = page[: query.limit]
-        next_cursor = (
-            encode_cursor(page[-1].created_at, page[-1].id) if has_more and page else None
-        )
+        next_cursor = encode_cursor(page[-1].created_at, page[-1].id) if has_more and page else None
         return DatasetSamplePage(tuple(page), next_cursor)
 
     async def claim_for_export(
@@ -63,8 +61,7 @@ class InMemoryDatasetSampleRepository:
             resumed = [
                 sample
                 for sample in self._samples.values()
-                if sample.status is DatasetSampleStatus.EXPORTING
-                and sample.export_id == export_id
+                if sample.status is DatasetSampleStatus.EXPORTING and sample.export_id == export_id
             ]
             resumed.sort(key=lambda sample: (sample.created_at, sample.id))
             selected = resumed[:limit]
@@ -74,7 +71,8 @@ class InMemoryDatasetSampleRepository:
                 for sample in self._samples.values()
                 if sample.id not in selected_ids
                 and (
-                    sample.status in {
+                    sample.status
+                    in {
                         DatasetSampleStatus.READY,
                         DatasetSampleStatus.EXPORT_FAILED,
                     }

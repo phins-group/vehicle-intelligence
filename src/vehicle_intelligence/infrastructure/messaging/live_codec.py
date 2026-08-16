@@ -181,4 +181,3 @@ class JsonLiveFrameCodec:
                 else None
             ),
         )
-

@@ -102,4 +102,3 @@ class RedisLiveFrameSubscriber:
         await self.disconnect()
         if self._owns_client:
             await self._client.aclose()
-

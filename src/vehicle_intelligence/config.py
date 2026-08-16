@@ -26,6 +26,14 @@ class AppConfig(BaseModel):
     log_level: str = "INFO"
     config_version: str = "default"
 
+    @field_validator("environment")
+    @classmethod
+    def normalize_environment(cls, value: str) -> str:
+        normalized = value.strip().casefold()
+        if not normalized or len(normalized) > 64:
+            raise ValueError("application environment is invalid")
+        return normalized
+
     @field_validator("config_version")
     @classmethod
     def validate_config_version(cls, value: str) -> str:
@@ -211,16 +219,31 @@ class OCRConfig(BaseModel):
     model_name: str = "PP-OCRv5_mobile_rec"
     model_version: str = "PP-OCRv5"
     model_hash: str | None = None
+    detection_model_directory: str | None = None
+    detection_model_hash: str | None = None
+    recognition_model_directory: str | None = None
+    recognition_model_hash: str | None = None
     device: str = "cpu"
     language: str = "en"
     allow_partial_plate: bool = False
     partial_min_characters: int = Field(default=4, ge=1, le=32)
     partial_max_characters: int = Field(default=12, ge=1, le=32)
+    track_frame_interval: int = Field(default=2, ge=1, le=120)
+    variant_early_stop_confidence: float | None = Field(default=0.95, ge=0, le=1)
+    consensus_stop_min_observations: int | None = Field(default=3, ge=2, le=64)
+    consensus_stop_min_confidence: float = Field(default=0.90, ge=0, le=1)
 
     @model_validator(mode="after")
     def validate_partial_length_range(self) -> OCRConfig:
         if self.partial_max_characters < self.partial_min_characters:
             raise ValueError("partial plate maximum cannot be below its minimum")
+        if (
+            self.variant_early_stop_confidence is not None
+            and self.variant_early_stop_confidence < self.minimum_confidence
+        ):
+            raise ValueError("OCR variant early-stop confidence cannot be below the minimum")
+        if self.consensus_stop_min_confidence < self.minimum_confidence:
+            raise ValueError("OCR consensus-stop confidence cannot be below the minimum")
         return self
 
 
@@ -466,8 +489,7 @@ class OIDCConfig(BaseModel):
     @model_validator(mode="after")
     def validate_security(self) -> OIDCConfig:
         if not self.allow_insecure_http and (
-            urlsplit(self.issuer).scheme != "https"
-            or urlsplit(self.jwks_url).scheme != "https"
+            urlsplit(self.issuer).scheme != "https" or urlsplit(self.jwks_url).scheme != "https"
         ):
             raise ValueError("OIDC requires HTTPS unless allow_insecure_http is explicit")
         if not self.audiences:
@@ -610,7 +632,7 @@ class VehicleEmbeddingConfig(BaseModel):
 
 class ReIDConfig(BaseModel):
     enabled: bool = True
-    scoring_version: str = "reid-score-v1"
+    scoring_version: str = "reid-score-v2"
     plate_weight: float = Field(default=0.40, ge=0, le=1)
     embedding_weight: float = Field(default=0.25, ge=0, le=1)
     vehicle_type_weight: float = Field(default=0.10, ge=0, le=1)
@@ -618,6 +640,8 @@ class ReIDConfig(BaseModel):
     travel_time_weight: float = Field(default=0.20, ge=0, le=1)
     match_threshold: float = Field(default=0.88, ge=0, le=1)
     review_threshold: float = Field(default=0.65, ge=0, le=1)
+    minimum_match_evidence_coverage: float = Field(default=0.40, ge=0, le=1)
+    minimum_match_identifying_coverage: float = Field(default=0.25, gt=0, le=1)
     maximum_scored_candidates: int = Field(default=100, ge=1, le=500)
 
     @model_validator(mode="after")
@@ -633,8 +657,14 @@ class ReIDConfig(BaseModel):
             self.color_weight,
             self.travel_time_weight,
         )
-        if sum(weights) <= 0:
+        total_weight = sum(weights)
+        if total_weight <= 0:
             raise ValueError("at least one ReID score weight must be positive")
+        maximum_identifying_coverage = (self.plate_weight + self.embedding_weight) / total_weight
+        if self.minimum_match_identifying_coverage > maximum_identifying_coverage:
+            raise ValueError(
+                "minimum ReID identifying coverage exceeds configured plate/embedding weights"
+            )
         return self
 
 
@@ -654,16 +684,73 @@ class IdentityConfig(BaseModel):
 class GPUSchedulerConfig(BaseModel):
     enabled: bool = False
     maximum_cameras: int = Field(default=32, ge=1, le=1024)
+    maximum_clients: int = Field(default=128, ge=4, le=256)
     maximum_batch_size: int = Field(default=8, ge=1, le=256)
     per_camera_queue_size: int = Field(default=1, ge=1, le=8)
     maximum_frame_age_ms: float = Field(default=250.0, gt=0, le=60_000)
     batch_wait_ms: float = Field(default=5.0, ge=0, le=1000)
+    socket_path: Path = Path("/tmp/vehicle-intelligence/shared-inference.sock")
+    service_command: list[str] = Field(default_factory=lambda: ["vehicle-inference-service"])
+    startup_timeout_seconds: float = Field(default=120.0, gt=0, le=600)
+    shutdown_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+    request_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
+    maximum_payload_bytes: int = Field(
+        default=67_108_864,
+        ge=1_048_576,
+        le=268_435_456,
+    )
+    maximum_inflight_payload_bytes: int = Field(
+        default=268_435_456,
+        ge=1_048_576,
+        le=1_073_741_824,
+    )
+    maximum_images_per_request: int = Field(default=64, ge=1, le=256)
+    maximum_isolation_attempts: int = Field(default=15, ge=1, le=63)
+    camera_failure_threshold: int = Field(default=3, ge=1, le=100)
+    camera_quarantine_seconds: float = Field(default=30.0, gt=0, le=3600)
+    provider_failure_threshold: int = Field(default=3, ge=1, le=100)
+    provider_failure_minimum_cameras: int = Field(default=2, ge=1, le=32)
+
+    @field_validator("socket_path")
+    @classmethod
+    def validate_socket_path(cls, value: Path) -> Path:
+        if not value.is_absolute() or ".." in value.parts or len(str(value).encode("utf-8")) > 100:
+            raise ValueError("GPU inference socket path must be absolute, normalized, and short")
+        return value
+
+    @field_validator("service_command")
+    @classmethod
+    def validate_service_command(cls, value: list[str]) -> list[str]:
+        if not value or any(not part.strip() for part in value):
+            raise ValueError("GPU inference service command requires non-empty arguments")
+        return value
 
     @model_validator(mode="after")
     def validate_batch_capacity(self) -> GPUSchedulerConfig:
-        maximum_pending = self.maximum_cameras * self.per_camera_queue_size
-        if self.maximum_batch_size > maximum_pending:
-            raise ValueError("GPU batch size cannot exceed total scheduler capacity")
+        if self.maximum_batch_size > self.maximum_images_per_request:
+            raise ValueError("GPU batch size cannot exceed the IPC image bound")
+        minimum_isolation_attempts = 2 * (self.maximum_batch_size - 1).bit_length() + 1
+        if self.maximum_isolation_attempts < minimum_isolation_attempts:
+            raise ValueError(
+                "GPU isolation attempts cannot isolate one failing image within a batch"
+            )
+        if self.provider_failure_minimum_cameras > self.maximum_cameras:
+            raise ValueError("GPU provider failure camera minimum cannot exceed camera capacity")
+        if self.maximum_inflight_payload_bytes < self.maximum_payload_bytes:
+            raise ValueError("GPU inflight payload budget cannot be smaller than one payload")
+        if (
+            self.maximum_cameras > 1
+            and self.maximum_inflight_payload_bytes < self.maximum_payload_bytes * 2
+        ):
+            raise ValueError(
+                "GPU inflight payload budget must reserve one payload for a peer camera"
+            )
+        effective_queue_deadline_ms = min(
+            self.maximum_frame_age_ms,
+            self.request_timeout_seconds * 1000,
+        )
+        if self.batch_wait_ms >= effective_queue_deadline_ms:
+            raise ValueError("GPU batch wait must be shorter than request/frame deadlines")
         return self
 
 
@@ -812,6 +899,7 @@ class ExternalActionTargetConfig(BaseModel):
 class RuleEngineConfig(BaseModel):
     enabled: bool = True
     evaluation_max_rules: int = Field(default=1000, ge=1, le=10000)
+    rule_cache_ttl_seconds: float = Field(default=2.0, ge=0.1, le=300)
     action_timeout_seconds: float = Field(default=5.0, gt=0, le=120)
     action_max_attempts: int = Field(default=3, ge=1, le=20)
     action_claim_stale_seconds: float = Field(default=60.0, gt=0, le=3600)
@@ -846,8 +934,10 @@ class RedisConfig(BaseModel):
     max_length: int = Field(default=100_000, ge=100)
     dead_letter_max_length: int = Field(default=10_000, ge=10)
     batch_size: int = Field(default=25, ge=1, le=1000)
+    worker_concurrency: int = Field(default=8, ge=1, le=128)
     block_ms: int = Field(default=1000, ge=1, le=60_000)
     claim_idle_ms: int = Field(default=30_000, ge=1000)
+    reclaim_interval_ms: int = Field(default=5000, ge=100, le=60_000)
     connection_timeout_ms: int = Field(default=3000, ge=100)
     retry_delay_seconds: float = Field(default=1.0, gt=0, le=60)
     delete_after_ack: bool = True
@@ -932,6 +1022,29 @@ class StorageConfig(BaseModel):
     clips: bool = False
 
 
+class FinalizationOutboxConfig(BaseModel):
+    enabled: bool = True
+    maximum_entries: int = Field(default=10_000, ge=1, le=1_000_000)
+    maximum_bytes: int = Field(
+        default=4 * 1024 * 1024 * 1024,
+        ge=1024 * 1024,
+        le=1024 * 1024 * 1024 * 1024,
+    )
+    maximum_entry_bytes: int = Field(
+        default=32 * 1024 * 1024,
+        ge=64 * 1024,
+        le=32 * 1024 * 1024,
+    )
+    delivery_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
+    replay_interval_seconds: float = Field(default=5.0, gt=0, le=300)
+
+    @model_validator(mode="after")
+    def validate_capacity(self) -> FinalizationOutboxConfig:
+        if self.maximum_entry_bytes > self.maximum_bytes:
+            raise ValueError("finalization outbox entry limit cannot exceed its byte capacity")
+        return self
+
+
 class MongoConfig(BaseModel):
     enabled: bool = False
     uri: SecretStr = SecretStr("mongodb://localhost:27017")
@@ -961,6 +1074,31 @@ class MinioConfig(BaseModel):
     secure: bool = False
     public_secure: bool | None = None
     presigned_url_ttl_seconds: int = Field(default=300, ge=30, le=3600)
+    connect_timeout_seconds: float = Field(
+        default=5.0,
+        gt=0,
+        le=30,
+        allow_inf_nan=False,
+    )
+    read_timeout_seconds: float = Field(
+        default=3.0,
+        gt=0,
+        le=120,
+        allow_inf_nan=False,
+    )
+    maximum_retries: int = Field(default=0, ge=0, le=5)
+    retry_backoff_seconds: float = Field(
+        default=0.2,
+        ge=0,
+        le=10,
+        allow_inf_nan=False,
+    )
+    retry_backoff_max_seconds: float = Field(
+        default=2.0,
+        ge=0,
+        le=30,
+        allow_inf_nan=False,
+    )
 
     @field_validator("endpoint", "public_endpoint")
     @classmethod
@@ -986,6 +1124,24 @@ class MinioConfig(BaseModel):
             raise ValueError("MinIO region is invalid")
         return stripped
 
+    @model_validator(mode="after")
+    def validate_retry_backoff(self) -> MinioConfig:
+        if self.retry_backoff_seconds > self.retry_backoff_max_seconds:
+            raise ValueError("MinIO retry backoff cannot exceed its maximum")
+        return self
+
+
+_RESERVED_OBSERVABILITY_PATHS = frozenset(
+    {
+        "/docs",
+        "/docs/oauth2-redirect",
+        "/livez",
+        "/openapi.json",
+        "/readyz",
+        "/redoc",
+    }
+)
+
 
 class ObservabilityConfig(BaseModel):
     prometheus_enabled: bool = True
@@ -1005,6 +1161,12 @@ class ObservabilityConfig(BaseModel):
         stripped = value.strip()
         if not stripped.startswith("/") or stripped.endswith("/") or "{" in stripped:
             raise ValueError("Prometheus path must be an absolute static path")
+        if (
+            stripped in _RESERVED_OBSERVABILITY_PATHS
+            or stripped == "/api"
+            or stripped.startswith("/api/")
+        ):
+            raise ValueError("Prometheus path collides with a reserved application path")
         return stripped
 
     @field_validator("service_name", "service_version")
@@ -1110,20 +1272,58 @@ class Settings(BaseSettings):
     dataset_export: DatasetExportConfig = Field(default_factory=DatasetExportConfig)
     dataset_review: DatasetReviewConfig = Field(default_factory=DatasetReviewConfig)
     dataset_registry: DatasetRegistryConfig = Field(default_factory=DatasetRegistryConfig)
-    model_training: ModelTrainingRuntimeConfig = Field(
-        default_factory=ModelTrainingRuntimeConfig
-    )
+    model_training: ModelTrainingRuntimeConfig = Field(default_factory=ModelTrainingRuntimeConfig)
     event_bus: EventBusConfig = Field(default_factory=EventBusConfig)
     rule_engine: RuleEngineConfig = Field(default_factory=RuleEngineConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
     realtime: RealtimeConfig = Field(default_factory=RealtimeConfig)
     live_monitor: LiveMonitorConfig = Field(default_factory=LiveMonitorConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
+    finalization_outbox: FinalizationOutboxConfig = Field(default_factory=FinalizationOutboxConfig)
     mongodb: MongoConfig = Field(default_factory=MongoConfig)
     minio: MinioConfig = Field(default_factory=MinioConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
     debug: DebugConfig = Field(default_factory=DebugConfig)
+
+    def validate_camera_finalization_budget(self) -> None:
+        """Validate the delivery budget only for a camera pipeline process."""
+
+        if self.storage.backend != "minio" or not self.finalization_outbox.enabled:
+            return
+
+        # A new camera namespace can issue HEAD bucket + PUT bucket + three media
+        # PUTs. The explicit non-empty region passed to Minio prevents a separate
+        # region-discovery request. Outbox replay owns retries, so the SDK default
+        # is zero retries; custom retry/backoff settings are charged per request.
+        request_budget_seconds = (
+            self.minio.connect_timeout_seconds + self.minio.read_timeout_seconds
+        ) * (self.minio.maximum_retries + 1) + (
+            self.minio.retry_backoff_max_seconds * self.minio.maximum_retries
+        )
+        if self.event_bus.backend == "redis":
+            redis_connect_seconds = self.redis.connection_timeout_ms / 1000
+            redis_command_seconds = max(
+                redis_connect_seconds,
+                self.redis.block_ms / 1000 + 1,
+            )
+            publisher_budget_seconds = redis_connect_seconds + redis_command_seconds
+        elif self.mongodb.enabled:
+            publisher_budget_seconds = (
+                self.mongodb.server_selection_timeout_ms
+                + self.mongodb.connect_timeout_ms
+                + self.mongodb.socket_timeout_ms
+            ) / 1000
+        else:
+            # The single-writer JSONL development fallback has no network timer.
+            publisher_budget_seconds = 3.0
+        first_delivery_budget_seconds = 5 * request_budget_seconds + publisher_budget_seconds
+        if first_delivery_budget_seconds >= self.finalization_outbox.delivery_timeout_seconds:
+            raise ValueError(
+                "MinIO first-delivery HTTP and publisher budget must be below "
+                "finalization outbox delivery_timeout_seconds; reduce MinIO "
+                "timeouts/retries or increase the outbox timeout"
+            )
 
     @classmethod
     def settings_customise_sources(

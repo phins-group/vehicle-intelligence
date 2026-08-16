@@ -122,9 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
     first_party.add_argument(
         "--output",
         type=Path,
-        default=Path(
-            "datasets/source/plate-first-party/phins-vn-plate-production-source-v1"
-        ),
+        default=Path("datasets/source/plate-first-party/phins-vn-plate-production-source-v1"),
     )
     first_party.add_argument(
         "--source-id",
@@ -206,9 +204,7 @@ def build_parser() -> argparse.ArgumentParser:
     promote_video_reviews.add_argument(
         "--base-source",
         type=Path,
-        default=Path(
-            "datasets/source/plate-first-party/phins-vn-plate-production-source-v2"
-        ),
+        default=Path("datasets/source/plate-first-party/phins-vn-plate-production-source-v2"),
     )
     promote_video_reviews.add_argument(
         "--target-source-id",
@@ -405,9 +401,7 @@ def run(args: argparse.Namespace) -> int:
     if args.command_name == "extract-video-samples":
         return _extract_video_samples(args, settings)
     if args.command_name == "stage-video-plate-review-source":
-        output = args.output or (
-            Path("datasets/source/plate-first-party") / args.source_id
-        )
+        output = args.output or (Path("datasets/source/plate-first-party") / args.source_id)
         result = VideoPlateReviewSourceBuilder(
             extraction_directory=args.input,
             output_directory=output,
@@ -440,8 +434,7 @@ def run(args: argparse.Namespace) -> int:
             _completed_review_decisions(runtime_settings, args.source_id)
         )
         output = args.output or (
-            runtime_settings.dataset_review.promoted_sources_directory
-            / args.target_source_id
+            runtime_settings.dataset_review.promoted_sources_directory / args.target_source_id
         )
         rights_holder = args.rights_holder or settings.corpus.founder_id
         attested_by = args.attested_by or settings.corpus.founder_id
@@ -901,7 +894,9 @@ def _predict(
             "model_classes": (
                 args.model_classes
                 if args.model_classes is not None
-                else list(target_classes) if args.model is not None else None
+                else list(target_classes)
+                if args.model is not None
+                else None
             ),
         }.items()
         if value is not None

@@ -85,8 +85,7 @@ def _validate_url(value: str) -> None:
         or parsed.password is not None
         or parsed.port not in {None, 443}
         or not any(
-            host == suffix or host.endswith(f".{suffix}")
-            for suffix in _ALLOWED_HOST_SUFFIXES
+            host == suffix or host.endswith(f".{suffix}") for suffix in _ALLOWED_HOST_SUFFIXES
         )
     ):
         raise SampleDataAcquisitionError("bootstrap URL is outside the HTTPS allowlist")

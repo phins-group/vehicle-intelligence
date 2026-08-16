@@ -56,9 +56,9 @@
 
   <div class="plate-history-layout">
     <section class="panel plate-timeline-panel">
-      <div class="panel-heading"><div><h2>Lịch sử observation</h2><p>Từ cũ đến mới trong tập đã tải</p></div><span class="timeline-count">{{ timeline().length }} events</span></div>
+      <div class="panel-heading"><div><h2>Lịch sử observation</h2><p>Từ cũ đến mới · đang hiển thị {{ timelineWindow().start + 1 }}–{{ timelineWindow().end }} / {{ timelineWindow().total }}</p></div><span class="timeline-count">{{ timeline().length }} events</span></div>
       <ol class="plate-timeline">
-        @for (event of timeline(); track event._id) {
+        @for (event of timelineWindow().items; track event._id) {
           <li>
             <time><strong>{{ event.occurredAt | date: 'HH:mm:ss' }}</strong><span>{{ event.occurredAt | date: 'dd/MM/yyyy' }}</span></time>
             <span class="timeline-marker" [class.enter]="event.direction === 'ENTER'" [class.exit]="event.direction === 'EXIT'"></span>
@@ -72,6 +72,12 @@
           </li>
         }
       </ol>
+      @if (timelineWindow().hasPrevious || timelineWindow().hasNext) {
+        <div class="load-more heading-actions" aria-label="Điều hướng lịch sử đã tải">
+          <button class="button ghost" type="button" (click)="showOlderTimeline()" [disabled]="!timelineWindow().hasPrevious">100 cũ hơn</button>
+          <button class="button ghost" type="button" (click)="showNewerTimeline()" [disabled]="!timelineWindow().hasNext">100 mới hơn</button>
+        </div>
+      }
       @if (nextCursor() && !clientBoundReached()) { <div class="load-more"><button class="button secondary" type="button" (click)="loadMore()" [disabled]="loadingMore()">{{ loadingMore() ? 'Đang tải…' : 'Tải observation cũ hơn' }}</button></div> }
       @if (clientBoundReached()) { <div class="history-bound-notice"><svg lucideInfo aria-hidden="true"></svg> Đã đạt giới hạn 500 observation trong bộ nhớ trình duyệt.</div> }
     </section>
@@ -84,9 +90,9 @@
 }
 
 @if (selected(); as event) {
-  <button class="drawer-backdrop" type="button" aria-label="Đóng chi tiết" (click)="closeDetails()"></button>
-  <aside class="detail-drawer wide" aria-label="Chi tiết observation">
-    <div class="drawer-heading"><div><p class="eyebrow">PLATE OBSERVATION</p><h2>{{ displayPlate(event) }}</h2></div><button class="icon-button" type="button" aria-label="Đóng" (click)="closeDetails()"><svg lucideX aria-hidden="true"></svg></button></div>
+  <button data-dialog-backdrop class="drawer-backdrop" type="button" aria-label="Đóng chi tiết" (click)="closeDetails()"></button>
+  <aside appAccessibleDialog class="detail-drawer wide" aria-labelledby="vehicle-observation-title" (appDialogDismiss)="closeDetails()">
+    <div class="drawer-heading"><div><p class="eyebrow">PLATE OBSERVATION</p><h2 id="vehicle-observation-title">{{ displayPlate(event) }}</h2></div><button data-dialog-initial-focus class="icon-button" type="button" aria-label="Đóng" (click)="closeDetails()"><svg lucideX aria-hidden="true"></svg></button></div>
     <div class="detail-hero"><span class="direction" [class.enter]="event.direction === 'ENTER'" [class.exit]="event.direction === 'EXIT'">{{ event.direction }}</span><span class="status-pill" [attr.data-status]="event.status">{{ event.status }}</span></div>
     <dl class="detail-list">
       <div><dt><svg lucideClock aria-hidden="true"></svg> Thời gian</dt><dd>{{ event.occurredAt | date: 'dd/MM/yyyy HH:mm:ss' }}</dd></div>

@@ -3,10 +3,13 @@
 ## Event-path benchmark
 
 `scripts/benchmark_event_path.py` drives versioned events through real Redis
-Streams, the production worker, and MongoDB. It then redelivers a configured
-fraction, injects one invalid contract, checks Mongo cardinality, pending count,
-DLQ count, throughput, p95 worker-batch time, error rate, and process RSS growth.
-All test documents and namespaced streams are removed in `finally`.
+Streams and the same worker composition as the production CLI: durable event
+write, identity/fingerprint linking, cached rule evaluation plus idempotent
+action, and realtime publication. It then redelivers a configured fraction,
+injects one invalid contract, and verifies every production stage in addition to
+Mongo cardinality, pending/DLQ counts, throughput, p95 worker-batch time, error
+rate, and process RSS growth. Each run uses a unique benchmark database and
+stream namespace, both removed in `finally`.
 
 Burst example:
 
@@ -51,6 +54,28 @@ Set them above measured healthy p99 latency but below the outage-detection SLO.
 Redis commands similarly use bounded connect and command timeouts. Recovery relies
 on durable Redis pending entries and Mongo/action unique keys, not in-memory retry
 state.
+
+## Required real-service CI gate
+
+The `Quality` workflow has a separate required job named
+`Real services (MongoDB replica set, Redis, MinIO)`. It starts the digest-pinned
+Compose services, initializes and verifies MongoDB replica-set primary state,
+checks Redis and MinIO readiness, then runs every integration file gated by
+`TEST_MONGODB_URI`, `TEST_REDIS_URL`, or `TEST_MINIO_ENDPOINT`.
+
+The runner invokes `scripts/run_real_service_tests.py` with `--fail-on-skip`.
+Missing connection settings fail before pytest starts, and any selected test that
+still skips changes the job result to failure. A unit contract also fails when a
+new environment-gated integration file is not added to the required manifest.
+
+Run the same gate against already-started local services with:
+
+```bash
+TEST_MONGODB_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true' \
+TEST_REDIS_URL='redis://127.0.0.1:6379/15' \
+TEST_MINIO_ENDPOINT='127.0.0.1:9000' \
+uv run --locked python scripts/run_real_service_tests.py
+```
 
 ## Operational acceptance order
 

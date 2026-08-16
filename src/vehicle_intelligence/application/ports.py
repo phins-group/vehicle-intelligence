@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import Protocol, TypeVar, runtime_checkable
 
 import numpy as np
@@ -196,6 +197,12 @@ class CameraConnectionTestResult:
             raise ValueError("camera connection test timestamp must be timezone-aware")
 
 
+class CameraCreateOutcome(StrEnum):
+    CREATED = "CREATED"
+    CONFLICT = "CONFLICT"
+    CAPACITY_REACHED = "CAPACITY_REACHED"
+
+
 DetectorOutput = TypeVar("DetectorOutput")
 
 
@@ -211,9 +218,7 @@ class VehicleDetector(Detector[Detection], Protocol):
 
 @runtime_checkable
 class BatchVehicleDetector(Protocol):
-    def detect_batch(
-        self, images: Sequence[NDArray[np.uint8]]
-    ) -> list[list[Detection]]: ...
+    def detect_batch(self, images: Sequence[NDArray[np.uint8]]) -> list[list[Detection]]: ...
 
 
 @runtime_checkable
@@ -223,9 +228,7 @@ class PlateDetector(Detector[PlateDetection], Protocol):
 
 @runtime_checkable
 class BatchPlateDetector(Protocol):
-    def detect_batch(
-        self, images: Sequence[NDArray[np.uint8]]
-    ) -> list[list[PlateDetection]]: ...
+    def detect_batch(self, images: Sequence[NDArray[np.uint8]]) -> list[list[PlateDetection]]: ...
 
 
 @runtime_checkable
@@ -271,6 +274,31 @@ class ImageEncoder(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class DatasetImageTranscodeResult:
+    jpeg: bytes | None
+    error_code: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.jpeg is None) == (self.error_code is None):
+            raise ValueError("dataset image transcode result must contain JPEG data or an error")
+        if self.jpeg == b"":
+            raise ValueError("normalized dataset JPEG cannot be empty")
+        if self.error_code is not None and not self.error_code.strip():
+            raise ValueError("dataset image transcode error code cannot be blank")
+
+
+@runtime_checkable
+class DatasetImageTranscoder(Protocol):
+    def normalize_jpeg(
+        self,
+        source: bytes,
+        *,
+        maximum_pixels: int,
+        jpeg_quality: int,
+    ) -> DatasetImageTranscodeResult: ...
+
+
+@dataclass(frozen=True, slots=True)
 class EncodedLivePreview:
     jpeg: bytes
     width: int
@@ -299,6 +327,11 @@ class LivePreviewSink(Protocol):
 @runtime_checkable
 class MediaStorage(Protocol):
     async def put(self, key: str, data: bytes, content_type: str) -> str: ...
+
+
+@runtime_checkable
+class MediaStorageLifecycle(Protocol):
+    async def close(self) -> None: ...
 
 
 @runtime_checkable
@@ -378,11 +411,19 @@ class CameraRepository(Protocol):
 
     async def create(self, camera: Camera) -> bool: ...
 
+    async def create_with_capacity(
+        self,
+        camera: Camera,
+        maximum_cameras: int,
+    ) -> CameraCreateOutcome: ...
+
     async def replace(self, camera: Camera, expected_revision: int) -> bool: ...
 
     async def get(self, camera_id: str) -> Camera | None: ...
 
     async def list(self, enabled_only: bool = False) -> list[Camera]: ...
+
+    async def count(self) -> int: ...
 
     async def delete(self, camera_id: str) -> bool: ...
 
@@ -428,6 +469,22 @@ class CameraWorkerHandle(Protocol):
 @runtime_checkable
 class CameraWorkerLauncher(Protocol):
     async def start(self, camera: Camera) -> CameraWorkerHandle: ...
+
+
+@runtime_checkable
+class InferenceServiceHandle(Protocol):
+    @property
+    def running(self) -> bool: ...
+
+    @property
+    def return_code(self) -> int | None: ...
+
+    async def stop(self) -> None: ...
+
+
+@runtime_checkable
+class InferenceServiceLauncher(Protocol):
+    async def start(self) -> InferenceServiceHandle: ...
 
 
 @runtime_checkable
@@ -525,6 +582,11 @@ class VehicleIdentityRepository(Protocol):
     async def get(self, vehicle_id: str) -> VehicleIdentity | None: ...
 
     async def get_fingerprint(self, fingerprint_id: str) -> VehicleFingerprint | None: ...
+
+    async def get_fingerprints(
+        self,
+        fingerprint_ids: tuple[str, ...],
+    ) -> tuple[VehicleFingerprint, ...]: ...
 
     async def list_fingerprints(
         self,
@@ -787,6 +849,8 @@ class EventMessageConsumer(Protocol):
     async def reclaim_stale(self) -> list[BrokerMessage]: ...
 
     async def acknowledge(self, message_id: str) -> None: ...
+
+    async def acknowledge_many(self, message_ids: tuple[str, ...]) -> None: ...
 
     async def dead_letter(self, message: BrokerMessage, reason: str) -> None: ...
 

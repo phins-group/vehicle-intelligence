@@ -10,41 +10,10 @@ import socket
 import uuid
 from pathlib import Path
 
-from vehicle_intelligence.application.actions import (
-    ActionEngine,
-    AlertActionHandler,
-    HttpActionHandler,
-    LogActionHandler,
-)
-from vehicle_intelligence.application.event_policy import VehicleEventPolicyProcessor
-from vehicle_intelligence.application.event_worker import VehicleEventWorker
-from vehicle_intelligence.application.identity import (
-    CompositeVehicleEventPostProcessor,
-    VehicleIdentityProcessor,
-)
-from vehicle_intelligence.application.ports import VehicleEventPostProcessor
-from vehicle_intelligence.application.rules import RuleEvaluator
 from vehicle_intelligence.config import load_settings
-from vehicle_intelligence.domain import RuleActionType
 from vehicle_intelligence.exceptions import ConfigurationError, VehicleIntelligenceError
-from vehicle_intelligence.infrastructure.messaging.codec import JsonEventEnvelopeCodec
-from vehicle_intelligence.infrastructure.messaging.realtime_redis import (
-    RedisRealtimeEventPublisher,
-)
-from vehicle_intelligence.infrastructure.messaging.redis_streams import (
-    RedisStreamEventConsumer,
-)
-from vehicle_intelligence.infrastructure.persistence.identity_mongo import (
-    MongoVehicleIdentityRepository,
-)
-from vehicle_intelligence.infrastructure.persistence.mongo import MongoVehicleEventRepository
 from vehicle_intelligence.infrastructure.persistence.mongo_runtime import MongoRuntime
-from vehicle_intelligence.infrastructure.persistence.policy_mongo import (
-    MongoActionExecutionRepository,
-    MongoAlertRepository,
-    MongoRuleRepository,
-    MongoWatchlistRepository,
-)
+from vehicle_intelligence.interfaces.event_worker_composition import build_event_worker
 from vehicle_intelligence.logging_config import configure_logging
 
 
@@ -73,66 +42,15 @@ async def run(args: argparse.Namespace) -> int:
     if not settings.mongodb.enabled:
         raise ConfigurationError("event worker requires mongodb.enabled=true")
 
-    codec = JsonEventEnvelopeCodec()
-    consumer = RedisStreamEventConsumer(
-        settings.redis,
-        args.consumer_name or default_consumer_name(),
-    )
     mongo_runtime = MongoRuntime(settings.mongodb)
-    repository = MongoVehicleEventRepository(mongo_runtime)
-    realtime_publisher = (
-        RedisRealtimeEventPublisher(settings.redis, settings.realtime, codec)
-        if settings.realtime.enabled
-        else None
-    )
-    post_processors: list[VehicleEventPostProcessor] = []
-    if settings.identity.enabled:
-        post_processors.append(
-            VehicleIdentityProcessor(
-                MongoVehicleIdentityRepository(mongo_runtime),
-                repository,
-                settings.identity,
-            )
-        )
-    if settings.rule_engine.enabled:
-        alert_handler = AlertActionHandler(MongoAlertRepository(mongo_runtime))
-        http_handler = HttpActionHandler(settings.rule_engine)
-        action_engine = ActionEngine(
-            MongoActionExecutionRepository(mongo_runtime),
-            {
-                RuleActionType.CREATE_ALERT: alert_handler,
-                RuleActionType.LOG: LogActionHandler(),
-                RuleActionType.OPEN_BARRIER: http_handler,
-                RuleActionType.WEBHOOK: http_handler,
-                RuleActionType.HTTP_REQUEST: http_handler,
-                RuleActionType.NOTIFICATION: http_handler,
-            },
-            settings.rule_engine,
-        )
-        post_processors.append(
-            VehicleEventPolicyProcessor(
-                MongoWatchlistRepository(mongo_runtime),
-                MongoRuleRepository(mongo_runtime),
-                RuleEvaluator(),
-                action_engine,
-                settings.rule_engine.evaluation_max_rules,
-            )
-        )
-    post_processor = (
-        None
-        if not post_processors
-        else post_processors[0]
-        if len(post_processors) == 1
-        else CompositeVehicleEventPostProcessor(tuple(post_processors))
-    )
-    worker = VehicleEventWorker(
-        consumer,
-        repository,
-        codec,
-        retry_delay_seconds=settings.redis.retry_delay_seconds,
-        post_processor=post_processor,
-        realtime_publisher=realtime_publisher,
-    )
+    worker = build_event_worker(
+        mongo_runtime,
+        settings.redis,
+        settings.identity,
+        settings.rule_engine,
+        settings.realtime,
+        args.consumer_name or default_consumer_name(),
+    ).worker
 
     await mongo_runtime.initialize()
     try:

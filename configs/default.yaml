@@ -95,6 +95,12 @@ vision:
     detection_model_name: PP-OCRv5_mobile_det
     model_name: PP-OCRv5_mobile_rec
     model_version: PP-OCRv5
+    # Production must use explicit local directories plus hashes from
+    # scripts/hash_model_artifact.py; null permits Paddle-managed downloads in development.
+    detection_model_directory: null
+    detection_model_hash: null
+    recognition_model_directory: null
+    recognition_model_hash: null
     device: cpu
     language: en
     # Keep incomplete motorcycle OCR (for example "006.05") for human review.
@@ -102,6 +108,13 @@ vision:
     allow_partial_plate: true
     partial_min_characters: 4
     partial_max_characters: 12
+    # Run OCR on the first eligible plate, then at most every N observed track frames.
+    track_frame_interval: 2
+    # Stop slower variants after a valid high-confidence read; null evaluates every variant.
+    variant_early_stop_confidence: 0.95
+    # Stop OCR after identical complete high-confidence reads; null disables consensus stop.
+    consensus_stop_min_observations: 3
+    consensus_stop_min_confidence: 0.90
   snapshot_selection:
     sharpness_reference: 220.0
     vehicle_area_weight: 0.35
@@ -204,7 +217,7 @@ identity:
     device: cpu
   reid:
     enabled: true
-    scoring_version: reid-score-v1
+    scoring_version: reid-score-v2
     plate_weight: 0.40
     embedding_weight: 0.25
     vehicle_type_weight: 0.10
@@ -212,15 +225,32 @@ identity:
     travel_time_weight: 0.20
     match_threshold: 0.88
     review_threshold: 0.65
+    # MATCH requires enough total evidence and at least one meaningful plate/embedding signal.
+    minimum_match_evidence_coverage: 0.40
+    minimum_match_identifying_coverage: 0.25
     maximum_scored_candidates: 100
 
 gpu_scheduler:
   enabled: false
   maximum_cameras: 32
+  maximum_clients: 128
   maximum_batch_size: 8
   per_camera_queue_size: 1
   maximum_frame_age_ms: 250
   batch_wait_ms: 5
+  socket_path: /tmp/vehicle-intelligence/shared-inference.sock
+  service_command: [vehicle-inference-service]
+  startup_timeout_seconds: 120
+  shutdown_timeout_seconds: 20
+  request_timeout_seconds: 10
+  maximum_payload_bytes: 67108864
+  maximum_inflight_payload_bytes: 268435456
+  maximum_images_per_request: 64
+  maximum_isolation_attempts: 15
+  camera_failure_threshold: 3
+  camera_quarantine_seconds: 30
+  provider_failure_threshold: 3
+  provider_failure_minimum_cameras: 2
 
 model_quality:
   default_window_days: 30
@@ -280,6 +310,7 @@ event_bus:
 rule_engine:
   enabled: true
   evaluation_max_rules: 1000
+  rule_cache_ttl_seconds: 2.0
   action_timeout_seconds: 5.0
   action_max_attempts: 3
   action_claim_stale_seconds: 60.0
@@ -296,8 +327,10 @@ redis:
   max_length: 100000
   dead_letter_max_length: 10000
   batch_size: 25
+  worker_concurrency: 8
   block_ms: 1000
   claim_idle_ms: 30000
+  reclaim_interval_ms: 5000
   connection_timeout_ms: 3000
   retry_delay_seconds: 1.0
   delete_after_ack: true
@@ -336,6 +369,14 @@ storage:
   plate_crops: true
   clips: false
 
+finalization_outbox:
+  enabled: true
+  maximum_entries: 10000
+  maximum_bytes: 4294967296
+  maximum_entry_bytes: 33554432
+  delivery_timeout_seconds: 60.0
+  replay_interval_seconds: 5.0
+
 mongodb:
   enabled: false
   uri: mongodb://localhost:27017
@@ -356,6 +397,13 @@ minio:
   secure: false
   public_secure: null
   presigned_url_ttl_seconds: 300
+  # Outbox replay owns retry/backoff. These bounded LAN request defaults leave
+  # room for first-use bucket creation, three media PUTs, and event publication.
+  connect_timeout_seconds: 5.0
+  read_timeout_seconds: 3.0
+  maximum_retries: 0
+  retry_backoff_seconds: 0.2
+  retry_backoff_max_seconds: 2.0
 
 observability:
   prometheus_enabled: true

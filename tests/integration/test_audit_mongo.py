@@ -87,4 +87,3 @@ async def test_mongo_audit_log_is_append_only_indexed_and_redacted() -> None:
     finally:
         await repository._collection.delete_many({"resource.id": f"gate-{suffix}"})
         await service.close()
-

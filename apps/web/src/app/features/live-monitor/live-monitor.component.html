@@ -1,137 +1,376 @@
 <div class="page-heading live-monitor-heading">
   <div>
     <h1 class="page-title">Live Monitor</h1>
-    <p>Preview độ phân giải giới hạn, đồng bộ với metadata AI; không dùng event WebSocket để chở raw frame.</p>
+    <p>
+      Preview độ phân giải giới hạn, đồng bộ với metadata AI; không dùng event
+      WebSocket để chở raw frame.
+    </p>
   </div>
   <div class="heading-actions">
     <label class="camera-selector">
       <span>Camera</span>
-      <select [ngModel]="selectedCameraId()" (ngModelChange)="selectCamera($event)" [disabled]="loading() || !cameras().length">
+      <select
+        [ngModel]="selectedCameraId()"
+        (ngModelChange)="selectCamera($event)"
+        [disabled]="loading() || !cameras().length"
+      >
         @for (camera of cameras(); track camera.id) {
-          <option [value]="camera.id">{{ camera.name }} · {{ camera.location.zone || camera.id }}</option>
+          <option [value]="camera.id">
+            {{ camera.name }} · {{ camera.location.zone || camera.id }}
+          </option>
         }
       </select>
     </label>
-    <button class="button secondary" type="button" (click)="refresh()" [disabled]="refreshing() || !selectedCameraId()">
+    <button
+      class="button secondary"
+      type="button"
+      (click)="refresh()"
+      [disabled]="refreshing() || !selectedCameraId()"
+    >
       <svg lucideRefreshCw aria-hidden="true" [class.spin]="refreshing()"></svg>
       Làm mới
+    </button>
+    <button
+      class="button secondary"
+      type="button"
+      (click)="togglePause()"
+      [disabled]="!selectedCameraId()"
+      [attr.aria-pressed]="paused()"
+    >
+      {{ paused() ? "Tiếp tục live" : "Tạm dừng live" }}
     </button>
   </div>
 </div>
 
-@if (error()) {
-  <div class="notice error" role="alert"><svg lucideCircleAlert aria-hidden="true"></svg>{{ error() }}</div>
-}
-
-@if (loading() && !cameras().length) {
-  <section class="panel empty-state">Đang tải camera…</section>
-} @else if (!cameras().length) {
-  <section class="panel empty-state">
-    <svg lucideCctv aria-hidden="true"></svg>
-    <strong>Chưa có camera đang bật</strong>
-    <span>Bật ít nhất một camera trong Camera Manager để nhận live preview.</span>
+@if (loading() && !loadState.hasLoaded()) {
+  <section class="panel empty-state" role="status" aria-live="polite">
+    Đang tải camera…
+  </section>
+} @else if (loadState.initialError(); as loadError) {
+  <section class="panel empty-state" role="alert">
+    <strong>{{ loadError }}</strong>
+    <span>Chưa có dữ liệu camera để khởi tạo live preview.</span>
+    <button class="button secondary" type="button" (click)="loadCameras()">
+      Thử lại
+    </button>
   </section>
 } @else {
-  <section class="live-monitor-layout">
-    <div class="panel live-stage-panel">
-      <div class="live-stage-toolbar">
-        <div>
-          <span class="live-indicator" [attr.data-status]="state()?.status || 'WAITING'"><i></i>{{ state()?.status || 'WAITING' }}</span>
-          <strong>{{ selectedCamera()?.name }}</strong>
-          <small>{{ selectedCamera()?.location?.name || selectedCamera()?.id }}</small>
-        </div>
-        @if (renderedFrame(); as frame) {
-          <dl class="live-inline-stats">
-            <div><dt>Frame</dt><dd>{{ frame.frameId }}</dd></div>
-            <div><dt>Epoch</dt><dd>{{ frame.streamEpoch }}</dd></div>
-            <div><dt>Tracks</dt><dd>{{ frame.vehicles.length }}</dd></div>
-          </dl>
-        }
-      </div>
+  @if (loadState.staleError(); as loadError) {
+    <div class="notice error" role="alert">
+      {{ loadError }} Danh sách camera trước đó vẫn được giữ nguyên.
+    </div>
+  }
+  @if (error()) {
+    <div class="notice error" role="alert">
+      <svg lucideCircleAlert aria-hidden="true"></svg>{{ error() }}
+    </div>
+  }
 
-      <div class="live-stage" [attr.data-status]="state()?.status || 'WAITING'">
-        @if (imageUrl() && renderedFrame(); as frame) {
-          <div class="live-frame-shell" [style.aspect-ratio]="frame.previewWidth + ' / ' + frame.previewHeight">
-            <img [src]="imageUrl()" [alt]="'Live preview ' + (selectedCamera()?.name || selectedCameraId())">
-            <svg class="live-overlay" [attr.viewBox]="'0 0 ' + frame.sourceWidth + ' ' + frame.sourceHeight" preserveAspectRatio="none" aria-hidden="true">
-              @if (visibility().roi && frame.vehicleRoi?.length) {
-                <polygon class="overlay-roi" [attr.points]="points(frame.vehicleRoi)"></polygon>
-              }
-              @if (visibility().crossingLine && frame.crossingLine; as line) {
-                <line class="overlay-crossing" [attr.x1]="line[0][0]" [attr.y1]="line[0][1]" [attr.x2]="line[1][0]" [attr.y2]="line[1][1]"></line>
-              }
-              @for (vehicle of frame.vehicles; track vehicle.trackId) {
-                @if (visibility().vehicleBoxes) {
-                  <rect class="overlay-vehicle" [attr.x]="vehicle.bbox[0]" [attr.y]="vehicle.bbox[1]" [attr.width]="vehicle.bbox[2] - vehicle.bbox[0]" [attr.height]="vehicle.bbox[3] - vehicle.bbox[1]"></rect>
+  @if (!cameras().length) {
+    <section class="panel empty-state">
+      <svg lucideCctv aria-hidden="true"></svg>
+      <strong>Chưa có camera đang bật</strong>
+      <span
+        >Bật ít nhất một camera trong Camera Manager để nhận live preview.</span
+      >
+    </section>
+  } @else {
+    <section class="live-monitor-layout">
+      <div class="panel live-stage-panel">
+        <div class="live-stage-toolbar">
+          <div>
+            <span
+              class="live-indicator"
+              [attr.data-status]="state()?.status || 'WAITING'"
+              ><i></i
+              >{{ paused() ? "PAUSED" : state()?.status || "WAITING" }}</span
+            >
+            <strong>{{ selectedCamera()?.name }}</strong>
+            <small>{{
+              selectedCamera()?.location?.name || selectedCamera()?.id
+            }}</small>
+          </div>
+          @if (renderedFrame(); as frame) {
+            <dl class="live-inline-stats">
+              <div>
+                <dt>Frame</dt>
+                <dd>{{ frame.frameId }}</dd>
+              </div>
+              <div>
+                <dt>Epoch</dt>
+                <dd>{{ frame.streamEpoch }}</dd>
+              </div>
+              <div>
+                <dt>Tracks</dt>
+                <dd>{{ frame.vehicles.length }}</dd>
+              </div>
+            </dl>
+          }
+        </div>
+
+        <div
+          class="live-stage"
+          [attr.data-status]="state()?.status || 'WAITING'"
+        >
+          @if (imageUrl() && renderedFrame(); as frame) {
+            <div
+              class="live-frame-shell"
+              [style.aspect-ratio]="
+                frame.previewWidth + ' / ' + frame.previewHeight
+              "
+            >
+              <img
+                [src]="imageUrl()"
+                [alt]="
+                  'Live preview ' +
+                  (selectedCamera()?.name || selectedCameraId())
+                "
+              />
+              <svg
+                class="live-overlay"
+                [attr.viewBox]="
+                  '0 0 ' + frame.sourceWidth + ' ' + frame.sourceHeight
+                "
+                preserveAspectRatio="none"
+                aria-hidden="true"
+              >
+                @if (visibility().roi && frame.vehicleRoi?.length) {
+                  <polygon
+                    class="overlay-roi"
+                    [attr.points]="points(frame.vehicleRoi)"
+                  ></polygon>
                 }
-                @if (label(vehicle)) {
-                  <g class="overlay-label">
-                    <rect [attr.x]="vehicle.bbox[0]" [attr.y]="labelY(vehicle) - 15" [attr.width]="labelWidth(vehicle)" height="20"></rect>
-                    <text [attr.x]="vehicle.bbox[0] + 7" [attr.y]="labelY(vehicle)">{{ label(vehicle) }}</text>
-                  </g>
+                @if (visibility().crossingLine && frame.crossingLine; as line) {
+                  <line
+                    class="overlay-crossing"
+                    [attr.x1]="line[0][0]"
+                    [attr.y1]="line[0][1]"
+                    [attr.x2]="line[1][0]"
+                    [attr.y2]="line[1][1]"
+                  ></line>
                 }
-                @if (visibility().plateBoxes) {
-                  @if (vehicle.plate; as plate) {
-                    <rect class="overlay-plate" [attr.x]="plate.bbox[0]" [attr.y]="plate.bbox[1]" [attr.width]="plate.bbox[2] - plate.bbox[0]" [attr.height]="plate.bbox[3] - plate.bbox[1]"></rect>
+                @for (vehicle of frame.vehicles; track vehicle.trackId) {
+                  @if (visibility().vehicleBoxes) {
+                    <rect
+                      class="overlay-vehicle"
+                      [attr.x]="vehicle.bbox[0]"
+                      [attr.y]="vehicle.bbox[1]"
+                      [attr.width]="vehicle.bbox[2] - vehicle.bbox[0]"
+                      [attr.height]="vehicle.bbox[3] - vehicle.bbox[1]"
+                    ></rect>
+                  }
+                  @if (label(vehicle)) {
+                    <g class="overlay-label">
+                      <rect
+                        [attr.x]="vehicle.bbox[0]"
+                        [attr.y]="labelY(vehicle) - 15"
+                        [attr.width]="labelWidth(vehicle)"
+                        height="20"
+                      ></rect>
+                      <text
+                        [attr.x]="vehicle.bbox[0] + 7"
+                        [attr.y]="labelY(vehicle)"
+                      >
+                        {{ label(vehicle) }}
+                      </text>
+                    </g>
+                  }
+                  @if (visibility().plateBoxes) {
+                    @if (vehicle.plate; as plate) {
+                      <rect
+                        class="overlay-plate"
+                        [attr.x]="plate.bbox[0]"
+                        [attr.y]="plate.bbox[1]"
+                        [attr.width]="plate.bbox[2] - plate.bbox[0]"
+                        [attr.height]="plate.bbox[3] - plate.bbox[1]"
+                      ></rect>
+                    }
                   }
                 }
-              }
-            </svg>
-          </div>
-        } @else {
-          <div class="live-waiting">
-            <span><svg lucideScanLine aria-hidden="true"></svg></span>
-            <strong>
-              @switch (state()?.status) {
-                @case ('DISABLED') { Camera đang tắt }
-                @case ('OFFLINE') { Kênh preview đang offline }
-                @default { Đang chờ frame preview đầu tiên }
-              }
-            </strong>
-            <small>Vision pipeline vẫn chạy độc lập nếu live preview hoặc Redis tạm thời lỗi.</small>
-          </div>
+              </svg>
+            </div>
+          } @else {
+            <div class="live-waiting">
+              <span><svg lucideScanLine aria-hidden="true"></svg></span>
+              <strong>
+                @switch (state()?.status) {
+                  @case ("DISABLED") {
+                    Camera đang tắt
+                  }
+                  @case ("OFFLINE") {
+                    Kênh preview đang offline
+                  }
+                  @default {
+                    Đang chờ frame preview đầu tiên
+                  }
+                }
+              </strong>
+              <small
+                >Vision pipeline vẫn chạy độc lập nếu live preview hoặc Redis
+                tạm thời lỗi.</small
+              >
+            </div>
+          }
+        </div>
+
+        @if (renderedFrame(); as frame) {
+          <footer class="live-stage-footer">
+            <span
+              ><svg lucideWifi aria-hidden="true"></svg> Nhận
+              {{ frame.receivedAt | date: "dd/MM/yyyy HH:mm:ss" }}</span
+            >
+            <span
+              >{{ frame.previewWidth }}×{{ frame.previewHeight }} preview ·
+              {{ frame.sourceWidth }}×{{ frame.sourceHeight }} source</span
+            >
+          </footer>
         }
       </div>
 
-      @if (renderedFrame(); as frame) {
-        <footer class="live-stage-footer">
-          <span><svg lucideWifi aria-hidden="true"></svg> Nhận {{ frame.receivedAt | date: 'dd/MM/yyyy HH:mm:ss' }}</span>
-          <span>{{ frame.previewWidth }}×{{ frame.previewHeight }} preview · {{ frame.sourceWidth }}×{{ frame.sourceHeight }} source</span>
-        </footer>
-      }
-    </div>
-
-    <aside class="panel overlay-controls" aria-label="Tùy chọn overlay">
-      <div class="panel-heading">
-        <div><h2>Overlay</h2><p>Bật/tắt tại trình duyệt</p></div>
-        <svg lucideSlidersHorizontal aria-hidden="true"></svg>
-      </div>
-      <div class="overlay-toggle-list">
-        <label><input type="checkbox" [checked]="visibility().vehicleBoxes" (change)="toggle('vehicleBoxes')"><span>Vehicle boxes</span></label>
-        <label><input type="checkbox" [checked]="visibility().plateBoxes" (change)="toggle('plateBoxes')"><span>Plate boxes</span></label>
-        <label><input type="checkbox" [checked]="visibility().trackIds" (change)="toggle('trackIds')"><span>Track IDs</span></label>
-        <label><input type="checkbox" [checked]="visibility().plateText" (change)="toggle('plateText')"><span>Plate text</span></label>
-        <label><input type="checkbox" [checked]="visibility().direction" (change)="toggle('direction')"><span>Direction</span></label>
-        <label><input type="checkbox" [checked]="visibility().confidence" (change)="toggle('confidence')"><span>Confidence</span></label>
-        <label><input type="checkbox" [checked]="visibility().roi" (change)="toggle('roi')"><span>Detection ROI</span></label>
-        <label><input type="checkbox" [checked]="visibility().crossingLine" (change)="toggle('crossingLine')"><span>Trigger line</span></label>
-      </div>
-
-      <div class="live-context-card">
-        <span><svg lucideMaximize2 aria-hidden="true"></svg></span>
-        <div>
-          <strong>Tọa độ theo source frame</strong>
-          <p>SVG co giãn cùng preview nên bbox, ROI và line giữ đúng vị trí khi màn hình đổi kích thước.</p>
+      <aside class="panel overlay-controls" aria-label="Tùy chọn overlay">
+        <div class="panel-heading">
+          <div>
+            <h2>Overlay</h2>
+            <p>Bật/tắt tại trình duyệt</p>
+          </div>
+          <svg lucideSlidersHorizontal aria-hidden="true"></svg>
         </div>
-      </div>
+        <div class="overlay-toggle-list">
+          <label
+            ><input
+              type="checkbox"
+              [checked]="visibility().vehicleBoxes"
+              (change)="toggle('vehicleBoxes')"
+            /><span>Vehicle boxes</span></label
+          >
+          <label
+            ><input
+              type="checkbox"
+              [checked]="visibility().plateBoxes"
+              (change)="toggle('plateBoxes')"
+            /><span>Plate boxes</span></label
+          >
+          <label
+            ><input
+              type="checkbox"
+              [checked]="visibility().trackIds"
+              (change)="toggle('trackIds')"
+            /><span>Track IDs</span></label
+          >
+          <label
+            ><input
+              type="checkbox"
+              [checked]="visibility().plateText"
+              (change)="toggle('plateText')"
+            /><span>Plate text</span></label
+          >
+          <label
+            ><input
+              type="checkbox"
+              [checked]="visibility().direction"
+              (change)="toggle('direction')"
+            /><span>Direction</span></label
+          >
+          <label
+            ><input
+              type="checkbox"
+              [checked]="visibility().confidence"
+              (change)="toggle('confidence')"
+            /><span>Confidence</span></label
+          >
+          <label
+            ><input
+              type="checkbox"
+              [checked]="visibility().roi"
+              (change)="toggle('roi')"
+            /><span>Detection ROI</span></label
+          >
+          <label
+            ><input
+              type="checkbox"
+              [checked]="visibility().crossingLine"
+              (change)="toggle('crossingLine')"
+            /><span>Trigger line</span></label
+          >
+        </div>
 
-      @if (renderedFrame(); as frame) {
-        <dl class="live-detail-list">
-          <div><dt>Captured</dt><dd>{{ frame.capturedAt | date: 'HH:mm:ss.SSS' }}</dd></div>
-          <div><dt>Vehicle confidence TB</dt><dd>{{ averageConfidence(frame) === null ? 'N/A' : (averageConfidence(frame) | percent: '1.0-0') }}</dd></div>
-          <div><dt>Broker</dt><dd>{{ state()?.sourceState }}</dd></div>
-        </dl>
-      }
-    </aside>
-  </section>
+        <div class="live-context-card">
+          <span><svg lucideMaximize2 aria-hidden="true"></svg></span>
+          <div>
+            <strong>Tọa độ theo source frame</strong>
+            <p>
+              SVG co giãn cùng preview nên bbox, ROI và line giữ đúng vị trí khi
+              màn hình đổi kích thước.
+            </p>
+          </div>
+        </div>
+
+        @if (renderedFrame(); as frame) {
+          <dl class="live-detail-list">
+            <div>
+              <dt>Captured</dt>
+              <dd>{{ frame.capturedAt | date: "HH:mm:ss.SSS" }}</dd>
+            </div>
+            <div>
+              <dt>Vehicle confidence TB</dt>
+              <dd>
+                {{
+                  averageConfidence(frame) === null
+                    ? "N/A"
+                    : (averageConfidence(frame) | percent: "1.0-0")
+                }}
+              </dd>
+            </div>
+            <div>
+              <dt>Broker</dt>
+              <dd>{{ state()?.sourceState }}</dd>
+            </div>
+          </dl>
+          <section
+            class="live-detection-summary"
+            aria-labelledby="live-detection-summary-title"
+          >
+            <div class="live-detection-summary-heading">
+              <h3 id="live-detection-summary-title">Detection trong frame</h3>
+              <span>{{ frame.vehicles.length }} track</span>
+            </div>
+            @if (!frame.vehicles.length) {
+              <p>Không có phương tiện trong frame hiện tại.</p>
+            } @else {
+              <ol>
+                @for (
+                  vehicle of visibleDetections(frame);
+                  track vehicle.trackId
+                ) {
+                  <li>
+                    <strong>Track {{ vehicle.trackId }}</strong>
+                    <span
+                      >{{ vehicle.vehicleType }} · {{ vehicle.direction }} ·
+                      {{ vehicle.confidence | percent: "1.0-0" }}</span
+                    >
+                    <small
+                      >Biển số {{ vehicle.plate?.text || "chưa đọc được" }}
+                      @if (
+                        vehicle.plate?.ocrConfidence !== null &&
+                        vehicle.plate?.ocrConfidence !== undefined
+                      ) {
+                        · OCR
+                        {{ vehicle.plate?.ocrConfidence | percent: "1.0-0" }}
+                      }
+                    </small>
+                  </li>
+                }
+              </ol>
+              @if (hiddenDetectionCount(frame); as hiddenCount) {
+                <p>
+                  Còn {{ hiddenCount }} track không hiển thị để giữ danh sách
+                  gọn.
+                </p>
+              }
+            }
+          </section>
+        }
+      </aside>
+    </section>
+  }
 }

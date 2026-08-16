@@ -105,9 +105,7 @@ class _PlateHttp:
 def test_open_images_vehicle_bootstrap_is_attributed_and_not_acceptance_data(
     tmp_path: Path,
 ) -> None:
-    samples = OpenImagesVehicleSampleSource(_OpenImagesHttp()).acquire(
-        samples_per_class=1
-    )
+    samples = OpenImagesVehicleSampleSource(_OpenImagesHttp()).acquire(samples_per_class=1)
     source = tmp_path / "source" / "vehicle"
     result = BootstrapSourceWriter(DetectorRole.VEHICLE, source).write(
         VEHICLE_SOURCE_INFO,

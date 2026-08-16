@@ -31,9 +31,7 @@ def quality_report_to_jsonable(report: ModelQualityReport) -> dict[str, Any]:
             }
             for item in report.models
         ],
-        "daily": [
-            {"day": item.day, "metrics": _metrics(item.metrics)} for item in report.daily
-        ],
+        "daily": [{"day": item.day, "metrics": _metrics(item.metrics)} for item in report.daily],
         "feedback": {
             "total": report.feedback.total,
             "ready": report.feedback.ready,

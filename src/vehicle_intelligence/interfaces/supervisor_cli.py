@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import secrets
 import signal
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from vehicle_intelligence.infrastructure.persistence.camera_mongo import (
 from vehicle_intelligence.infrastructure.security.aes_gcm import AesGcmCredentialCipher
 from vehicle_intelligence.infrastructure.supervision.subprocess import (
     SubprocessCameraWorkerLauncher,
+    SubprocessInferenceServiceLauncher,
 )
 from vehicle_intelligence.logging_config import configure_logging
 
@@ -41,10 +43,26 @@ async def run(args: argparse.Namespace) -> int:
     cipher = AesGcmCredentialCipher.from_config(settings.security)
     cameras = MongoCameraRepository(settings.mongodb, cipher)
     health = MongoCameraHealthRepository(settings.mongodb)
+    worker_config = args.worker_config or settings.camera_manager.worker_config_path
+    inference_token = secrets.token_urlsafe(32) if settings.gpu_scheduler.enabled else None
     launcher = SubprocessCameraWorkerLauncher(
         settings.camera_manager.worker_command,
-        args.worker_config or settings.camera_manager.worker_config_path,
+        worker_config,
         settings.camera_manager.worker_shutdown_seconds,
+        inference_socket_path=(
+            settings.gpu_scheduler.socket_path if settings.gpu_scheduler.enabled else None
+        ),
+        inference_token=inference_token,
+        inference_config=(settings.gpu_scheduler if settings.gpu_scheduler.enabled else None),
+    )
+    inference_launcher = (
+        SubprocessInferenceServiceLauncher(
+            settings.gpu_scheduler,
+            worker_config,
+            inference_token,
+        )
+        if inference_token is not None
+        else None
     )
     supervisor = CameraSupervisor(
         cameras,
@@ -56,6 +74,7 @@ async def run(args: argparse.Namespace) -> int:
         settings.camera_manager.restart_stability_seconds,
         settings.camera_manager.maximum_active_workers,
         settings.camera_manager.maximum_starts_per_reconcile,
+        inference_service_launcher=inference_launcher,
     )
 
     if args.once:
@@ -88,7 +107,10 @@ async def run(args: argparse.Namespace) -> int:
         f"restarted={stats.workers_restarted}, crashes={stats.worker_crashes}, "
         f"start_failures={stats.worker_start_failures}, "
         f"capacity_deferred={stats.workers_capacity_deferred}, "
-        f"peak_active={stats.peak_active_workers}",
+        f"peak_active={stats.peak_active_workers}, "
+        f"inference_started={stats.inference_services_started}, "
+        f"inference_restarted={stats.inference_services_restarted}, "
+        f"inference_crashes={stats.inference_service_crashes}",
         flush=True,
     )
     return 0

@@ -246,6 +246,15 @@ processing fails. If Mongo persisted the event before failure, redelivery still
 runs policy after the duplicate insert no-op; succeeded actions are skipped and
 eligible failed/stale actions resume from their durable claim.
 
+Within one read batch, messages are grouped by camera. Each camera group remains
+ordered, while up to `redis.worker_concurrency` different cameras progress in
+parallel. Successful IDs are sent through one pipelined `XACK` and optional
+`XDEL`; a failure leaves that message and all later messages for the same camera
+pending. Stale reclaim runs at `redis.reclaim_interval_ms`, not before every
+blocking read. Enabled rules are cached and prevalidated for
+`rule_engine.rule_cache_ttl_seconds`; the TTL deliberately bounds configuration
+staleness without weakening durable action idempotency.
+
 Each action execution ID is the deterministic hash of event ID, rule ID, and
 action ID. Alert creation adds its own unique execution index. External action
 attempts carry the same execution ID as `Idempotency-Key`. A remote receiver must

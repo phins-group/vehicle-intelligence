@@ -19,6 +19,7 @@ from vehicle_intelligence.infrastructure.persistence.review_mongo import (
 )
 from vehicle_intelligence.infrastructure.storage.local import LocalMediaStorage
 from vehicle_intelligence.infrastructure.storage.minio import MinioMediaStorage
+from vehicle_intelligence.infrastructure.vision.opencv import OpenCVDatasetImageTranscoder
 from vehicle_intelligence.logging_config import configure_logging
 
 
@@ -51,7 +52,13 @@ async def run(args: argparse.Namespace) -> int:
         if settings.storage.backend == "minio"
         else LocalMediaStorage(settings.storage.output_directory)
     )
-    service = OCRDatasetExportService(export_config, samples, events, media)
+    service = OCRDatasetExportService(
+        export_config,
+        samples,
+        events,
+        media,
+        OpenCVDatasetImageTranscoder(),
+    )
     try:
         await events.ensure_indexes()
         await samples.ensure_indexes()
@@ -75,7 +82,11 @@ async def run(args: argparse.Namespace) -> int:
         try:
             await service.close()
         finally:
-            await runtime.close()
+            try:
+                if isinstance(media, MinioMediaStorage):
+                    await media.close()
+            finally:
+                await runtime.close()
 
 
 def main() -> None:

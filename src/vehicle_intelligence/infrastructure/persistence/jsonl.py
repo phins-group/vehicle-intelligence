@@ -34,14 +34,16 @@ class JsonlVehicleEventRepository:
     async def save(self, event: VehicleEvent) -> bool:
         await self._load()
         async with self._lock:
-            created = await self._memory.save(event)
-            if not created:
+            if await self._memory.conflicts_with(event):
                 return False
             line = json.dumps(event_to_jsonable(event), ensure_ascii=False, separators=(",", ":"))
             try:
                 await asyncio.to_thread(self._append, line)
             except OSError as exc:
                 raise PersistenceError(f"cannot append event JSONL: {self._path}") from exc
+            created = await self._memory.save(event)
+            if not created:  # Guard the persistence/index ordering invariant.
+                raise PersistenceError("event JSONL index changed while saving")
             return True
 
     async def get(self, event_id: str) -> VehicleEvent | None:
@@ -109,9 +111,7 @@ class JsonlVehicleEventRepository:
             if not moved_ids:
                 return 0
             rewritten = [
-                replace(item, vehicle_id=target_vehicle_id)
-                if item.id in moved_ids
-                else item
+                replace(item, vehicle_id=target_vehicle_id) if item.id in moved_ids else item
                 for item in events
             ]
             try:
@@ -182,10 +182,21 @@ class JsonlVehicleEventRepository:
 
     def _append(self, line: str) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        created = not self._path.exists()
         with self._path.open("a", encoding="utf-8") as stream:
             stream.write(line)
             stream.write("\n")
             stream.flush()
+            os.fsync(stream.fileno())
+        if created:
+            descriptor = os.open(
+                self._path.parent,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
 
     def _rewrite(self, events: list[VehicleEvent]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)

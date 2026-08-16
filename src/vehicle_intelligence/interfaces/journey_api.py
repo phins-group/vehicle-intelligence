@@ -51,11 +51,7 @@ def build_journey_router(
                     eventType=event.event_type.value,
                     direction=event.direction.value,
                     status=event.status.value,
-                    plate=(
-                        event.plate.final_normalized
-                        if event.plate is not None
-                        else None
-                    ),
+                    plate=(event.plate.final_normalized if event.plate is not None else None),
                     vehicleType=event.vehicle.type,
                 )
                 for event in events

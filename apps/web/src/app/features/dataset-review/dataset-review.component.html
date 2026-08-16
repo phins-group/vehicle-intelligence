@@ -1,234 +1,536 @@
 <div class="page-heading">
   <div>
     <h1 class="page-title">Duyệt detector dataset</h1>
-    <p>Xác nhận, sửa hoặc loại nhãn biển số. Source gốc luôn bất biến; mỗi quyết định được lưu thành revision có audit.</p>
+    <p>
+      Xác nhận, sửa hoặc loại nhãn biển số. Source gốc luôn bất biến; mỗi quyết
+      định được lưu thành revision có audit.
+    </p>
   </div>
   @if (auth.canReviewDatasets()) {
-    <button class="button secondary" type="button" (click)="loadSources()" [disabled]="loading()">
-      <svg lucideRefreshCw aria-hidden="true" [class.spin]="loading()"></svg> Làm mới
+    <button
+      class="button secondary"
+      type="button"
+      (click)="loadSources()"
+      [disabled]="loading()"
+    >
+      <svg lucideRefreshCw aria-hidden="true" [class.spin]="loading()"></svg>
+      Làm mới
     </button>
   }
 </div>
 
 @if (!auth.canReviewDatasets()) {
-  <div class="notice neutral" role="status">Tài khoản hiện tại không có quyền duyệt detector dataset.</div>
+  <div class="notice neutral" role="status">
+    Tài khoản hiện tại không có quyền duyệt detector dataset.
+  </div>
 } @else {
-  @if (error()) { <div class="notice error" role="alert">{{ error() }}</div> }
-
-  <section class="panel filter-panel dataset-review-filters">
-    <div class="filter-grid">
-      <label>
-        <span>Source dataset</span>
-        <select [(ngModel)]="sourceId" (ngModelChange)="sourceChanged()" [disabled]="loading()">
-          @for (source of sources(); track source.sourceId) {
-            <option [value]="source.sourceId">{{ source.sourceId }}{{ source.promotionEligible ? '' : ' · chỉ duyệt' }}</option>
-          }
-        </select>
-      </label>
-      <label>
-        <span>Trạng thái</span>
-        <select [(ngModel)]="statusFilter" (ngModelChange)="applyFilters()">
-          <option value="">Tất cả</option>
-          <option value="PENDING_REVIEW">Chờ duyệt</option>
-          <option value="APPROVED">Đã xác nhận</option>
-          <option value="CORRECTED">Đã sửa bbox</option>
-          <option value="NEGATIVE">Ảnh âm tính</option>
-          <option value="REJECTED">Đã loại</option>
-        </select>
-      </label>
-      <label>
-        <span>Lý do vào queue</span>
-        <select [(ngModel)]="reasonFilter" (ngModelChange)="applyFilters()">
-          <option value="">Tất cả lý do</option>
-          @for (reason of reasonOptions(); track reason) {
-            <option [value]="reason">{{ reasonLabel(reason) }}</option>
-          }
-        </select>
-      </label>
-      <div class="filter-actions">
-        <button class="button secondary" type="button" (click)="applyFilters()" [disabled]="loadingItems()">
-          Áp dụng
-        </button>
-      </div>
-    </div>
-  </section>
-
-  @if (selectedSource(); as source) {
-    <section class="dataset-review-metrics" aria-label="Tiến độ kiểm duyệt">
-      <div><span>Toàn bộ queue</span><strong>{{ source.queueCount }}</strong></div>
-      <div class="pending"><span>Chờ duyệt</span><strong>{{ source.pendingCount }}</strong></div>
-      <div class="approved"><span>Đã xác nhận</span><strong>{{ count('APPROVED') }}</strong></div>
-      <div class="corrected"><span>Đã sửa</span><strong>{{ count('CORRECTED') }}</strong></div>
-      <div class="negative"><span>Negative / Reject</span><strong>{{ count('NEGATIVE') + count('REJECTED') }}</strong></div>
+  @if (loading() && !loadState.hasLoaded()) {
+    <section class="panel empty-state" role="status" aria-live="polite">
+      Đang tải detector review sources…
     </section>
-    @if (!source.promotionEligible) {
-      <div class="notice warning dataset-review-source-guard" role="status">
-        <div>
-          <strong>Nguồn chỉ dành cho kiểm duyệt</strong>
-          <span>Bạn vẫn có thể xác nhận, sửa bbox hoặc loại ảnh. Promote đang khóa vì quyền dữ liệu là {{ source.rightsStatus }}; các quyết định review vẫn được lưu revision và không đi vào dataset production.</span>
-        </div>
-        <small>{{ source.collectionMethod }} · phát hành {{ source.releaseEligible ? 'được phép' : 'đang khóa' }}</small>
+  } @else if (loadState.initialError(); as loadError) {
+    <section class="panel empty-state" role="alert">
+      <strong>{{ loadError }}</strong>
+      <span>Chưa có dữ liệu source hoặc queue để hiển thị.</span>
+      <button class="button secondary" type="button" (click)="loadSources()">
+        Thử lại
+      </button>
+    </section>
+  } @else {
+    @if (loadState.staleError(); as loadError) {
+      <div class="notice error" role="alert">
+        {{ loadError }} Dữ liệu source trước đó vẫn được giữ nguyên.
       </div>
     }
-  }
+    @if (error()) {
+      <div class="notice error" role="alert">{{ error() }}</div>
+    }
 
-  <section class="dataset-review-layout">
-    <aside class="panel review-queue-panel" aria-label="Detector review queue">
-      <div class="panel-heading">
-        <div><h2>Hàng đợi</h2><p>{{ items().length }} mẫu đã tải</p></div>
-        <span class="live-chip"><svg lucideLayers aria-hidden="true"></svg>{{ statusFilter || 'ALL' }}</span>
+    <section class="panel filter-panel dataset-review-filters">
+      <div class="filter-grid">
+        <label>
+          <span>Source dataset</span>
+          <select
+            [(ngModel)]="sourceId"
+            (ngModelChange)="sourceChanged()"
+            [disabled]="loading()"
+          >
+            @for (source of sources(); track source.sourceId) {
+              <option [value]="source.sourceId">
+                {{ source.sourceId
+                }}{{ source.promotionEligible ? "" : " · chỉ duyệt" }}
+              </option>
+            }
+          </select>
+        </label>
+        <label>
+          <span>Trạng thái</span>
+          <select [(ngModel)]="statusFilter" (ngModelChange)="applyFilters()">
+            <option value="">Tất cả</option>
+            <option value="PENDING_REVIEW">Chờ duyệt</option>
+            <option value="APPROVED">Đã xác nhận</option>
+            <option value="CORRECTED">Đã sửa bbox</option>
+            <option value="NEGATIVE">Ảnh âm tính</option>
+            <option value="REJECTED">Đã loại</option>
+          </select>
+        </label>
+        <label>
+          <span>Lý do vào queue</span>
+          <select [(ngModel)]="reasonFilter" (ngModelChange)="applyFilters()">
+            <option value="">Tất cả lý do</option>
+            @for (reason of reasonOptions(); track reason) {
+              <option [value]="reason">{{ reasonLabel(reason) }}</option>
+            }
+          </select>
+        </label>
+        <div class="filter-actions">
+          <button
+            class="button secondary"
+            type="button"
+            (click)="applyFilters()"
+            [disabled]="loadingItems()"
+          >
+            Áp dụng
+          </button>
+        </div>
       </div>
-      @if (loadingItems() && !items().length) {
-        <div class="empty-state">Đang tải queue…</div>
-      } @else if (!items().length) {
-        <div class="empty-state"><svg lucideCheck aria-hidden="true"></svg><strong>Không có mẫu phù hợp</strong><span>Đổi bộ lọc hoặc chọn source khác.</span></div>
-      } @else {
-        <div class="detector-review-list">
-          @for (item of items(); track item.reviewId) {
-            <button
-              type="button"
-              class="detector-review-row"
-              [class.active]="selected()?.reviewId === item.reviewId"
-              (click)="openItem(item)"
-            >
-              <span class="review-row-icon"><svg lucideImage aria-hidden="true"></svg></span>
-              <span class="review-row-copy">
-                <strong>{{ reasonLabel(item.reason) }}</strong>
-                <small class="mono">{{ item.reviewId }}</small>
-                <small>{{ item.suggestions.length }} bbox đề xuất @if (confidence(item) !== null) { · {{ confidence(item) | number: '1.2-2' }} }</small>
-              </span>
-              <span class="status-pill" [attr.data-status]="item.status">{{ item.status }}</span>
-              <svg lucideChevronRight aria-hidden="true"></svg>
-            </button>
-          }
-        </div>
-        @if (nextCursor()) {
-          <div class="load-more"><button class="button secondary" type="button" (click)="loadItems(false)" [disabled]="loadingMore()">{{ loadingMore() ? 'Đang tải…' : 'Tải thêm' }}</button></div>
-        }
-      }
-    </aside>
+    </section>
 
-    <article class="panel detector-review-editor">
-      @if (!selected()) {
-        <div class="empty-state detector-editor-empty">
-          <svg lucideBoxSelect aria-hidden="true"></svg>
-          <strong>Chọn một ảnh để bắt đầu</strong>
-          <span>Kéo chuột trên ảnh để tạo bbox biển số.</span>
-        </div>
-      } @else if (selected(); as item) {
-        <header class="detector-editor-heading">
-          <div>
-            <p class="eyebrow">{{ reasonLabel(item.reason) }}</p>
-            <h2 class="mono">{{ item.reviewId }}</h2>
-            <span class="status-pill" [attr.data-status]="item.status">{{ item.status }} · revision {{ item.revision }}</span>
-          </div>
-          <button class="icon-button" type="button" aria-label="Đóng ảnh" (click)="closeItem()"><svg lucideX aria-hidden="true"></svg></button>
-        </header>
-
-        @if (reviewError()) { <div class="notice error detector-review-notice" role="alert">{{ reviewError() }}</div> }
-        @if (success()) { <div class="notice success detector-review-notice" role="status">{{ success() }}</div> }
-
-        @if (loadingDetail() || !previewUrl() || !item.image) {
-          <div class="detector-canvas-loading">Đang tải evidence có xác thực…</div>
-        } @else {
-          <div class="detector-canvas-toolbar">
-            <span><svg lucideMousePointer2 aria-hidden="true"></svg>Kéo để vẽ bbox mới</span>
-            <button class="button ghost" type="button" (click)="resetBoxes()"><svg lucideRotateCcw aria-hidden="true"></svg>Khôi phục</button>
-          </div>
-          <div class="detector-canvas-shell">
-            <div class="detector-image-stage">
-              <img [src]="previewUrl()" alt="Ảnh detector dataset đang kiểm duyệt">
-              <svg
-                class="detector-label-layer"
-                [attr.viewBox]="'0 0 ' + item.image.width + ' ' + item.image.height"
-                preserveAspectRatio="none"
-                (pointerdown)="canvasPointerDown($event)"
-                (pointermove)="canvasPointerMove($event)"
-                (pointerup)="canvasPointerUp($event)"
-                (pointercancel)="canvasPointerUp($event)"
-              >
-                @for (box of boxes(); track $index; let index = $index) {
-                  <rect
-                    class="detector-box"
-                    [class.selected]="selectedBox() === index"
-                    [attr.x]="box.x"
-                    [attr.y]="box.y"
-                    [attr.width]="box.width"
-                    [attr.height]="box.height"
-                    vector-effect="non-scaling-stroke"
-                    (pointerdown)="selectExistingBox(index, $event)"
-                  ></rect>
-                  <text [attr.x]="box.x" [attr.y]="box.y > 13 ? box.y - 4 : box.y + 13" vector-effect="non-scaling-stroke">plate {{ index + 1 }}</text>
-                }
-                @if (draftBox(); as draft) {
-                  <rect class="detector-box draft" [attr.x]="draft.x" [attr.y]="draft.y" [attr.width]="draft.width" [attr.height]="draft.height" vector-effect="non-scaling-stroke"></rect>
-                }
-              </svg>
-            </div>
-          </div>
-          <div class="detector-image-meta">
-            <span>{{ item.image.width }} × {{ item.image.height }} px</span>
-            <span>{{ boxes().length }} license_plate bbox</span>
-            <span class="mono">SHA {{ item.sourceImageSha256.slice(0, 12) }}…</span>
-          </div>
-        }
-
-        @if (boxes().length) {
-          <section class="bbox-editor">
-            <div class="bbox-editor-heading"><h3>BBox chính xác</h3><span>tọa độ pixel x, y, width, height</span></div>
-            @for (box of boxes(); track $index; let index = $index) {
-              <div class="bbox-row" [class.selected]="selectedBox() === index" (click)="selectedBox.set(index)">
-                <strong>#{{ index + 1 }}</strong>
-                <label><span>x</span><input type="number" min="0" [ngModel]="box.x" (ngModelChange)="updateBox(index, 'x', $event)"></label>
-                <label><span>y</span><input type="number" min="0" [ngModel]="box.y" (ngModelChange)="updateBox(index, 'y', $event)"></label>
-                <label><span>w</span><input type="number" min="1" [ngModel]="box.width" (ngModelChange)="updateBox(index, 'width', $event)"></label>
-                <label><span>h</span><input type="number" min="1" [ngModel]="box.height" (ngModelChange)="updateBox(index, 'height', $event)"></label>
-                <button class="icon-button danger" type="button" aria-label="Xóa bbox" (click)="removeBox(index); $event.stopPropagation()"><svg lucideTrash2 aria-hidden="true"></svg></button>
-              </div>
-            }
-          </section>
-        }
-
-        <section class="detector-decision-panel">
-          <label>
-            <span class="field-label">Ghi chú kiểm duyệt</span>
-            <textarea [(ngModel)]="note" maxlength="1000" rows="2" placeholder="Bắt buộc khi loại ảnh; tùy chọn với quyết định khác"></textarea>
-          </label>
-          <div class="detector-decision-actions">
-            <button class="button primary" type="button" (click)="submit('APPROVE')" [disabled]="submitting() || !canApprove()"><svg lucideCheck aria-hidden="true"></svg>Đúng như đề xuất</button>
-            <button class="button secondary" type="button" (click)="submit('CORRECT')" [disabled]="submitting() || !boxes().length"><svg lucideSave aria-hidden="true"></svg>Lưu bbox đã sửa</button>
-            <button class="button secondary" type="button" (click)="submit('MARK_NEGATIVE')" [disabled]="submitting()">Không có biển số</button>
-            <button class="button danger" type="button" (click)="submit('REJECT')" [disabled]="submitting() || !note.trim()"><svg lucideTrash2 aria-hidden="true"></svg>Loại ảnh</button>
-          </div>
-          <p>Approve giữ nguyên model suggestion. Khi bbox thay đổi, dùng “Lưu bbox đã sửa”. Revision giúp ngăn hai operator ghi đè nhau.</p>
-        </section>
-
-        @if (history().length) {
-          <details class="detector-review-history">
-            <summary>Lịch sử {{ history().length }} revision</summary>
-            @for (revision of history(); track revision.revision) {
-              <div><strong>r{{ revision.revision }} · {{ revision.status }}</strong><span>{{ revision.reviewedBy.displayName }} · {{ revision.reviewedAt | date: 'dd/MM/yyyy HH:mm:ss' }}</span><small>{{ revision.note || 'Không có ghi chú' }}</small></div>
-            }
-          </details>
-        }
-      }
-    </article>
-  </section>
-
-  @if (auth.canManageDatasets() && selectedSource(); as source) {
-    @if (source.promotionEligible) {
-      <section class="panel detector-promotion-panel">
+    @if (selectedSource(); as source) {
+      <section class="dataset-review-metrics" aria-label="Tiến độ kiểm duyệt">
         <div>
-          <p class="eyebrow">ADMIN · IMMUTABLE PROMOTION</p>
-          <h2>Tạo source version mới</h2>
-          <p>Đóng gói {{ source.reviewedCount }} quyết định đã duyệt vào source mới. {{ source.pendingCount }} mẫu pending tiếp tục nằm trong queue; source hiện tại không bị sửa.</p>
+          <span>Toàn bộ queue</span><strong>{{ source.queueCount }}</strong>
         </div>
-        <label><span>Target source ID</span><input [(ngModel)]="targetSourceId" maxlength="128" spellcheck="false"></label>
-        <button class="button primary" type="button" (click)="startPromotion()" [disabled]="promoting() || !targetSourceId.trim() || source.reviewedCount === 0"><svg lucideDatabase aria-hidden="true"></svg>{{ promoting() ? 'Đang đóng gói…' : 'Promote source' }}</button>
-        @if (promotionJob(); as job) {
-          <div class="promotion-status" [attr.data-status]="job.status"><strong>{{ job.status }}</strong><span>{{ job.id }}</span>@if (job.manifestSha256) { <small class="mono">manifest {{ job.manifestSha256 }}</small> }@if (job.errorCode) { <small>Lỗi: {{ job.errorCode }}</small> }</div>
-        }
+        <div class="pending">
+          <span>Chờ duyệt</span><strong>{{ source.pendingCount }}</strong>
+        </div>
+        <div class="approved">
+          <span>Đã xác nhận</span><strong>{{ count("APPROVED") }}</strong>
+        </div>
+        <div class="corrected">
+          <span>Đã sửa</span><strong>{{ count("CORRECTED") }}</strong>
+        </div>
+        <div class="negative">
+          <span>Negative / Reject</span
+          ><strong>{{ count("NEGATIVE") + count("REJECTED") }}</strong>
+        </div>
       </section>
+      @if (!source.promotionEligible) {
+        <div class="notice warning dataset-review-source-guard" role="status">
+          <div>
+            <strong>Nguồn chỉ dành cho kiểm duyệt</strong>
+            <span
+              >Bạn vẫn có thể xác nhận, sửa bbox hoặc loại ảnh. Promote đang
+              khóa vì quyền dữ liệu là {{ source.rightsStatus }}; các quyết định
+              review vẫn được lưu revision và không đi vào dataset
+              production.</span
+            >
+          </div>
+          <small
+            >{{ source.collectionMethod }} · phát hành
+            {{ source.releaseEligible ? "được phép" : "đang khóa" }}</small
+          >
+        </div>
+      }
+    }
+
+    <section class="dataset-review-layout">
+      <aside
+        class="panel review-queue-panel"
+        aria-label="Detector review queue"
+      >
+        <div class="panel-heading">
+          <div>
+            <h2>Hàng đợi</h2>
+            <p>{{ items().length }} mẫu đã tải</p>
+          </div>
+          <span class="live-chip"
+            ><svg lucideLayers aria-hidden="true"></svg
+            >{{ statusFilter || "ALL" }}</span
+          >
+        </div>
+        @if (loadingItems() && !items().length) {
+          <div class="empty-state">Đang tải queue…</div>
+        } @else if (error() && !items().length) {
+          <div class="empty-state">
+            <strong>Chưa tải được queue</strong
+            ><span>Thử áp dụng bộ lọc hoặc làm mới source.</span>
+          </div>
+        } @else if (!items().length) {
+          <div class="empty-state">
+            <svg lucideCheck aria-hidden="true"></svg
+            ><strong>Không có mẫu phù hợp</strong
+            ><span>Đổi bộ lọc hoặc chọn source khác.</span>
+          </div>
+        } @else {
+          <div class="detector-review-list">
+            @for (item of items(); track item.reviewId) {
+              <button
+                type="button"
+                class="detector-review-row"
+                [class.active]="selected()?.reviewId === item.reviewId"
+                (click)="openItem(item)"
+              >
+                <span class="review-row-icon"
+                  ><svg lucideImage aria-hidden="true"></svg
+                ></span>
+                <span class="review-row-copy">
+                  <strong>{{ reasonLabel(item.reason) }}</strong>
+                  <small class="mono">{{ item.reviewId }}</small>
+                  <small
+                    >{{ item.suggestions.length }} bbox đề xuất
+                    @if (confidence(item) !== null) {
+                      · {{ confidence(item) | number: "1.2-2" }}
+                    }
+                  </small>
+                </span>
+                <span class="status-pill" [attr.data-status]="item.status">{{
+                  item.status
+                }}</span>
+                <svg lucideChevronRight aria-hidden="true"></svg>
+              </button>
+            }
+          </div>
+          @if (nextCursor()) {
+            <div class="load-more">
+              <button
+                class="button secondary"
+                type="button"
+                (click)="loadItems(false)"
+                [disabled]="loadingMore()"
+              >
+                {{ loadingMore() ? "Đang tải…" : "Tải thêm" }}
+              </button>
+            </div>
+          }
+        }
+      </aside>
+
+      <article class="panel detector-review-editor">
+        @if (!selected()) {
+          <div class="empty-state detector-editor-empty">
+            <svg lucideBoxSelect aria-hidden="true"></svg>
+            <strong>Chọn một ảnh để bắt đầu</strong>
+            <span>Kéo chuột trên ảnh để tạo bbox biển số.</span>
+          </div>
+        } @else if (selected(); as item) {
+          <header class="detector-editor-heading">
+            <div>
+              <p class="eyebrow">{{ reasonLabel(item.reason) }}</p>
+              <h2 class="mono">{{ item.reviewId }}</h2>
+              <span class="status-pill" [attr.data-status]="item.status"
+                >{{ item.status }} · revision {{ item.revision }}</span
+              >
+            </div>
+            <button
+              class="icon-button"
+              type="button"
+              aria-label="Đóng ảnh"
+              (click)="closeItem()"
+            >
+              <svg lucideX aria-hidden="true"></svg>
+            </button>
+          </header>
+
+          @if (reviewError()) {
+            <div class="notice error detector-review-notice" role="alert">
+              {{ reviewError() }}
+            </div>
+          }
+          @if (success()) {
+            <div class="notice success detector-review-notice" role="status">
+              {{ success() }}
+            </div>
+          }
+
+          @if (loadingDetail() || !previewUrl() || !item.image) {
+            <div class="detector-canvas-loading">
+              Đang tải evidence có xác thực…
+            </div>
+          } @else {
+            <div class="detector-canvas-toolbar">
+              <div>
+                <span
+                  ><svg lucideMousePointer2 aria-hidden="true"></svg>Kéo để vẽ
+                  bbox mới</span
+                >
+                <small id="detector-bbox-keyboard-help"
+                  >Bàn phím: thêm bbox, Tab tới bbox; Enter chọn, phím mũi tên
+                  dịch 1 px, giữ Shift để dịch 10 px, Delete để xóa.</small
+                >
+                <span
+                  class="visually-hidden"
+                  role="status"
+                  aria-live="polite"
+                  >{{ bboxStatus() }}</span
+                >
+              </div>
+              <div class="detector-canvas-actions">
+                <button
+                  id="add-keyboard-bbox"
+                  class="button secondary"
+                  type="button"
+                  (click)="addKeyboardBox()"
+                >
+                  <svg lucideBoxSelect aria-hidden="true"></svg>Thêm bbox
+                </button>
+                <button
+                  class="button ghost"
+                  type="button"
+                  (click)="resetBoxes()"
+                >
+                  <svg lucideRotateCcw aria-hidden="true"></svg>Khôi phục
+                </button>
+              </div>
+            </div>
+            <div class="detector-canvas-shell">
+              <div class="detector-image-stage">
+                <img
+                  [src]="previewUrl()"
+                  alt="Ảnh detector dataset đang kiểm duyệt"
+                />
+                <svg
+                  class="detector-label-layer"
+                  [attr.viewBox]="
+                    '0 0 ' + item.image.width + ' ' + item.image.height
+                  "
+                  preserveAspectRatio="none"
+                  role="group"
+                  aria-label="Trình chỉnh sửa bounding box biển số"
+                  aria-describedby="detector-bbox-keyboard-help"
+                  (pointerdown)="canvasPointerDown($event)"
+                  (pointermove)="canvasPointerMove($event)"
+                  (pointerup)="canvasPointerUp($event)"
+                  (pointercancel)="canvasPointerUp($event)"
+                >
+                  @for (box of boxes(); track $index; let index = $index) {
+                    <rect
+                      class="detector-box"
+                      [class.selected]="selectedBox() === index"
+                      [attr.x]="box.x"
+                      [attr.y]="box.y"
+                      [attr.width]="box.width"
+                      [attr.height]="box.height"
+                      [attr.data-bbox-index]="index"
+                      [attr.aria-label]="boxAccessibleLabel(box, index)"
+                      [attr.aria-pressed]="selectedBox() === index"
+                      tabindex="0"
+                      role="button"
+                      vector-effect="non-scaling-stroke"
+                      (focus)="selectBox(index)"
+                      (keydown)="boxKeydown(index, $event)"
+                      (pointerdown)="selectExistingBox(index, $event)"
+                    ></rect>
+                    <text
+                      [attr.x]="box.x"
+                      [attr.y]="box.y > 13 ? box.y - 4 : box.y + 13"
+                      vector-effect="non-scaling-stroke"
+                    >
+                      plate {{ index + 1 }}
+                    </text>
+                  }
+                  @if (draftBox(); as draft) {
+                    <rect
+                      class="detector-box draft"
+                      [attr.x]="draft.x"
+                      [attr.y]="draft.y"
+                      [attr.width]="draft.width"
+                      [attr.height]="draft.height"
+                      vector-effect="non-scaling-stroke"
+                    ></rect>
+                  }
+                </svg>
+              </div>
+            </div>
+            <div class="detector-image-meta">
+              <span>{{ item.image.width }} × {{ item.image.height }} px</span>
+              <span>{{ boxes().length }} license_plate bbox</span>
+              <span class="mono"
+                >SHA {{ item.sourceImageSha256.slice(0, 12) }}…</span
+              >
+            </div>
+          }
+
+          @if (boxes().length) {
+            <section class="bbox-editor">
+              <div class="bbox-editor-heading">
+                <h3>BBox chính xác</h3>
+                <span>tọa độ pixel x, y, width, height</span>
+              </div>
+              @for (box of boxes(); track $index; let index = $index) {
+                <div
+                  class="bbox-row"
+                  [class.selected]="selectedBox() === index"
+                  [attr.aria-current]="selectedBox() === index ? 'true' : null"
+                  (click)="selectedBox.set(index)"
+                >
+                  <strong>#{{ index + 1 }}</strong>
+                  <label
+                    ><span>x</span
+                    ><input
+                      type="number"
+                      min="0"
+                      [attr.aria-label]="'Tọa độ x bbox ' + (index + 1)"
+                      [ngModel]="box.x"
+                      (ngModelChange)="updateBox(index, 'x', $event)"
+                  /></label>
+                  <label
+                    ><span>y</span
+                    ><input
+                      type="number"
+                      min="0"
+                      [attr.aria-label]="'Tọa độ y bbox ' + (index + 1)"
+                      [ngModel]="box.y"
+                      (ngModelChange)="updateBox(index, 'y', $event)"
+                  /></label>
+                  <label
+                    ><span>w</span
+                    ><input
+                      type="number"
+                      min="1"
+                      [attr.aria-label]="'Chiều rộng bbox ' + (index + 1)"
+                      [ngModel]="box.width"
+                      (ngModelChange)="updateBox(index, 'width', $event)"
+                  /></label>
+                  <label
+                    ><span>h</span
+                    ><input
+                      type="number"
+                      min="1"
+                      [attr.aria-label]="'Chiều cao bbox ' + (index + 1)"
+                      [ngModel]="box.height"
+                      (ngModelChange)="updateBox(index, 'height', $event)"
+                  /></label>
+                  <button
+                    class="icon-button danger"
+                    type="button"
+                    [attr.aria-label]="'Xóa bbox ' + (index + 1)"
+                    (click)="removeBox(index); $event.stopPropagation()"
+                  >
+                    <svg lucideTrash2 aria-hidden="true"></svg>
+                  </button>
+                </div>
+              }
+            </section>
+          }
+
+          <section class="detector-decision-panel">
+            <label>
+              <span class="field-label">Ghi chú kiểm duyệt</span>
+              <textarea
+                [(ngModel)]="note"
+                maxlength="1000"
+                rows="2"
+                placeholder="Bắt buộc khi loại ảnh; tùy chọn với quyết định khác"
+              ></textarea>
+            </label>
+            <div class="detector-decision-actions">
+              <button
+                class="button primary"
+                type="button"
+                (click)="submit('APPROVE')"
+                [disabled]="submitting() || !canApprove()"
+              >
+                <svg lucideCheck aria-hidden="true"></svg>Đúng như đề xuất
+              </button>
+              <button
+                class="button secondary"
+                type="button"
+                (click)="submit('CORRECT')"
+                [disabled]="submitting() || !boxes().length"
+              >
+                <svg lucideSave aria-hidden="true"></svg>Lưu bbox đã sửa
+              </button>
+              <button
+                class="button secondary"
+                type="button"
+                (click)="submit('MARK_NEGATIVE')"
+                [disabled]="submitting()"
+              >
+                Không có biển số
+              </button>
+              <button
+                class="button danger"
+                type="button"
+                (click)="submit('REJECT')"
+                [disabled]="submitting() || !note.trim()"
+              >
+                <svg lucideTrash2 aria-hidden="true"></svg>Loại ảnh
+              </button>
+            </div>
+            <p>
+              Approve giữ nguyên model suggestion. Khi bbox thay đổi, dùng “Lưu
+              bbox đã sửa”. Revision giúp ngăn hai operator ghi đè nhau.
+            </p>
+          </section>
+
+          @if (history().length) {
+            <details class="detector-review-history">
+              <summary>Lịch sử {{ history().length }} revision</summary>
+              @for (revision of history(); track revision.revision) {
+                <div>
+                  <strong
+                    >r{{ revision.revision }} · {{ revision.status }}</strong
+                  ><span
+                    >{{ revision.reviewedBy.displayName }} ·
+                    {{
+                      revision.reviewedAt | date: "dd/MM/yyyy HH:mm:ss"
+                    }}</span
+                  ><small>{{ revision.note || "Không có ghi chú" }}</small>
+                </div>
+              }
+            </details>
+          }
+        }
+      </article>
+    </section>
+
+    @if (auth.canManageDatasets() && selectedSource(); as source) {
+      @if (source.promotionEligible) {
+        <section class="panel detector-promotion-panel">
+          <div>
+            <p class="eyebrow">ADMIN · IMMUTABLE PROMOTION</p>
+            <h2>Tạo source version mới</h2>
+            <p>
+              Đóng gói {{ source.reviewedCount }} quyết định đã duyệt vào source
+              mới. {{ source.pendingCount }} mẫu pending tiếp tục nằm trong
+              queue; source hiện tại không bị sửa.
+            </p>
+          </div>
+          <label
+            ><span>Target source ID</span
+            ><input
+              [(ngModel)]="targetSourceId"
+              maxlength="128"
+              spellcheck="false"
+          /></label>
+          <button
+            class="button primary"
+            type="button"
+            (click)="startPromotion()"
+            [disabled]="
+              promoting() ||
+              !targetSourceId.trim() ||
+              source.reviewedCount === 0
+            "
+          >
+            <svg lucideDatabase aria-hidden="true"></svg
+            >{{ promoting() ? "Đang đóng gói…" : "Promote source" }}
+          </button>
+          @if (promotionJob(); as job) {
+            <div class="promotion-status" [attr.data-status]="job.status">
+              <strong>{{ job.status }}</strong
+              ><span>{{ job.id }}</span>
+              @if (job.manifestSha256) {
+                <small class="mono">manifest {{ job.manifestSha256 }}</small>
+              }
+              @if (job.errorCode) {
+                <small>Lỗi: {{ job.errorCode }}</small>
+              }
+            </div>
+          }
+        </section>
+      }
     }
   }
 }

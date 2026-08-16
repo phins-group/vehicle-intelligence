@@ -17,6 +17,59 @@ from vehicle_intelligence.exceptions import ModelRegistryError
 from vehicle_intelligence.training.huggingface import HuggingFaceJobRunner
 
 _ANSI_ESCAPE = re.compile(r"\x1b(?:[@-_]|\[[0-?]*[ -/]*[@-~])")
+_MAX_LOG_LINE_CHARACTERS = 8000
+_MAX_LOG_SCAN_CHARACTERS = 32_000
+_REDACTED = "[REDACTED]"
+_CREDENTIAL_NAME = (
+    r"(?:hf[_-]?token|hugging[ _-]?face[ _-]?hub[ _-]?token|access[_-]?token|"
+    r"refresh[_-]?token|id[_-]?token|api[ _-]?key|x[ _-]?api[ _-]?key|"
+    r"password|passwd|pwd|client[_-]?secret|secret|token)"
+)
+_CREDENTIAL_VALUE = (
+    rf"""(?:"[^"\r\n]{{0,{_MAX_LOG_SCAN_CHARACTERS}}}"|"""
+    rf"""'[^'\r\n]{{0,{_MAX_LOG_SCAN_CHARACTERS}}}'|"""
+    rf"""[^\s,;&"'<>]{{1,{_MAX_LOG_SCAN_CHARACTERS}}})"""
+)
+_CREDENTIAL_ASSIGNMENT = re.compile(
+    rf"""(?ix)
+    (?P<prefix>
+        (?<![A-Za-z0-9_])
+        ["']?{_CREDENTIAL_NAME}["']?
+        (?![A-Za-z0-9_])
+        \s*[:=]\s*
+    )
+    {_CREDENTIAL_VALUE}
+    """
+)
+_CREDENTIAL_ARGUMENT = re.compile(
+    rf"""(?ix)
+    (?P<prefix>
+        --{_CREDENTIAL_NAME}
+        (?![A-Za-z0-9_])
+        (?:\s+|=\s*)
+    )
+    {_CREDENTIAL_VALUE}
+    """
+)
+_BEARER_CREDENTIAL = re.compile(
+    rf"(?i)(\bbearer[ \t]+)"
+    rf"(?=[^\s,;\"']{{8,}})[^\s,;\"']{{1,{_MAX_LOG_SCAN_CHARACTERS}}}"
+)
+_KNOWN_TOKEN = re.compile(
+    r"(?i)\b(?:"
+    r"hf_[A-Za-z0-9]{12,}|"
+    r"github_pat_[A-Za-z0-9_]{20,}|"
+    r"gh[pousr]_[A-Za-z0-9]{20,}|"
+    r"sk-[A-Za-z0-9_-]{16,}"
+    r")\b"
+)
+_URL_WITH_QUERY = re.compile(rf"(?i)https?://[^\s<>'\"\[\](){{}}]{{1,{_MAX_LOG_SCAN_CHARACTERS}}}")
+_SIGNED_QUERY_KEY = re.compile(
+    r"(?i)(?:^|[&;])(?:"
+    r"x-amz-(?:signature|credential|security-token)|"
+    r"x-goog-signature|signature|sig|token|access[_-]?token|api[_-]?key|password"
+    r")="
+)
 
 
 class HuggingFaceTrainingJobGateway:
@@ -29,8 +82,8 @@ class HuggingFaceTrainingJobGateway:
         fetch_job_logs: Callable[..., Iterable[str]] | None = None,
         cancel_job: Callable[..., None] | None = None,
     ) -> None:
-        self._token = token or os.environ.get("HF_TOKEN") or os.environ.get(
-            "HUGGING_FACE_HUB_TOKEN"
+        self._token = (
+            token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
         )
         self._runner = runner
         self._inspect_job = inspect_job
@@ -74,7 +127,7 @@ class HuggingFaceTrainingJobGateway:
             id=str(getattr(job, "id", job_id)),
             status=_stage(getattr(status, "stage", None)),
             url=_safe_job_url(getattr(job, "url", None)),
-            message=_optional_string(getattr(status, "message", None), 1000),
+            message=_safe_status_message(getattr(status, "message", None), self._token),
             started_at=_datetime(getattr(job, "started_at", None)),
             finished_at=_datetime(getattr(job, "finished_at", None)),
         )
@@ -89,7 +142,9 @@ class HuggingFaceTrainingJobGateway:
                 tail=tail,
                 token=self._token,
             )
-            return tuple(_safe_log_line(str(line)) for line in values)[-tail:]
+            return tuple(
+                _safe_log_line(str(line), configured_secret=self._token) for line in values
+            )[-tail:]
         except Exception as exc:
             raise ModelRegistryError("Hugging Face training Job logs are unavailable") from exc
 
@@ -102,11 +157,7 @@ class HuggingFaceTrainingJobGateway:
 
     def _controls(self) -> tuple[Callable[..., Any], Callable[..., Any], Callable[..., Any]]:
         imported: tuple[Callable[..., Any], Callable[..., Any], Callable[..., Any]] | None = None
-        if (
-            self._inspect_job is None
-            or self._fetch_job_logs is None
-            or self._cancel_job is None
-        ):
+        if self._inspect_job is None or self._fetch_job_logs is None or self._cancel_job is None:
             imported = _control_dependencies()
         return (
             self._inspect_job or imported[0],
@@ -151,14 +202,51 @@ def _safe_job_url(value: object) -> str | None:
         or (hostname != "huggingface.co" and not hostname.endswith(".huggingface.co"))
     ):
         return None
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
 
 
-def _safe_log_line(value: str) -> str:
-    without_ansi = _ANSI_ESCAPE.sub("", value.rstrip("\r\n"))
-    return "".join(
+def _safe_status_message(value: object, configured_secret: str | None) -> str | None:
+    if value is None:
+        return None
+    safe = _safe_log_line(str(value), configured_secret=configured_secret).strip()[:1000]
+    return safe or None
+
+
+def _safe_log_line(value: str, *, configured_secret: str | None = None) -> str:
+    bounded = value[:_MAX_LOG_SCAN_CHARACTERS].rstrip("\r\n")
+    without_ansi = _ANSI_ESCAPE.sub("", bounded)
+    printable = "".join(
         character for character in without_ansi if character >= " " or character == "\t"
-    )[:8000]
+    )
+    return _redact_sensitive_text(printable, configured_secret)[:_MAX_LOG_LINE_CHARACTERS]
+
+
+def _redact_sensitive_text(value: str, configured_secret: str | None) -> str:
+    redacted = _URL_WITH_QUERY.sub(_redact_signed_url, value)
+    if configured_secret:
+        redacted = redacted.replace(
+            configured_secret[:_MAX_LOG_SCAN_CHARACTERS],
+            _REDACTED,
+        )
+    redacted = _BEARER_CREDENTIAL.sub(lambda match: match.group(1) + _REDACTED, redacted)
+    redacted = _CREDENTIAL_ASSIGNMENT.sub(_redact_credential_match, redacted)
+    redacted = _CREDENTIAL_ARGUMENT.sub(_redact_credential_match, redacted)
+    return _KNOWN_TOKEN.sub(_REDACTED, redacted)
+
+
+def _redact_signed_url(match: re.Match[str]) -> str:
+    value = match.group(0)
+    parsed = urlsplit(value)
+    if not _SIGNED_QUERY_KEY.search(parsed.query):
+        return value
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, _REDACTED, parsed.fragment))
+
+
+def _redact_credential_match(match: re.Match[str]) -> str:
+    prefix = match.group("prefix")
+    raw_value = match.group(0)[len(prefix) :]
+    quote = raw_value[0] if raw_value[:1] in {'"', "'"} else ""
+    return f"{prefix}{quote}{_REDACTED}{quote}"
 
 
 def _datetime(value: object) -> datetime | None:

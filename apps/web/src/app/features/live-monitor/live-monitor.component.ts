@@ -1,5 +1,12 @@
 import { DatePipe, PercentPipe } from '@angular/common';
-import { Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
+import {
+  Component,
+  OnDestroy,
+  OnInit,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import {
@@ -9,28 +16,41 @@ import {
   LucideRefreshCw,
   LucideScanLine,
   LucideSlidersHorizontal,
-  LucideWifi
+  LucideWifi,
 } from '@lucide/angular';
-import { firstValueFrom } from 'rxjs';
+import {
+  EMPTY,
+  Subscription,
+  finalize,
+  firstValueFrom,
+  map,
+  switchMap,
+} from 'rxjs';
 
 import {
   Camera,
   LiveMonitorFrame,
   LiveMonitorState,
-  LiveVehicleOverlay
+  LiveVehicleOverlay,
 } from '../../core/models/api.models';
 import { ApiClientService } from '../../core/services/api-client.service';
 import { apiErrorMessage } from '../../core/utils/api-error';
+import { AsyncDataState } from '../../core/utils/async-data-state';
 import {
   DEFAULT_OVERLAY_VISIBILITY,
   OverlayVisibility,
   overlayLabelWidth,
   overlayPoints,
   shouldLoadLiveFrame,
-  vehicleOverlayLabel
+  vehicleOverlayLabel,
 } from '../../core/utils/live-monitor-utils';
 
 type OverlayKey = keyof OverlayVisibility;
+
+const LIVE_POLL_INTERVAL_MS = 750;
+const IDLE_POLL_INTERVAL_MS = 2_500;
+const OFFLINE_POLL_INTERVAL_MS = 5_000;
+const DETECTION_SUMMARY_LIMIT = 12;
 
 @Component({
   selector: 'app-live-monitor',
@@ -44,63 +64,90 @@ type OverlayKey = keyof OverlayVisibility;
     LucideRefreshCw,
     LucideScanLine,
     LucideSlidersHorizontal,
-    LucideWifi
+    LucideWifi,
   ],
-  templateUrl: './live-monitor.component.html'
+  templateUrl: './live-monitor.component.html',
 })
 export class LiveMonitorComponent implements OnInit, OnDestroy {
   private readonly api = inject(ApiClientService);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private pollTimer: number | null = null;
+  private activePoll: Subscription | null = null;
   private generation = 0;
   private polling = false;
+  private destroyed = false;
 
   readonly cameras = signal<Camera[]>([]);
   readonly selectedCameraId = signal('');
   readonly selectedCamera = computed(
-    () => this.cameras().find((camera) => camera.id === this.selectedCameraId()) ?? null
+    () =>
+      this.cameras().find((camera) => camera.id === this.selectedCameraId()) ??
+      null,
   );
   readonly state = signal<LiveMonitorState | null>(null);
   readonly renderedFrame = signal<LiveMonitorFrame | null>(null);
   readonly imageUrl = signal<string | null>(null);
-  readonly visibility = signal<OverlayVisibility>({ ...DEFAULT_OVERLAY_VISIBILITY });
+  readonly visibility = signal<OverlayVisibility>({
+    ...DEFAULT_OVERLAY_VISIBILITY,
+  });
   readonly loading = signal(true);
+  readonly loadState = new AsyncDataState();
   readonly refreshing = signal(false);
+  readonly paused = signal(false);
   readonly error = signal<string | null>(null);
 
   ngOnInit(): void {
+    if (
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) {
+      this.paused.set(true);
+    }
     void this.loadCameras();
   }
 
   ngOnDestroy(): void {
+    this.destroyed = true;
+    this.generation += 1;
     this.stopPolling();
     this.revokeImage();
   }
 
   async loadCameras(): Promise<void> {
     this.loading.set(true);
-    this.error.set(null);
+    this.loadState.begin();
     try {
       const page = await firstValueFrom(this.api.cameras(true));
+      if (this.destroyed) return;
       this.cameras.set(page.items);
-      const requested = this.route.snapshot.queryParamMap.get('camera')?.trim() ?? '';
+      this.loadState.succeed();
+      const requested =
+        this.route.snapshot.queryParamMap.get('camera')?.trim() ?? '';
       const selected = page.items.some((camera) => camera.id === requested)
         ? requested
-        : page.items[0]?.id ?? '';
+        : (page.items[0]?.id ?? '');
       this.activateCamera(selected);
       if (selected && selected !== requested) {
         void this.router.navigate([], {
           relativeTo: this.route,
           queryParams: { camera: selected },
           queryParamsHandling: 'merge',
-          replaceUrl: true
+          replaceUrl: true,
         });
       }
     } catch (error) {
-      this.error.set(apiErrorMessage(error, 'Không thể tải danh sách camera cho live monitor.'));
+      if (!this.destroyed) {
+        this.loadState.fail(
+          apiErrorMessage(
+            error,
+            'Không thể tải danh sách camera cho live monitor.',
+          ),
+        );
+      }
     } finally {
-      this.loading.set(false);
+      if (!this.destroyed) this.loading.set(false);
     }
   }
 
@@ -109,12 +156,23 @@ export class LiveMonitorComponent implements OnInit, OnDestroy {
     void this.router.navigate([], {
       relativeTo: this.route,
       queryParams: { camera: cameraId || null },
-      queryParamsHandling: 'merge'
+      queryParamsHandling: 'merge',
     });
   }
 
   refresh(): void {
-    void this.poll(this.generation, true);
+    this.clearPollTimer();
+    this.poll(this.generation, true);
+  }
+
+  togglePause(): void {
+    if (this.paused()) {
+      this.paused.set(false);
+      this.poll(this.generation, true);
+      return;
+    }
+    this.paused.set(true);
+    this.stopPolling();
   }
 
   toggle(key: OverlayKey): void {
@@ -130,7 +188,10 @@ export class LiveMonitorComponent implements OnInit, OnDestroy {
   }
 
   labelWidth(vehicle: LiveVehicleOverlay): number {
-    return overlayLabelWidth(this.label(vehicle), this.renderedFrame()?.sourceWidth ?? 1920);
+    return overlayLabelWidth(
+      this.label(vehicle),
+      this.renderedFrame()?.sourceWidth ?? 1920,
+    );
   }
 
   labelY(vehicle: LiveVehicleOverlay): number {
@@ -145,9 +206,18 @@ export class LiveMonitorComponent implements OnInit, OnDestroy {
     );
   }
 
+  visibleDetections(frame: LiveMonitorFrame): LiveVehicleOverlay[] {
+    return frame.vehicles.slice(0, DETECTION_SUMMARY_LIMIT);
+  }
+
+  hiddenDetectionCount(frame: LiveMonitorFrame): number {
+    return Math.max(0, frame.vehicles.length - DETECTION_SUMMARY_LIMIT);
+  }
+
   private activateCamera(cameraId: string): void {
-    this.stopPolling();
+    if (this.destroyed) return;
     this.generation += 1;
+    this.stopPolling();
     this.selectedCameraId.set(cameraId);
     this.state.set(null);
     this.renderedFrame.set(null);
@@ -155,56 +225,120 @@ export class LiveMonitorComponent implements OnInit, OnDestroy {
     this.error.set(null);
     if (!cameraId) return;
     const generation = this.generation;
-    void this.poll(generation, true);
-    this.pollTimer = window.setInterval(() => {
-      if (!document.hidden) void this.poll(generation, false);
-    }, 750);
+    this.poll(generation, true);
   }
 
-  private async poll(generation: number, manual: boolean): Promise<void> {
-    if (this.polling || generation !== this.generation || !this.selectedCameraId()) return;
+  private poll(generation: number, manual: boolean): void {
+    if (
+      this.destroyed ||
+      this.polling ||
+      generation !== this.generation ||
+      !this.selectedCameraId()
+    ) {
+      return;
+    }
     this.polling = true;
     if (manual) this.refreshing.set(true);
-    try {
-      const cameraId = this.selectedCameraId();
-      const state = await firstValueFrom(this.api.liveMonitorState(cameraId));
-      if (generation !== this.generation) return;
-      this.state.set(state);
-      const latest = state.latest;
-      if (!shouldLoadLiveFrame(this.renderedFrame()?.sequence ?? null, latest)) {
+    const cameraId = this.selectedCameraId();
+    const request = this.api.liveMonitorState(cameraId).pipe(
+      switchMap((state) => {
+        if (this.destroyed || generation !== this.generation) return EMPTY;
+        this.state.set(state);
+        const latest = state.latest;
+        if (
+          !shouldLoadLiveFrame(this.renderedFrame()?.sequence ?? null, latest)
+        ) {
+          this.error.set(null);
+          return EMPTY;
+        }
+        return this.api.liveMonitorFrame(cameraId, latest!.sequence).pipe(
+          map((response) => {
+            const responseSequence = Number(
+              response.headers.get('X-Live-Sequence'),
+            );
+            if (responseSequence !== latest!.sequence || !response.body?.size) {
+              throw new Error('Live frame sequence không khớp metadata.');
+            }
+            return { frame: latest!, url: URL.createObjectURL(response.body) };
+          }),
+        );
+      }),
+      finalize(() => {
+        this.activePoll = null;
+        this.polling = false;
+        if (generation === this.generation && !this.destroyed) {
+          this.refreshing.set(false);
+          this.scheduleNextPoll(generation);
+        }
+      }),
+    );
+    const subscription = request.subscribe({
+      next: ({ frame, url }) => {
+        if (this.destroyed || generation !== this.generation) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        this.revokeImage();
+        this.imageUrl.set(url);
+        this.renderedFrame.set(frame);
         this.error.set(null);
-        return;
-      }
-      const response = await firstValueFrom(
-        this.api.liveMonitorFrame(cameraId, latest!.sequence)
-      );
-      if (generation !== this.generation) return;
-      const responseSequence = Number(response.headers.get('X-Live-Sequence'));
-      if (responseSequence !== latest!.sequence || !response.body?.size) {
-        throw new Error('Live frame sequence không khớp metadata.');
-      }
-      const url = URL.createObjectURL(response.body);
-      if (generation !== this.generation) {
-        URL.revokeObjectURL(url);
-        return;
-      }
-      this.revokeImage();
-      this.imageUrl.set(url);
-      this.renderedFrame.set(latest);
-      this.error.set(null);
-    } catch (error) {
-      if (generation === this.generation) {
-        this.error.set(apiErrorMessage(error, 'Không thể nhận live preview mới nhất.'));
-      }
-    } finally {
-      if (generation === this.generation) this.refreshing.set(false);
-      this.polling = false;
-    }
+      },
+      error: (error: unknown) => {
+        if (generation === this.generation && !this.destroyed) {
+          this.error.set(
+            apiErrorMessage(error, 'Không thể nhận live preview mới nhất.'),
+          );
+        }
+      },
+    });
+    if (!subscription.closed) this.activePoll = subscription;
   }
 
   private stopPolling(): void {
+    this.clearPollTimer();
+    const activePoll = this.activePoll;
+    this.activePoll = null;
+    activePoll?.unsubscribe();
+    this.polling = false;
+    this.refreshing.set(false);
+  }
+
+  private scheduleNextPoll(generation: number): void {
+    if (
+      this.destroyed ||
+      this.paused() ||
+      generation !== this.generation ||
+      !this.selectedCameraId()
+    ) {
+      return;
+    }
+    this.clearPollTimer();
+    this.pollTimer = window.setTimeout(() => {
+      this.pollTimer = null;
+      if (typeof document !== 'undefined' && document.hidden) {
+        this.scheduleNextPoll(generation);
+        return;
+      }
+      this.poll(generation, false);
+    }, this.nextPollInterval());
+  }
+
+  private nextPollInterval(): number {
+    if (this.error()) return OFFLINE_POLL_INTERVAL_MS;
+    switch (this.state()?.status) {
+      case 'LIVE':
+        return LIVE_POLL_INTERVAL_MS;
+      case 'WAITING':
+      case 'STALE':
+        return IDLE_POLL_INTERVAL_MS;
+      default:
+        return OFFLINE_POLL_INTERVAL_MS;
+    }
+  }
+
+  private clearPollTimer(): void {
     if (this.pollTimer !== null) {
-      window.clearInterval(this.pollTimer);
+      window.clearTimeout(this.pollTimer);
       this.pollTimer = null;
     }
   }

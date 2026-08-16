@@ -38,11 +38,9 @@ def test_detection_archive_maps_classes_and_groups_augmentations(tmp_path: Path)
     assert len(samples) == 2
     assert len({sample.group_id for sample in samples}) == 1
     assert all(sample.split is None for sample in samples)
-    assert {
-        annotation.class_name
-        for sample in samples
-        for annotation in sample.annotations
-    } == {"license_plate"}
+    assert {annotation.class_name for sample in samples for annotation in sample.annotations} == {
+        "license_plate"
+    }
 
 
 def test_folder_archive_is_auxiliary_and_never_detector_negative_data(
@@ -54,9 +52,7 @@ def test_folder_archive_is_auxiliary_and_never_detector_negative_data(
     manifest, _ = verify_roboflow_source(result.directory)
     samples = [
         json.loads(line)
-        for line in (result.directory / "classification-samples.jsonl")
-        .read_bytes()
-        .splitlines()
+        for line in (result.directory / "classification-samples.jsonl").read_bytes().splitlines()
     ]
 
     assert result.task == "classification"
@@ -179,8 +175,7 @@ def _metadata(
 ) -> None:
     zipped.writestr(
         "README.dataset.txt",
-        "https://universe.roboflow.com/test-workspace/test-project\n"
-        "License: CC BY 4.0\n",
+        "https://universe.roboflow.com/test-workspace/test-project\nLicense: CC BY 4.0\n",
     )
     zipped.writestr(
         "README.roboflow.txt",

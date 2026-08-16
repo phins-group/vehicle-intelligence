@@ -11,7 +11,7 @@ import {
   LucideShieldAlert,
   LucideShieldCheck,
   LucideTrash2,
-  LucideX
+  LucideX,
 } from '@lucide/angular';
 import { firstValueFrom } from 'rxjs';
 
@@ -19,17 +19,19 @@ import { AuthService } from '../../core/auth/auth.service';
 import {
   WatchlistEntry,
   WatchlistType,
-  WatchlistWriteRequest
+  WatchlistWriteRequest,
 } from '../../core/models/api.models';
 import { ApiClientService } from '../../core/services/api-client.service';
 import { apiErrorMessage } from '../../core/utils/api-error';
+import { AsyncDataState } from '../../core/utils/async-data-state';
 import {
   WatchlistLifecycle,
   datetimeLocalToIso,
   isoToDatetimeLocal,
   watchlistLifecycle,
-  watchlistMatchesSearch
+  watchlistMatchesSearch,
 } from '../../core/utils/policy-utils';
+import { AccessibleDialogDirective } from '../../shared/accessibility/accessible-dialog.directive';
 
 interface WatchlistDraft {
   id: string;
@@ -48,7 +50,7 @@ const LIST_TYPES: readonly WatchlistType[] = [
   'VIP',
   'STAFF',
   'CONTRACTOR',
-  'DELIVERY'
+  'DELIVERY',
 ];
 
 @Component({
@@ -56,6 +58,7 @@ const LIST_TYPES: readonly WatchlistType[] = [
   imports: [
     DatePipe,
     FormsModule,
+    AccessibleDialogDirective,
     LucideCalendarClock,
     LucideListChecks,
     LucidePencil,
@@ -65,9 +68,9 @@ const LIST_TYPES: readonly WatchlistType[] = [
     LucideShieldAlert,
     LucideShieldCheck,
     LucideTrash2,
-    LucideX
+    LucideX,
   ],
-  templateUrl: './watchlists.component.html'
+  templateUrl: './watchlists.component.html',
 })
 export class WatchlistsComponent implements OnInit {
   readonly auth = inject(AuthService);
@@ -75,12 +78,14 @@ export class WatchlistsComponent implements OnInit {
   readonly listTypes = LIST_TYPES;
   readonly entries = signal<WatchlistEntry[]>([]);
   readonly loading = signal(true);
+  readonly loadState = new AsyncDataState();
   readonly saving = signal(false);
   readonly deleting = signal(false);
   readonly editorOpen = signal(false);
   readonly editingId = signal<string | null>(null);
   readonly pendingDelete = signal<WatchlistEntry | null>(null);
-  readonly error = signal<string | null>(null);
+  readonly editorError = signal<string | null>(null);
+  readonly deleteError = signal<string | null>(null);
   readonly notice = signal<string | null>(null);
   search = '';
   listType: WatchlistType | '' = '';
@@ -93,12 +98,15 @@ export class WatchlistsComponent implements OnInit {
 
   async load(): Promise<void> {
     this.loading.set(true);
-    this.error.set(null);
+    this.loadState.begin();
     try {
       const page = await firstValueFrom(this.api.watchlists({ limit: 200 }));
       this.entries.set(page.items);
+      this.loadState.succeed();
     } catch (error) {
-      this.error.set(apiErrorMessage(error, 'Không thể tải danh sách xe.'));
+      this.loadState.fail(
+        apiErrorMessage(error, 'Không thể tải danh sách xe.'),
+      );
     } finally {
       this.loading.set(false);
     }
@@ -118,7 +126,9 @@ export class WatchlistsComponent implements OnInit {
   }
 
   countLifecycle(lifecycle: WatchlistLifecycle): number {
-    return this.entries().filter((entry) => watchlistLifecycle(entry) === lifecycle).length;
+    return this.entries().filter(
+      (entry) => watchlistLifecycle(entry) === lifecycle,
+    ).length;
   }
 
   lifecycle(entry: WatchlistEntry): WatchlistLifecycle {
@@ -134,7 +144,7 @@ export class WatchlistsComponent implements OnInit {
   openCreate(): void {
     this.draft = this.emptyDraft();
     this.editingId.set(null);
-    this.error.set(null);
+    this.editorError.set(null);
     this.editorOpen.set(true);
   }
 
@@ -147,10 +157,10 @@ export class WatchlistsComponent implements OnInit {
       validFrom: isoToDatetimeLocal(entry.validFrom),
       validUntil: isoToDatetimeLocal(entry.validUntil),
       metadata: { ...entry.metadata },
-      revision: entry.revision
+      revision: entry.revision,
     };
     this.editingId.set(entry.id);
-    this.error.set(null);
+    this.editorError.set(null);
     this.editorOpen.set(true);
   }
 
@@ -158,17 +168,27 @@ export class WatchlistsComponent implements OnInit {
     if (this.saving()) return;
     this.editorOpen.set(false);
     this.editingId.set(null);
+    this.editorError.set(null);
     this.draft = this.emptyDraft();
   }
 
   draftValidation(): string | null {
     const plate = this.draft.plate.trim();
     if (plate.length < 4) return 'Biển số phải có ít nhất 4 ký tự.';
+    if (plate.length > 32) return 'Biển số không được vượt quá 32 ký tự.';
+    if (this.draft.id.trim().length > 128)
+      return 'Entry ID không được vượt quá 128 ký tự.';
     const validFrom = datetimeLocalToIso(this.draft.validFrom);
     const validUntil = datetimeLocalToIso(this.draft.validUntil);
-    if (this.draft.validFrom && !validFrom) return 'Thời điểm bắt đầu không hợp lệ.';
-    if (this.draft.validUntil && !validUntil) return 'Thời điểm kết thúc không hợp lệ.';
-    if (validFrom && validUntil && Date.parse(validUntil) <= Date.parse(validFrom)) {
+    if (this.draft.validFrom && !validFrom)
+      return 'Thời điểm bắt đầu không hợp lệ.';
+    if (this.draft.validUntil && !validUntil)
+      return 'Thời điểm kết thúc không hợp lệ.';
+    if (
+      validFrom &&
+      validUntil &&
+      Date.parse(validUntil) <= Date.parse(validFrom)
+    ) {
       return 'Thời điểm kết thúc phải sau thời điểm bắt đầu.';
     }
     return null;
@@ -178,64 +198,91 @@ export class WatchlistsComponent implements OnInit {
     if (this.saving()) return;
     const validation = this.draftValidation();
     if (validation) {
-      this.error.set(validation);
+      this.editorError.set(validation);
       return;
     }
     this.saving.set(true);
-    this.error.set(null);
+    this.editorError.set(null);
     const request: WatchlistWriteRequest = {
       plate: this.draft.plate.trim(),
       listType: this.draft.listType,
       enabled: this.draft.enabled,
       validFrom: datetimeLocalToIso(this.draft.validFrom),
       validUntil: datetimeLocalToIso(this.draft.validUntil),
-      metadata: { ...this.draft.metadata }
+      metadata: { ...this.draft.metadata },
     };
     const editingId = this.editingId();
     try {
       let saved: WatchlistEntry;
       if (editingId !== null && this.draft.revision !== null) {
         saved = await firstValueFrom(
-          this.api.updateWatchlist(editingId, { ...request, revision: this.draft.revision })
+          this.api.updateWatchlist(editingId, {
+            ...request,
+            revision: this.draft.revision,
+          }),
         );
-        this.entries.update((items) => items.map((item) => (item.id === saved.id ? saved : item)));
-        this.notice.set('Đã cập nhật ' + saved.plate + ' với revision ' + saved.revision + '.');
+        this.entries.update((items) =>
+          items.map((item) => (item.id === saved.id ? saved : item)),
+        );
+        this.notice.set(
+          'Đã cập nhật ' +
+            saved.plate +
+            ' với revision ' +
+            saved.revision +
+            '.',
+        );
       } else {
         const requestedId = this.draft.id.trim();
         saved = await firstValueFrom(
-          this.api.createWatchlist(requestedId ? { ...request, id: requestedId } : request)
+          this.api.createWatchlist(
+            requestedId ? { ...request, id: requestedId } : request,
+          ),
         );
         this.entries.update((items) => [saved, ...items]);
-        this.notice.set('Đã thêm ' + saved.plate + ' vào ' + saved.listType + '.');
+        this.notice.set(
+          'Đã thêm ' + saved.plate + ' vào ' + saved.listType + '.',
+        );
       }
       this.closeEditorAfterSave();
     } catch (error) {
-      this.error.set(apiErrorMessage(error, 'Không thể lưu watchlist entry.'));
+      this.editorError.set(
+        apiErrorMessage(error, 'Không thể lưu watchlist entry.'),
+      );
     } finally {
       this.saving.set(false);
     }
   }
 
   requestDelete(entry: WatchlistEntry): void {
+    this.deleteError.set(null);
     this.pendingDelete.set(entry);
   }
 
   cancelDelete(): void {
-    if (!this.deleting()) this.pendingDelete.set(null);
+    if (!this.deleting()) {
+      this.pendingDelete.set(null);
+      this.deleteError.set(null);
+    }
   }
 
   async confirmDelete(): Promise<void> {
     const entry = this.pendingDelete();
     if (!entry || this.deleting()) return;
     this.deleting.set(true);
-    this.error.set(null);
+    this.deleteError.set(null);
     try {
       await firstValueFrom(this.api.deleteWatchlist(entry.id));
-      this.entries.update((items) => items.filter((item) => item.id !== entry.id));
-      this.notice.set('Đã xóa ' + entry.plate + ' khỏi ' + entry.listType + '.');
+      this.entries.update((items) =>
+        items.filter((item) => item.id !== entry.id),
+      );
+      this.notice.set(
+        'Đã xóa ' + entry.plate + ' khỏi ' + entry.listType + '.',
+      );
       this.pendingDelete.set(null);
     } catch (error) {
-      this.error.set(apiErrorMessage(error, 'Không thể xóa watchlist entry.'));
+      this.deleteError.set(
+        apiErrorMessage(error, 'Không thể xóa watchlist entry.'),
+      );
     } finally {
       this.deleting.set(false);
     }
@@ -244,6 +291,7 @@ export class WatchlistsComponent implements OnInit {
   private closeEditorAfterSave(): void {
     this.editorOpen.set(false);
     this.editingId.set(null);
+    this.editorError.set(null);
     this.draft = this.emptyDraft();
   }
 
@@ -256,7 +304,7 @@ export class WatchlistsComponent implements OnInit {
       validFrom: '',
       validUntil: '',
       metadata: {},
-      revision: null
+      revision: null,
     };
   }
 }

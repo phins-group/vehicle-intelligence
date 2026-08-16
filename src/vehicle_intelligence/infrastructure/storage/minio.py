@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import timedelta
 from io import BytesIO
 from pathlib import PurePosixPath
@@ -11,21 +12,57 @@ from vehicle_intelligence.config import MinioConfig
 from vehicle_intelligence.domain import LifecycleReconcileResult
 from vehicle_intelligence.exceptions import DependencyUnavailableError, MediaStorageError
 
+_MINIO_MIN_PART_SIZE_BYTES = 5 * 1024 * 1024
+_MINIO_MAX_SINGLE_PUT_BYTES = 5 * 1024 * 1024 * 1024
+
 
 class MinioMediaStorage:
     def __init__(self, config: MinioConfig) -> None:
         try:
+            import certifi
             from minio import Minio
+            from urllib3 import PoolManager, Retry, Timeout
         except ImportError as exc:
             raise DependencyUnavailableError(
                 "MinIO SDK is not installed; install the 'minio' extra"
             ) from exc
+
+        def bounded_http_client() -> PoolManager:
+            retry_policy = Retry(
+                total=config.maximum_retries,
+                connect=config.maximum_retries,
+                read=config.maximum_retries,
+                status=config.maximum_retries,
+                other=0,
+                redirect=0,
+                backoff_factor=config.retry_backoff_seconds,
+                backoff_max=config.retry_backoff_max_seconds,
+                status_forcelist=(500, 502, 503, 504),
+                respect_retry_after_header=False,
+            )
+            return PoolManager(
+                timeout=Timeout(
+                    total=config.connect_timeout_seconds + config.read_timeout_seconds,
+                    connect=config.connect_timeout_seconds,
+                    read=config.read_timeout_seconds,
+                ),
+                maxsize=10,
+                cert_reqs="CERT_REQUIRED",
+                ca_certs=os.environ.get("SSL_CERT_FILE") or certifi.where(),
+                retries=retry_policy,
+            )
+
+        private_http_client = bounded_http_client()
+        public_http_client = bounded_http_client()
+        self._http_clients = (private_http_client, public_http_client)
+        self._http_clients_closed = False
         self._client = Minio(
             config.endpoint,
             access_key=config.access_key.get_secret_value(),
             secret_key=config.secret_key.get_secret_value(),
             secure=config.secure,
             region=config.region,
+            http_client=private_http_client,
         )
         self._public_client = Minio(
             config.public_endpoint or config.endpoint,
@@ -33,12 +70,16 @@ class MinioMediaStorage:
             secret_key=config.secret_key.get_secret_value(),
             secure=(config.public_secure if config.public_secure is not None else config.secure),
             region=config.region,
+            http_client=public_http_client,
         )
         self._bucket = config.bucket
         self._bucket_ready = False
         self._bucket_lock = asyncio.Lock()
 
     async def put(self, key: str, data: bytes, content_type: str) -> str:
+        data_size = len(data)
+        if data_size > _MINIO_MAX_SINGLE_PUT_BYTES:
+            raise MediaStorageError("MinIO in-memory upload exceeds the 5 GiB single-PUT limit")
         await self._ensure_bucket()
         try:
             await asyncio.to_thread(
@@ -46,12 +87,40 @@ class MinioMediaStorage:
                 self._bucket,
                 key,
                 BytesIO(data),
-                len(data),
+                data_size,
                 content_type=content_type,
+                part_size=max(_MINIO_MIN_PART_SIZE_BYTES, data_size),
+                num_parallel_uploads=1,
             )
         except Exception as exc:
             raise MediaStorageError(f"cannot store MinIO object: {key}") from exc
         return key
+
+    async def close(self) -> None:
+        """Release both private and public HTTP connection pools once."""
+
+        if self._http_clients_closed:
+            return
+        self._http_clients_closed = True
+        first_error: Exception | None = None
+        for client in self._http_clients:
+            try:
+                client.clear()
+            except Exception as exc:
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise MediaStorageError("cannot close MinIO HTTP clients") from first_error
+
+    async def ping(self) -> None:
+        """Verify access to the configured bucket without mutating storage."""
+
+        try:
+            exists = await asyncio.to_thread(self._client.bucket_exists, self._bucket)
+        except Exception as exc:
+            raise MediaStorageError("MinIO readiness probe failed") from exc
+        if not exists:
+            raise MediaStorageError("MinIO readiness probe failed")
 
     async def presign_get(self, key: str, expires: timedelta) -> str | None:
         try:

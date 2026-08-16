@@ -91,8 +91,7 @@ def test_attested_video_review_promotion_preserves_groups_and_rights_evidence(
     assert len({sample.group_id for sample in video_samples}) == 1
     assert {len(sample.annotations) for sample in video_samples} == {0, 1}
     assert all(
-        sample.attributes["groupingBasis"] == "SOURCE_VIDEO_SHA256"
-        for sample in video_samples
+        sample.attributes["groupingBasis"] == "SOURCE_VIDEO_SHA256" for sample in video_samples
     )
     assert (base / "source-manifest.json").read_bytes() == base_before
     assert (review / "source-manifest.json").read_bytes() == review_before
@@ -231,8 +230,7 @@ def _review_source(tmp_path: Path) -> Path:
 
 def _decisions(review: Path) -> dict[str, DetectorReviewDecision]:
     records = [
-        json.loads(line)
-        for line in (review / "REVIEW_QUEUE.jsonl").read_text().splitlines()
+        json.loads(line) for line in (review / "REVIEW_QUEUE.jsonl").read_text().splitlines()
     ]
     records.sort(key=lambda item: item["reviewId"])
     reviewed_at = datetime(2026, 8, 12, 5, 0, tzinfo=UTC)

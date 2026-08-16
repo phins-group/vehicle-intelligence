@@ -194,9 +194,7 @@ class VideoPlateReviewSourceBuilder:
                         "reviewId": review_id,
                         "imagePath": str(relative),
                         "sourceImageSha256": digest,
-                        "sourceFilenameSha256": _sha256(
-                            samples[0].image_path.encode("utf-8")
-                        ),
+                        "sourceFilenameSha256": _sha256(samples[0].image_path.encode("utf-8")),
                         "reason": VIDEO_REVIEW_REASON,
                         "status": "PENDING_REVIEW",
                         "suggestions": suggestions,
@@ -548,8 +546,7 @@ def _suggestion_json(annotation: DetectorAnnotation, sample_id: str) -> dict[str
     attributes = {
         key: value
         for key, value in annotation.attributes.items()
-        if key != "cropPath"
-        and (isinstance(value, (str, bool, int, float)) or value is None)
+        if key != "cropPath" and (isinstance(value, (str, bool, int, float)) or value is None)
     }
     attributes["sourceSampleId"] = sample_id
     return {

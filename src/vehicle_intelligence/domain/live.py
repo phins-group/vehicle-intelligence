@@ -85,4 +85,3 @@ class LiveFramePacket:
             raise ValueError("live preview JPEG cannot be empty")
         if self.preview_width <= 0 or self.preview_height <= 0:
             raise ValueError("live preview dimensions must be positive")
-

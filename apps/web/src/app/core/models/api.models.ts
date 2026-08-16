@@ -117,6 +117,13 @@ export interface CameraHealth {
   ocrLatencyMs: number;
 }
 
+export interface CameraHealthSnapshot {
+  items: Array<{
+    camera: Camera;
+    health: CameraHealth | null;
+  }>;
+}
+
 export interface CameraConnectionTest {
   connected: boolean;
   latencyMs: number;

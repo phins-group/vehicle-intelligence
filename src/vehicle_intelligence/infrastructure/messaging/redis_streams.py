@@ -115,18 +115,26 @@ class RedisStreamEventConsumer:
             raise EventBusError("cannot reclaim stale Redis Stream events") from exc
 
     async def acknowledge(self, message_id: str) -> None:
+        await self.acknowledge_many((message_id,))
+
+    async def acknowledge_many(self, message_ids: tuple[str, ...]) -> None:
+        unique_ids = tuple(dict.fromkeys(message_ids))
+        if not unique_ids:
+            return
         try:
             async with self._client.pipeline(transaction=True) as pipe:
                 pipe.xack(
                     self._config.stream,
                     self._config.consumer_group,
-                    message_id,
+                    *unique_ids,
                 )
                 if self._config.delete_after_ack:
-                    pipe.xdel(self._config.stream, message_id)
+                    pipe.xdel(self._config.stream, *unique_ids)
                 await pipe.execute()
         except RedisError as exc:
-            raise EventBusError(f"cannot acknowledge Redis Stream event: {message_id}") from exc
+            raise EventBusError(
+                f"cannot acknowledge Redis Stream event batch: {len(unique_ids)} messages"
+            ) from exc
 
     async def dead_letter(self, message: BrokerMessage, reason: str) -> None:
         fields = {

@@ -18,9 +18,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
             {
                 "status": "ok",
                 "image": "phins-picodet-trainer",
-                "paddleDetectionRevision": os.environ.get(
-                    "PHINS_PADDLEDETECTION_REVISION"
-                ),
+                "paddleDetectionRevision": os.environ.get("PHINS_PADDLEDETECTION_REVISION"),
             },
             sort_keys=True,
         ).encode()

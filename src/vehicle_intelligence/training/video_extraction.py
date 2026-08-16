@@ -66,12 +66,15 @@ class VideoExtractionOptions:
             raise ValueError("maximum vehicles per frame must be in [1, 256]")
         if not 1 <= self.maximum_plate_contexts_per_frame <= 256:
             raise ValueError("maximum plate contexts per frame must be in [1, 256]")
-        if min(
-            self.minimum_vehicle_width,
-            self.minimum_vehicle_height,
-            self.minimum_plate_width,
-            self.minimum_plate_height,
-        ) <= 0:
+        if (
+            min(
+                self.minimum_vehicle_width,
+                self.minimum_vehicle_height,
+                self.minimum_plate_width,
+                self.minimum_plate_height,
+            )
+            <= 0
+        ):
             raise ValueError("minimum crop dimensions must be positive")
 
 
@@ -466,9 +469,7 @@ class VideoTrainingImageExtractor:
         )
         _append_json_line(vehicle_stream, vehicle_record)
 
-        plate_contexts.sort(
-            key=lambda item: (item[1].bbox.area, item[1].confidence), reverse=True
-        )
+        plate_contexts.sort(key=lambda item: (item[1].bbox.area, item[1].confidence), reverse=True)
         prepared_contexts: list[tuple[int, Detection, NDArray[np.uint8], float]] = []
         for detection_index, vehicle_detection, vehicle_crop in plate_contexts[
             : self._options.maximum_plate_contexts_per_frame
@@ -485,9 +486,7 @@ class VideoTrainingImageExtractor:
         if callable(detect_plate_batch):
             plate_detection_sets = list(detect_plate_batch(context_images))
         else:
-            plate_detection_sets = [
-                self._plate_detector.detect(image) for image in context_images
-            ]
+            plate_detection_sets = [self._plate_detector.detect(image) for image in context_images]
         if len(plate_detection_sets) != len(prepared_contexts):
             raise DetectorDatasetError("plate detector batch result count is invalid")
         for (
@@ -613,9 +612,7 @@ class VideoTrainingImageExtractor:
                 "jpegQuality": self._options.jpeg_quality,
                 "batchSize": self._options.batch_size,
                 "maximumVehiclesPerFrame": self._options.maximum_vehicles_per_frame,
-                "maximumPlateContextsPerFrame": (
-                    self._options.maximum_plate_contexts_per_frame
-                ),
+                "maximumPlateContextsPerFrame": (self._options.maximum_plate_contexts_per_frame),
             },
             "statistics": _counter_payload(counters),
             "failedVideos": failures,
@@ -635,9 +632,7 @@ def _prepare_output(output_root: Path) -> dict[str, Path]:
         path for path in output_root.rglob("*") if path.is_file() or path.is_symlink()
     ]
     if existing_files:
-        raise DetectorDatasetError(
-            f"video extraction output is not empty: {output_root}"
-        )
+        raise DetectorDatasetError(f"video extraction output is not empty: {output_root}")
     vehicle_root = output_root / "vehicle"
     plate_root = output_root / "plate"
     vehicle_images = vehicle_root / "images"
@@ -907,13 +902,13 @@ def _readme(manifest: dict[str, Any]) -> str:
 
 This directory contains detector **model suggestions**, not reviewed ground truth.
 
-- Owner namespace: `{manifest['ownerNamespace']}`
-- Founder/steward: `{manifest['founderId']}`
-- Source videos: {len(manifest['sources'])}
-- Vehicle training images: {statistics['vehicleTrainingImages']}
-- Vehicle crops: {statistics['vehicleCropImages']}
-- Plate training images: {statistics['plateTrainingImages']}
-- Plate crops: {statistics['plateCropImages']}
+- Owner namespace: `{manifest["ownerNamespace"]}`
+- Founder/steward: `{manifest["founderId"]}`
+- Source videos: {len(manifest["sources"])}
+- Vehicle training images: {statistics["vehicleTrainingImages"]}
+- Vehicle crops: {statistics["vehicleCropImages"]}
+- Plate training images: {statistics["plateTrainingImages"]}
+- Plate crops: {statistics["plateCropImages"]}
 
 ## Layout
 

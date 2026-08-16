@@ -99,9 +99,7 @@ def build_topology_router(
                 enabled_only=enabled_only,
                 limit=limit,
             )
-            return TopologyListPublic(
-                items=[TopologyPublic.from_domain(edge) for edge in edges]
-            )
+            return TopologyListPublic(items=[TopologyPublic.from_domain(edge) for edge in edges])
         except Exception as exc:
             _raise_topology_http(exc)
 

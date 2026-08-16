@@ -148,9 +148,7 @@ class PaddleDetectionConfig(BaseModel):
             or parsed.query
             or parsed.fragment
         ):
-            raise ValueError(
-                "pretrained checkpoint URL must not contain credentials or query data"
-            )
+            raise ValueError("pretrained checkpoint URL must not contain credentials or query data")
         return stripped
 
     @field_validator("extra_overrides")

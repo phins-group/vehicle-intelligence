@@ -20,9 +20,7 @@ from vehicle_intelligence.training.bootstrap.http import BootstrapHttpClient
 from vehicle_intelligence.training.domain import DetectorSample
 
 _DATASET_PAGE = "https://storage.googleapis.com/openimages/web/download_v7.html"
-_CLASS_URL = (
-    "https://storage.googleapis.com/openimages/v7/oidv7-class-descriptions-boxable.csv"
-)
+_CLASS_URL = "https://storage.googleapis.com/openimages/v7/oidv7-class-descriptions-boxable.csv"
 _BOX_URL = "https://storage.googleapis.com/openimages/v5/validation-annotations-bbox.csv"
 _METADATA_URL = (
     "https://storage.googleapis.com/openimages/2018_04/validation/"
@@ -98,11 +96,7 @@ class OpenImagesVehicleSampleSource:
     def _image_metadata(self, image_ids: set[str]) -> dict[str, dict[str, str]]:
         raw = self._http.get_bytes(_METADATA_URL, maximum_bytes=100_000_000)
         reader = csv.DictReader(io.StringIO(_decode_csv(raw)))
-        selected = {
-            row["ImageID"]: row
-            for row in reader
-            if row.get("ImageID") in image_ids
-        }
+        selected = {row["ImageID"]: row for row in reader if row.get("ImageID") in image_ids}
         missing = sorted(image_ids - selected.keys())
         if missing:
             raise SampleDataAcquisitionError("Open Images attribution metadata is incomplete")

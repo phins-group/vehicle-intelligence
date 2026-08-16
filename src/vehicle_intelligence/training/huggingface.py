@@ -234,17 +234,12 @@ def _validate_dataset_hub_metadata(
                 "USER_CONFIRMED_FIRST_PARTY_COLLECTION",
                 "USER_CONFIRMED_FIRST_PARTY_VIDEO_COLLECTION",
             }
-            or source.get("licenseReviewStatus")
-            != "PROPRIETARY_FIRST_PARTY_USER_CONFIRMED"
+            or source.get("licenseReviewStatus") != "PROPRIETARY_FIRST_PARTY_USER_CONFIRMED"
         ):
             raise ModelRegistryError(
                 "restricted private Hub sync requires a release-eligible first-party dataset"
             )
-    recorded = {
-        entry.get("path")
-        for entry in manifest.get("files", [])
-        if isinstance(entry, dict)
-    }
+    recorded = {entry.get("path") for entry in manifest.get("files", []) if isinstance(entry, dict)}
     required = {"README.md", "ATTRIBUTION.csv"}
     if manifest.get("acceptanceEligible") is False:
         required.add("BOOTSTRAP_ONLY.md")

@@ -25,6 +25,7 @@ from vehicle_intelligence.config import (
     load_settings,
 )
 from vehicle_intelligence.interfaces.readiness_cli import run
+from vehicle_intelligence.model_artifact import sha256_directory
 
 
 def _sha256(data: bytes) -> str:
@@ -51,7 +52,20 @@ def _production_settings(tmp_path):
             "model_hash": _sha256(plate_data),
         }
     )
-    ocr = settings.vision.ocr.model_copy(update={"model_hash": "c" * 64})
+    detection_directory = tmp_path / "ocr-detection"
+    recognition_directory = tmp_path / "ocr-recognition"
+    detection_directory.mkdir()
+    recognition_directory.mkdir()
+    (detection_directory / "inference.json").write_bytes(b"verified-ocr-detection")
+    (recognition_directory / "inference.json").write_bytes(b"verified-ocr-recognition")
+    ocr = settings.vision.ocr.model_copy(
+        update={
+            "detection_model_directory": detection_directory.name,
+            "detection_model_hash": sha256_directory(detection_directory),
+            "recognition_model_directory": recognition_directory.name,
+            "recognition_model_hash": sha256_directory(recognition_directory),
+        }
+    )
     vision = settings.vision.model_copy(
         update={
             "vehicle_detection": vehicle,
@@ -81,15 +95,10 @@ def _production_settings(tmp_path):
             "mongodb": MongoConfig(
                 enabled=True,
                 transactions_enabled=True,
-                uri=SecretStr(
-                    "mongodb://vip-user:private-password@mongo:27017/"
-                    "?replicaSet=vip-rs"
-                ),
+                uri=SecretStr("mongodb://vip-user:private-password@mongo:27017/?replicaSet=vip-rs"),
             ),
             "event_bus": EventBusConfig(backend="redis"),
-            "redis": RedisConfig(
-                url=SecretStr("rediss://:private-password@redis:6379/0")
-            ),
+            "redis": RedisConfig(url=SecretStr("rediss://:private-password@redis:6379/0")),
             "storage": StorageConfig(backend="minio"),
             "minio": MinioConfig(
                 endpoint="minio.internal:9000",
@@ -120,9 +129,7 @@ def test_default_configuration_fails_closed_and_report_is_secret_safe(
     report = assess_production_readiness(settings, base_directory=tmp_path)
     document = report.to_document()
     rendered = json.dumps(document)
-    failures = {
-        check.id for check in report.checks if check.status is ReadinessStatus.FAIL
-    }
+    failures = {check.id for check in report.checks if check.status is ReadinessStatus.FAIL}
 
     assert not report.ready
     assert document["schemaVersion"] == 1
@@ -149,6 +156,26 @@ def test_versioned_production_configuration_passes_static_gate(tmp_path) -> None
 
     assert report.ready
     assert report.counts == {"PASS": len(report.checks), "WARN": 0, "FAIL": 0}
+    statuses = {check.id: check.status for check in report.checks}
+    assert statuses["model.ocr_artifacts"] is ReadinessStatus.PASS
+    assert statuses["model.ocr_hash"] is ReadinessStatus.PASS
+
+
+def test_production_gate_requires_durable_finalization_outbox(tmp_path) -> None:
+    settings = _production_settings(tmp_path)
+    settings = settings.model_copy(
+        update={
+            "finalization_outbox": settings.finalization_outbox.model_copy(
+                update={"enabled": False}
+            )
+        }
+    )
+
+    report = assess_production_readiness(settings, base_directory=tmp_path)
+    statuses = {check.id: check.status for check in report.checks}
+
+    assert not report.ready
+    assert statuses["durability.finalization_outbox"] is ReadinessStatus.FAIL
 
 
 def test_model_tampering_fails_hash_gate(tmp_path) -> None:
@@ -161,6 +188,18 @@ def test_model_tampering_fails_hash_gate(tmp_path) -> None:
     assert not report.ready
     assert statuses["model.vehicle_artifact"] is ReadinessStatus.PASS
     assert statuses["model.vehicle_hash"] is ReadinessStatus.FAIL
+
+
+def test_ocr_directory_tampering_fails_hash_gate(tmp_path) -> None:
+    settings = _production_settings(tmp_path)
+    (tmp_path / "ocr-recognition" / "inference.json").write_bytes(b"tampered")
+
+    report = assess_production_readiness(settings, base_directory=tmp_path)
+    statuses = {check.id: check.status for check in report.checks}
+
+    assert not report.ready
+    assert statuses["model.ocr_artifacts"] is ReadinessStatus.PASS
+    assert statuses["model.ocr_hash"] is ReadinessStatus.FAIL
 
 
 def test_cli_writes_atomic_machine_readable_failure_report(tmp_path) -> None:

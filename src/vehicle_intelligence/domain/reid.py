@@ -77,8 +77,7 @@ class IdentityMergeReview:
 
     def __post_init__(self) -> None:
         if any(
-            not value.strip()
-            for value in (self.id, self.source_vehicle_id, self.target_vehicle_id)
+            not value.strip() for value in (self.id, self.source_vehicle_id, self.target_vehicle_id)
         ):
             raise ValueError("identity merge identifiers are required")
         if self.source_vehicle_id == self.target_vehicle_id:

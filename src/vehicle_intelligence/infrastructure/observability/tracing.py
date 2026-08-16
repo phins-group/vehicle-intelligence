@@ -27,7 +27,7 @@ class TracingRuntime:
         FastAPIInstrumentor.instrument_app(
             app,
             tracer_provider=self.provider,
-            excluded_urls="/metrics,/api/system/health",
+            excluded_urls="/metrics,/api/system/health,/livez,/readyz",
         )
 
     def shutdown(self) -> None:

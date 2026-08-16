@@ -46,6 +46,16 @@ class MongoRuntime:
                 )
         self._initialized = True
 
+    async def ping(self) -> None:
+        """Verify that the shared canonical store is currently reachable."""
+
+        if not self._initialized:
+            raise PersistenceError("MongoDB runtime is not initialized")
+        try:
+            await self.client.admin.command("ping")
+        except PyMongoError as exc:
+            raise PersistenceError("MongoDB readiness probe failed") from exc
+
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[None]:
         if not self.config.transactions_enabled:
@@ -73,6 +83,7 @@ class MongoRuntime:
             raise PersistenceError("MongoDB transaction failed") from exc
 
     async def close(self) -> None:
+        self._initialized = False
         await self.client.close()
 
 

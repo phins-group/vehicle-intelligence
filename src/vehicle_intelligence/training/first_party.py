@@ -512,9 +512,8 @@ def _load_label_reference(root: Path) -> _LabelReference:
         image_path = _safe_child(root, sample.image_path)
         digest = path_digests.get(sample.image_path) or _sha256_file(image_path)
         existing = records.get(digest)
-        if (
-            existing is not None
-            and _annotation_signature(existing) != _annotation_signature(sample)
+        if existing is not None and _annotation_signature(existing) != _annotation_signature(
+            sample
         ):
             raise DetectorDatasetError("exact label reference image has conflicting annotations")
         records.setdefault(digest, sample)
@@ -541,9 +540,8 @@ def _load_auto_reference(root: Path | None) -> _AutoReference:
         image_path = _safe_child(root, sample.image_path)
         digest = _sha256_file(image_path)
         existing = records.get(digest)
-        if (
-            existing is not None
-            and _annotation_signature(existing) != _annotation_signature(sample)
+        if existing is not None and _annotation_signature(existing) != _annotation_signature(
+            sample
         ):
             records.pop(digest, None)
             conflicts.add(digest)
@@ -604,9 +602,7 @@ def _duplicates(inventory: _Inventory, root: Path) -> bytes:
                 {
                     "sha256": digest,
                     "keptFilenameSha256": _sha256(paths[0].name.encode()),
-                    "duplicateFilenameSha256": [
-                        _sha256(path.name.encode()) for path in paths[1:]
-                    ],
+                    "duplicateFilenameSha256": [_sha256(path.name.encode()) for path in paths[1:]],
                     "duplicateCount": len(paths) - 1,
                 },
                 pretty=False,

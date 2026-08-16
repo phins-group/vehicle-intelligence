@@ -80,3 +80,21 @@ async def test_audit_write_failure_is_explicit() -> None:
                 request_id="req-failed",
             )
         )
+
+
+async def test_prepared_audit_persistence_is_idempotent() -> None:
+    repository = InMemoryAuditLogRepository()
+    service = AuditService(repository, id_factory=lambda: "aud-retry")
+    entry = service.prepare(
+        AuditRecord(
+            principal=principal(),
+            action=AuditAction.RULE_CREATED,
+            resource_type=AuditResourceType.RULE,
+            resource_id="rule-01",
+            request_id="req-retry",
+        )
+    )
+
+    assert await service.persist(entry) == entry
+    assert await service.persist(entry) == entry
+    assert await repository.get(entry.id) == entry

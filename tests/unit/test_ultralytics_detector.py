@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 import pytest
 
 from vehicle_intelligence.application.ports import Detector, PlateDetector, VehicleDetector
 from vehicle_intelligence.config import DetectorConfig, VehicleDetectorConfig
 from vehicle_intelligence.domain import Detection, PlateDetection
+from vehicle_intelligence.exceptions import ModelLoadError
 from vehicle_intelligence.infrastructure.vision.ultralytics import (
     UltralyticsPlateDetector,
     YoloDetector,
@@ -50,7 +53,9 @@ class FakeModel:
         return [self.result for _ in kwargs["source"]]
 
 
-def test_yolo_provider_returns_mapped_clamped_canonical_detection() -> None:
+def test_yolo_provider_returns_mapped_clamped_canonical_detection(tmp_path) -> None:
+    artifact = tmp_path / "vehicle.pt"
+    artifact.write_bytes(b"vehicle-checkpoint")
     model = FakeModel(
         FakeResult(
             FakeBoxes([[-5.2, 2.1, 20.8, 14.4]], [0.9], [2]),
@@ -60,7 +65,7 @@ def test_yolo_provider_returns_mapped_clamped_canonical_detection() -> None:
     detector = YoloDetector(
         VehicleDetectorConfig(
             provider="yolo",
-            model_path="vehicle.pt",
+            model_path=str(artifact),
             model_name="vehicle-yolo",
             model_version="1",
             confidence=0.4,
@@ -83,12 +88,15 @@ def test_yolo_provider_returns_mapped_clamped_canonical_detection() -> None:
     assert detections[0].class_id == 2
     assert detections[0].class_name == "car"
     assert detections[0].confidence == pytest.approx(0.9)
+    assert detections[0].model.hash == hashlib.sha256(artifact.read_bytes()).hexdigest()
     assert model.calls[0]["conf"] == 0.4
     assert model.calls[0]["iou"] == 0.5
     assert model.calls[0]["device"] == "cpu"
 
 
-def test_yolo_plate_provider_returns_existing_canonical_plate_detection() -> None:
+def test_yolo_plate_provider_returns_existing_canonical_plate_detection(tmp_path) -> None:
+    artifact = tmp_path / "plate.pt"
+    artifact.write_bytes(b"plate-checkpoint")
     model = FakeModel(
         FakeResult(
             FakeBoxes([[1.2, 2.2, 8.8, 6.8]], [0.75], [0]),
@@ -98,7 +106,7 @@ def test_yolo_plate_provider_returns_existing_canonical_plate_detection() -> Non
     detector = UltralyticsPlateDetector(
         DetectorConfig(
             provider="yolo",
-            model_path="plate.pt",
+            model_path=str(artifact),
             model_name="plate-yolo",
             model_version="1",
             confidence=0.4,
@@ -125,3 +133,22 @@ def test_yolo_plate_provider_returns_existing_canonical_plate_detection() -> Non
     assert len(batch) == 2
     assert all(len(items) == 1 for items in batch)
     assert len(model.calls[-1]["source"]) == 2
+
+
+def test_ultralytics_rejects_a_checkpoint_with_the_wrong_configured_hash(tmp_path) -> None:
+    artifact = tmp_path / "plate.pt"
+    artifact.write_bytes(b"untrusted-checkpoint")
+
+    with pytest.raises(ModelLoadError, match="SHA-256 mismatch"):
+        UltralyticsPlateDetector(
+            DetectorConfig(
+                provider="yolo",
+                model_path=str(artifact),
+                model_name="plate-yolo",
+                model_version="1",
+                model_hash="0" * 64,
+                confidence=0.4,
+                iou=0.5,
+            ),
+            model=FakeModel(FakeResult(None, {})),
+        )

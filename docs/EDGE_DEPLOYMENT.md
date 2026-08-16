@@ -12,12 +12,36 @@ bounded queue per camera and a ready-camera round robin. It enforces:
 - bounded batch size and batch-accumulation wait;
 - submitted/emitted/oldest-drop/stale-drop/pending and per-camera counters.
 
-`FairInferenceCoordinator` drains a batch and uses `BatchVehicleDetector` when
-the selected provider exposes it. Ultralytics now performs real multi-image
-inference through that contract. Scalar providers are executed in fair batch
-order without being mislabeled as device batching. The existing isolated camera
-worker remains the default until a deployment deliberately chooses a shared
-device process; enabling the config alone does not move inference into FastAPI.
+When `gpu_scheduler.enabled=true`, `vehicle-camera-supervisor` starts one dedicated
+`vehicle-inference-service` before it starts camera workers. That process loads the
+vehicle and plate models once and exposes bounded, length-prefixed binary requests
+over a mode-0600 Unix socket. Camera-bound HMAC capabilities are passed through
+one-shot inherited file descriptors; raw images never use temporary files or
+base64. Requests are admitted by global/per-camera byte and call budgets, then
+scheduled one image per ready camera before a camera returns to the round-robin
+tail. Providers with `detect_batch` receive real multi-image batches; scalar
+providers retain the same result mapping.
+
+The camera subprocess path remains unchanged when the scheduler is disabled.
+When enabled, workers fail closed on socket/authentication/deadline errors and do
+not load a local detector fallback. A detector call exceeding
+`request_timeout_seconds` makes the daemon unhealthy; the supervisor stops camera
+workers and applies capped exponential backoff before restarting the daemon and
+then the workers. `maximum_frame_age_ms` applies only before a request's first
+image is dispatched; an already-started multi-batch request completes under the
+end-to-end request timeout.
+
+A fast batch-provider exception is isolated by bounded binary subdivision under
+that same request deadline. Successful camera results retain their original
+mapping, while only calls containing an isolated bad image fail. Isolation is
+safe here because detector inference is local and read-only; it must not be used
+around providers with externally visible side effects. Repeated isolated failures
+temporarily quarantine only that camera/detector pair before its next image body
+is read. Consecutive fully failed batches spanning the configured minimum camera
+count open the provider circuit breaker, make the daemon unhealthy, and let the
+supervisor restart the model process. `maximum_isolation_attempts` bounds retry
+amplification; when exhausted, unresolved calls fail closed without publishing
+partial results.
 
 ## Capacity benchmark
 
@@ -84,6 +108,18 @@ PaddleOCR/PaddlePaddle, ONNX Runtime, MinIO, and required OpenCV system librarie
 Models are never copied into the image; `/models` is read-only and `/data` is a
 separate volume. `vehicle-edge-entrypoint` verifies the manifest before replacing
 itself with the camera worker.
+
+`/data` is also the durability boundary for the enabled finalization outbox.
+Keep `edge_output` on persistent storage across container replacement; an
+ephemeral or read-only `/data` makes the worker fail closed before finalizing a
+track. Startup and background replay drain staged event envelopes and JPEGs after
+MinIO, Redis, or repository recovery. Capacity is bounded and no queued evidence
+is evicted automatically. The configured byte bound applies per camera worker;
+provision `/data` for at least the sum of all camera bounds plus operating
+headroom, and alert on outbox occupancy and filesystem free space.
+The edge service grants 75 seconds for termination so the outbox's 60-second
+final drain and the bounded object-storage request tail can finish before Docker
+escalates to `SIGKILL`.
 
 ```bash
 EDGE_MANIFEST_PATH=$PWD/edge-manifest.json \

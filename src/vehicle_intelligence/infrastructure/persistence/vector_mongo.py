@@ -86,6 +86,7 @@ class MongoVectorRepository:
                     "_id": {"$in": list(candidates)},
                     "model.name": query.model.name,
                     "model.version": query.model.version,
+                    "model.hash": query.model.model_hash,
                     "model.dimension": query.model.dimension,
                 }
             ).limit(self._maximum_candidates)

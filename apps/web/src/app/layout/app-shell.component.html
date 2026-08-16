@@ -1,5 +1,12 @@
+<a class="skip-link" href="#main-content" (click)="focusMainContent($event)">Bỏ qua đến nội dung chính</a>
+
 <div class="app-layout" [class.menu-open]="menuOpen()">
-  <aside class="sidebar" aria-label="Điều hướng chính">
+  <aside
+    #sidebar
+    id="primary-navigation"
+    class="sidebar"
+    aria-label="Điều hướng chính"
+  >
     <div class="brand">
       <span class="brand-mark"><svg lucideCar aria-hidden="true"></svg></span>
       <span>
@@ -9,24 +16,28 @@
     </div>
 
     <nav class="primary-nav">
-      <a routerLink="/dashboard" routerLinkActive="active">
+      <a routerLink="/dashboard" routerLinkActive="active" ariaCurrentWhenActive="page">
         <svg lucideLayoutDashboard aria-hidden="true"></svg>
         <span>Tổng quan</span>
       </a>
-      <a routerLink="/events" routerLinkActive="active">
+      <a routerLink="/events" routerLinkActive="active" ariaCurrentWhenActive="page">
         <svg lucideActivity aria-hidden="true"></svg>
         <span>Sự kiện xe</span>
       </a>
-      <a routerLink="/live-monitor" routerLinkActive="active">
+      <a routerLink="/live-monitor" routerLinkActive="active" ariaCurrentWhenActive="page">
         <svg lucideCctv aria-hidden="true"></svg>
         <span>Live Monitor</span>
       </a>
-      <a routerLink="/vehicle-search" routerLinkActive="active">
+      <a
+        routerLink="/vehicle-search"
+        [class.active]="vehicleSearchSectionActive()"
+        [attr.aria-current]="vehicleSearchSectionActive() ? 'page' : null"
+      >
         <svg lucideSearch aria-hidden="true"></svg>
         <span>Tra cứu biển số</span>
       </a>
       @if (auth.canReviewPlates()) {
-        <a routerLink="/ocr-review" routerLinkActive="active">
+        <a routerLink="/ocr-review" routerLinkActive="active" ariaCurrentWhenActive="page">
           <svg lucideScanText aria-hidden="true"></svg>
           <span>Duyệt OCR</span>
         </a>
@@ -47,15 +58,15 @@
           </button>
           @if (datasetMenuOpen()) {
             <div id="datasets-submenu" class="nav-submenu" aria-label="Datasets">
-              <a routerLink="/dataset-review" routerLinkActive="active">
+              <a routerLink="/dataset-review" routerLinkActive="active" ariaCurrentWhenActive="page">
                 <svg lucideBoxes aria-hidden="true"></svg>
                 <span>Duyệt Dataset</span>
               </a>
-              <a routerLink="/datasets" routerLinkActive="active">
+              <a routerLink="/datasets" routerLinkActive="active" ariaCurrentWhenActive="page">
                 <svg lucideDatabase aria-hidden="true"></svg>
                 <span>Quản lý Dataset</span>
               </a>
-              <a routerLink="/model-training" routerLinkActive="active">
+              <a routerLink="/model-training" routerLinkActive="active" ariaCurrentWhenActive="page">
                 <svg lucideBrainCircuit aria-hidden="true"></svg>
                 <span>Build Model</span>
               </a>
@@ -63,27 +74,27 @@
           }
         </div>
       }
-      <a routerLink="/cameras" routerLinkActive="active">
+      <a routerLink="/cameras" routerLinkActive="active" ariaCurrentWhenActive="page">
         <svg lucideCamera aria-hidden="true"></svg>
         <span>Camera</span>
       </a>
-      <a routerLink="/alerts" routerLinkActive="active">
+      <a routerLink="/alerts" routerLinkActive="active" ariaCurrentWhenActive="page">
         <svg lucideBell aria-hidden="true"></svg>
         <span>Cảnh báo</span>
       </a>
-      <a routerLink="/watchlists" routerLinkActive="active">
+      <a routerLink="/watchlists" routerLinkActive="active" ariaCurrentWhenActive="page">
         <svg lucideListChecks aria-hidden="true"></svg>
         <span>Danh sách xe</span>
       </a>
-      <a routerLink="/rules" routerLinkActive="active">
+      <a routerLink="/rules" routerLinkActive="active" ariaCurrentWhenActive="page">
         <svg lucideGitBranch aria-hidden="true"></svg>
         <span>Luật tự động</span>
       </a>
-      <a routerLink="/model-quality" routerLinkActive="active">
+      <a routerLink="/model-quality" routerLinkActive="active" ariaCurrentWhenActive="page">
         <svg lucideGauge aria-hidden="true"></svg>
         <span>Chất lượng AI</span>
       </a>
-      <a routerLink="/system-health" routerLinkActive="active">
+      <a routerLink="/system-health" routerLinkActive="active" ariaCurrentWhenActive="page">
         <svg lucideServer aria-hidden="true"></svg>
         <span>Sức khỏe hệ thống</span>
       </a>
@@ -107,12 +118,20 @@
   </aside>
 
   @if (menuOpen()) {
-    <button class="sidebar-backdrop" type="button" aria-label="Đóng menu" (click)="toggleMenu()"></button>
+    <button #menuBackdrop class="sidebar-backdrop" type="button" aria-label="Đóng menu" (click)="closeMenu()"></button>
   }
 
-  <div class="workspace">
+  <div class="workspace" [attr.inert]="menuOpen() ? '' : null">
     <header class="topbar">
-      <button class="icon-button menu-button" type="button" aria-label="Mở menu" (click)="toggleMenu()">
+      <button
+        #menuButton
+        class="icon-button menu-button"
+        type="button"
+        [attr.aria-label]="menuOpen() ? 'Đóng menu' : 'Mở menu'"
+        [attr.aria-expanded]="menuOpen()"
+        aria-controls="primary-navigation"
+        (click)="toggleMenu()"
+      >
         @if (menuOpen()) {
           <svg lucideX aria-hidden="true"></svg>
         } @else {
@@ -134,7 +153,7 @@
       </button>
     </header>
 
-    <main class="content">
+    <main #mainContent id="main-content" class="content" tabindex="-1">
       <router-outlet />
     </main>
   </div>

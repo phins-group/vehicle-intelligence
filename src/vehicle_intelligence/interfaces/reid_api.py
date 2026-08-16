@@ -131,9 +131,7 @@ def build_reid_router(
         _principal: Principal = Depends(read_access),
     ) -> IdentityReviewResultPublic:
         try:
-            return IdentityReviewResultPublic.from_domain(
-                await reviews.get_review(review_id)
-            )
+            return IdentityReviewResultPublic.from_domain(await reviews.get_review(review_id))
         except Exception as exc:
             _raise_reid_http(exc)
 

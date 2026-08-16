@@ -25,12 +25,16 @@ import {
 } from '../../core/models/api.models';
 import { ApiClientService } from '../../core/services/api-client.service';
 import { apiErrorMessage } from '../../core/utils/api-error';
+import { listWindow } from '../../core/utils/list-window-utils';
 import {
   buildJourneySteps,
   durationLabel,
   summarizeJourney
 } from '../../core/utils/vehicle-journey-utils';
+import { AccessibleDialogDirective } from '../../shared/accessibility/accessible-dialog.directive';
 import { MediaEvidenceComponent } from '../../shared/media-evidence/media-evidence.component';
+
+const JOURNEY_WINDOW_SIZE = 100;
 
 @Component({
   selector: 'app-vehicle-detail',
@@ -38,6 +42,7 @@ import { MediaEvidenceComponent } from '../../shared/media-evidence/media-eviden
     DatePipe,
     PercentPipe,
     RouterLink,
+    AccessibleDialogDirective,
     MediaEvidenceComponent,
     LucideArrowDownRight,
     LucideCamera,
@@ -66,6 +71,10 @@ export class VehicleDetailComponent {
     const value = this.journey();
     return value ? buildJourneySteps(value) : [];
   });
+  readonly journeyWindowStart = signal(0);
+  readonly journeyWindow = computed(() =>
+    listWindow(this.steps(), this.journeyWindowStart(), JOURNEY_WINDOW_SIZE)
+  );
   readonly summary = computed(() => {
     const value = this.journey();
     return value ? summarizeJourney(value) : null;
@@ -115,6 +124,16 @@ export class VehicleDetailComponent {
     return durationLabel(seconds);
   }
 
+  showOlderJourney(): void {
+    const window = this.journeyWindow();
+    this.journeyWindowStart.set(Math.max(0, window.start - JOURNEY_WINDOW_SIZE));
+  }
+
+  showNewerJourney(): void {
+    const window = this.journeyWindow();
+    this.journeyWindowStart.set(window.start + JOURNEY_WINDOW_SIZE);
+  }
+
   private async load(): Promise<void> {
     const generation = ++this.requestGeneration;
     this.loading.set(true);
@@ -128,10 +147,17 @@ export class VehicleDetailComponent {
       if (generation !== this.requestGeneration) return;
       this.identity.set(identity);
       this.journey.set(journey);
+      this.journeyWindowStart.set(
+        journey.observations.length > 0
+          ? Math.floor((journey.observations.length - 1) / JOURNEY_WINDOW_SIZE) *
+              JOURNEY_WINDOW_SIZE
+          : 0
+      );
     } catch (error) {
       if (generation === this.requestGeneration) {
         this.identity.set(null);
         this.journey.set(null);
+        this.journeyWindowStart.set(0);
         this.error.set(apiErrorMessage(error, 'Không thể tải logical vehicle.'));
       }
     } finally {

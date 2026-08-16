@@ -3,54 +3,153 @@
     <h1 class="page-title">Cảnh báo</h1>
     <p>Tiếp nhận và xử lý cảnh báo được tạo bởi rules engine.</p>
   </div>
-  <button class="button secondary" type="button" (click)="load(true)" [disabled]="loading()"><svg lucideRefreshCw aria-hidden="true" [class.spin]="loading()"></svg> Làm mới</button>
+  <button
+    class="button secondary"
+    type="button"
+    (click)="load(true)"
+    [disabled]="loading()"
+  >
+    <svg lucideRefreshCw aria-hidden="true" [class.spin]="loading()"></svg> Làm
+    mới
+  </button>
 </div>
 
 <section class="panel filter-panel compact">
-  <form class="filter-grid alert-filters" (ngSubmit)="load(true)">
-    <label><span>Trạng thái</span><select name="status" [(ngModel)]="status"><option value="">Tất cả</option><option value="OPEN">Open</option><option value="ACKNOWLEDGED">Acknowledged</option><option value="RESOLVED">Resolved</option></select></label>
-    <label><span>Biển số</span><div class="input-with-icon"><svg lucideSearch aria-hidden="true"></svg><input name="plate" [(ngModel)]="plate" placeholder="51H-123.45"></div></label>
-    <label><span>Camera</span><select name="camera" [(ngModel)]="cameraId"><option value="">Tất cả camera</option>@for (camera of cameras(); track camera.id) { <option [value]="camera.id">{{ camera.name }}</option> }</select></label>
-    <div class="filter-actions"><button class="button ghost" type="button" (click)="clearFilters()">Xóa lọc</button><button class="button primary" type="submit"><svg lucideSearch aria-hidden="true"></svg> Áp dụng</button></div>
+  <form class="filter-grid alert-filters" (ngSubmit)="applyFilters()">
+    <label
+      ><span>Trạng thái</span
+      ><select name="status" [(ngModel)]="status">
+        <option value="">Tất cả</option>
+        <option value="OPEN">Open</option>
+        <option value="ACKNOWLEDGED">Acknowledged</option>
+        <option value="RESOLVED">Resolved</option>
+      </select></label
+    >
+    <label
+      ><span>Biển số</span>
+      <div class="input-with-icon">
+        <svg lucideSearch aria-hidden="true"></svg
+        ><input
+          name="plate"
+          [(ngModel)]="plate"
+          placeholder="51H-123.45"
+        /></div
+    ></label>
+    <label
+      ><span>Camera</span
+      ><select name="camera" [(ngModel)]="cameraId">
+        <option value="">Tất cả camera</option>
+        @for (camera of cameras(); track camera.id) {
+          <option [value]="camera.id">{{ camera.name }}</option>
+        }
+      </select></label
+    >
+    <div class="filter-actions">
+      <button class="button ghost" type="button" (click)="clearFilters()">
+        Xóa lọc</button
+      ><button class="button primary" type="submit">
+        <svg lucideSearch aria-hidden="true"></svg> Áp dụng
+      </button>
+    </div>
   </form>
 </section>
 
-@if (error()) { <div class="notice error" role="alert">{{ error() }}</div> }
-@if (notice()) { <div class="notice success" role="status">{{ notice() }}</div> }
+@if (actionError()) {
+  <div class="notice error" role="alert">{{ actionError() }}</div>
+}
+@if (loadState.staleError(); as loadError) {
+  <div class="notice error" role="alert">
+    {{ loadError }} Dữ liệu đã tải thành công trước đó vẫn được giữ nguyên.
+  </div>
+}
+@if (notice()) {
+  <div class="notice success" role="status">{{ notice() }}</div>
+}
 
 <section class="alert-list" aria-label="Danh sách cảnh báo">
-  @if (loading() && !alerts().length) {
-    <div class="panel empty-state">Đang tải cảnh báo…</div>
+  @if (loading() && !loadState.hasLoaded()) {
+    <div class="panel empty-state" role="status" aria-live="polite">
+      Đang tải cảnh báo…
+    </div>
+  } @else if (loadState.initialError(); as loadError) {
+    <div class="panel empty-state" role="alert">
+      <strong>{{ loadError }}</strong>
+      <span>Kiểm tra kết nối API rồi thử lại.</span>
+      <button class="button secondary" type="button" (click)="load(true)">
+        Thử lại
+      </button>
+    </div>
   } @else if (!alerts().length) {
-    <div class="panel empty-state"><svg lucideBell aria-hidden="true"></svg><strong>Không có cảnh báo phù hợp</strong><span>Hệ thống chưa ghi nhận item trong bộ lọc hiện tại.</span></div>
+    <div class="panel empty-state">
+      <svg lucideBell aria-hidden="true"></svg
+      ><strong>Không có cảnh báo phù hợp</strong
+      ><span>Hệ thống chưa ghi nhận item trong bộ lọc hiện tại.</span>
+    </div>
   } @else {
     @for (alert of alerts(); track alert.id) {
       <article class="alert-card" [attr.data-severity]="alert.severity">
-        <div class="alert-marker"><svg lucideTriangleAlert aria-hidden="true"></svg></div>
+        <div class="alert-marker">
+          <svg lucideTriangleAlert aria-hidden="true"></svg>
+        </div>
         <div class="alert-content">
           <div class="alert-heading">
-            <div><span class="severity-pill" [attr.data-severity]="alert.severity">{{ alert.severity }}</span><span class="status-pill" [attr.data-status]="alert.status">{{ alert.status }}</span></div>
-            <time>{{ alert.occurredAt | date: 'dd/MM/yyyy HH:mm:ss' }}</time>
+            <div>
+              <span
+                class="severity-pill"
+                [attr.data-severity]="alert.severity"
+                >{{ alert.severity }}</span
+              ><span class="status-pill" [attr.data-status]="alert.status">{{
+                alert.status
+              }}</span>
+            </div>
+            <time>{{ alert.occurredAt | date: "dd/MM/yyyy HH:mm:ss" }}</time>
           </div>
           <h2>{{ alert.message }}</h2>
           <div class="alert-context">
-            <span><b>Biển số</b>{{ alert.plate || 'Không xác định' }}</span>
+            <span><b>Biển số</b>{{ alert.plate || "Không xác định" }}</span>
             <span><b>Camera</b>{{ alert.camera.name }}</span>
             <span><b>Rule</b>{{ alert.rule.name }}</span>
             <span><b>Hướng</b>{{ alert.direction }}</span>
           </div>
-          <p class="mono subtle">Alert ID: {{ alert.id }} · Event: {{ alert.source.eventId }}</p>
-          @if (auth.canManageAlerts() && alert.status !== 'RESOLVED') {
+          <p class="mono subtle">
+            Alert ID: {{ alert.id }} · Event: {{ alert.source.eventId }}
+          </p>
+          @if (auth.canManageAlerts() && alert.status !== "RESOLVED") {
             <div class="alert-actions">
-              @if (alert.status === 'OPEN') {
-                <button class="button secondary" type="button" (click)="acknowledge(alert)" [disabled]="isBusy(alert.id)"><svg lucideCheck aria-hidden="true"></svg> Tiếp nhận</button>
+              @if (alert.status === "OPEN") {
+                <button
+                  class="button secondary"
+                  type="button"
+                  (click)="acknowledge(alert)"
+                  [disabled]="isBusy(alert.id)"
+                >
+                  <svg lucideCheck aria-hidden="true"></svg> Tiếp nhận
+                </button>
               }
-              <button class="button primary" type="button" (click)="resolve(alert)" [disabled]="isBusy(alert.id)"><svg lucideCircleCheck aria-hidden="true"></svg> Resolve</button>
+              <button
+                class="button primary"
+                type="button"
+                (click)="resolve(alert)"
+                [disabled]="isBusy(alert.id)"
+              >
+                <svg lucideCircleCheck aria-hidden="true"></svg> Resolve
+              </button>
             </div>
           }
         </div>
       </article>
     }
-    @if (nextCursor()) { <div class="load-more"><button class="button secondary" type="button" (click)="load(false)" [disabled]="loadingMore()">{{ loadingMore() ? 'Đang tải…' : 'Tải thêm' }}</button></div> }
+    @if (nextCursor()) {
+      <div class="load-more">
+        <button
+          class="button secondary"
+          type="button"
+          (click)="load(false)"
+          [disabled]="loadingMore()"
+        >
+          {{ loadingMore() ? "Đang tải…" : "Tải thêm" }}
+        </button>
+      </div>
+    }
   }
 </section>

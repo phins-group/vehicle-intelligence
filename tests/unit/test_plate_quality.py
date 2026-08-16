@@ -1,7 +1,7 @@
 import numpy as np
 
 from vehicle_intelligence.application.quality import PlateQualityEvaluator
-from vehicle_intelligence.config import PlateQualityConfig
+from vehicle_intelligence.config import PlateQualityConfig, QualityWeights
 from vehicle_intelligence.domain import BoundingBox, ModelMetadata, PlateDetection
 
 
@@ -31,3 +31,23 @@ def test_rejects_tiny_flat_plate_before_ocr() -> None:
 
     assert not quality.eligible
     assert quality.sharpness == 0
+
+
+def test_custom_weights_are_applied_without_changing_component_scores() -> None:
+    image = np.full((40, 120, 3), 127, dtype=np.uint8)
+    config = PlateQualityConfig(
+        minimum=0.5,
+        weights=QualityWeights(
+            sharpness=0,
+            brightness=0,
+            contrast=0,
+            resolution=0,
+            angle=0,
+            detector=1,
+        ),
+    )
+
+    quality = PlateQualityEvaluator(config).evaluate(image, detection(120, 40))
+
+    assert quality.total_score == 0.95
+    assert quality.eligible

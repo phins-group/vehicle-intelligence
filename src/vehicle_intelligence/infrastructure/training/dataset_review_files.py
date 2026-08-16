@@ -22,6 +22,7 @@ import numpy as np
 
 from vehicle_intelligence.application.dataset_review import DetectorReviewQuery
 from vehicle_intelligence.config import DatasetReviewConfig
+from vehicle_intelligence.domain import AuditAction, AuditLog, AuditResourceType
 from vehicle_intelligence.domain.dataset_review import (
     DetectorPromotionJob,
     DetectorPromotionStatus,
@@ -41,6 +42,10 @@ from vehicle_intelligence.exceptions import (
     DatasetReviewStorageError,
     DatasetReviewValidationError,
     InvalidCursorError,
+)
+from vehicle_intelligence.infrastructure.audit_serialization import (
+    audit_log_from_json,
+    audit_log_to_json,
 )
 from vehicle_intelligence.training.video_review_source import VIDEO_REVIEW_SOURCE_TYPE
 
@@ -91,10 +96,9 @@ class FileDetectorReviewRepository:
         self._promoted_root = config.promoted_sources_directory.expanduser().resolve()
         self._clock = clock
         self._sources: dict[str, _SourceState] = {}
-        self._model_suggestions: dict[
-            tuple[str, str], _ModelSuggestionState
-        ] = {}
+        self._model_suggestions: dict[tuple[str, str], _ModelSuggestionState] = {}
         self._decisions: dict[tuple[str, str], DetectorReviewDecision] = {}
+        self._pending_audits: dict[str, AuditLog] = {}
         self._jobs: dict[str, DetectorPromotionJob] = {}
         self._dimensions: dict[tuple[str, str], tuple[int, int]] = {}
         self._write_lock = asyncio.Lock()
@@ -129,9 +133,7 @@ class FileDetectorReviewRepository:
                 break
             selected.append(item)
         next_cursor = (
-            _encode_cursor(selected[-1].review_id, query)
-            if has_more and selected
-            else None
+            _encode_cursor(selected[-1].review_id, query) if has_more and selected else None
         )
         return DetectorReviewPage(tuple(selected), next_cursor)
 
@@ -153,6 +155,7 @@ class FileDetectorReviewRepository:
         review_id: str,
         decision: DetectorReviewDecision,
         expected_revision: int,
+        audit_entry: AuditLog | None = None,
     ) -> DetectorReviewItem:
         item = self._item(source_id, review_id)
         async with self._write_lock:
@@ -165,14 +168,36 @@ class FileDetectorReviewRepository:
                 )
             if decision.revision != expected_revision + 1:
                 raise DatasetReviewValidationError("detector review revision is not sequential")
-            await asyncio.to_thread(self._write_decision, item, decision)
+            if audit_entry is not None:
+                _validate_review_audit(audit_entry, item, decision)
+            await asyncio.to_thread(self._write_decision, item, decision, audit_entry)
             self._decisions[(source_id, review_id)] = decision
+            if audit_entry is not None:
+                self._pending_audits[audit_entry.id] = audit_entry
         width, height = await asyncio.to_thread(self._image_dimensions, item)
         return replace(
             self._effective_item(item),
             image_width=width,
             image_height=height,
         )
+
+    async def pending_audits(self, limit: int = 100) -> tuple[AuditLog, ...]:
+        if not 1 <= limit <= 1000:
+            raise ValueError("detector review audit batch limit must be between 1 and 1000")
+        entries = sorted(
+            self._pending_audits.values(),
+            key=lambda entry: (entry.occurred_at, entry.id),
+        )
+        return tuple(entries[:limit])
+
+    async def mark_audit_delivered(self, entry_id: str) -> None:
+        async with self._write_lock:
+            entry = self._pending_audits.get(entry_id)
+            if entry is None:
+                await asyncio.to_thread(self._validate_existing_delivery_marker, entry_id)
+                return
+            await asyncio.to_thread(self._write_delivery_marker, entry)
+            self._pending_audits.pop(entry_id, None)
 
     async def decision_history(
         self,
@@ -213,9 +238,7 @@ class FileDetectorReviewRepository:
                 in {DetectorPromotionStatus.QUEUED, DetectorPromotionStatus.RUNNING}
                 for existing in self._jobs.values()
             ):
-                raise DatasetReviewConflictError(
-                    "a promotion for this target is already running"
-                )
+                raise DatasetReviewConflictError("a promotion for this target is already running")
             decision_revisions = {
                 review_id: decision.revision
                 for (decision_source_id, review_id), decision in self._decisions.items()
@@ -235,8 +258,7 @@ class FileDetectorReviewRepository:
                 for item in source.items.values()
             )
             pending = sum(
-                self._effective_item(item).status
-                is DetectorReviewStatus.PENDING_REVIEW
+                self._effective_item(item).status is DetectorReviewStatus.PENDING_REVIEW
                 for item in source.items.values()
             )
             now = _now(self._clock)
@@ -321,6 +343,22 @@ class FileDetectorReviewRepository:
     async def get_promotion_job(self, job_id: str) -> DetectorPromotionJob:
         return self._job(job_id)
 
+    async def fail_queued_promotion_job(self, job_id: str, error_code: str) -> None:
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", error_code):
+            raise DatasetReviewValidationError("detector promotion error code is invalid")
+        async with self._write_lock:
+            job = self._job(job_id)
+            if job.status is not DetectorPromotionStatus.QUEUED:
+                return
+            failed = replace(
+                job,
+                status=DetectorPromotionStatus.FAILED,
+                updated_at=_now(self._clock),
+                error_code=error_code,
+            )
+            await asyncio.to_thread(self._write_job, failed)
+            self._jobs[job_id] = failed
+
     def _initialize_sync(self) -> None:
         self._sources = self._load_sources()
         self._model_suggestions = self._load_model_suggestions()
@@ -330,6 +368,7 @@ class FileDetectorReviewRepository:
                 history = self._load_history(source.source_id, review_id)
                 if history:
                     self._decisions[(source.source_id, review_id)] = history[-1]
+        self._pending_audits = self._load_pending_audits()
         self._jobs = self._load_jobs()
 
     def _load_sources(self) -> dict[str, _SourceState]:
@@ -629,12 +668,139 @@ class FileDetectorReviewRepository:
         self,
         item: DetectorReviewItem,
         decision: DetectorReviewDecision,
+        audit_entry: AuditLog | None,
     ) -> None:
         directory = self._decision_directory(item.source_id, item.review_id)
         directory.mkdir(parents=True, exist_ok=True)
         destination = directory / f"{decision.revision:08d}.json"
-        payload = _decision_json(item, self._source(item.source_id), decision)
+        payload = _decision_json(item, self._source(item.source_id), decision, audit_entry)
         _write_exclusive(destination, _json_bytes(payload))
+
+    def _load_pending_audits(self) -> dict[str, AuditLog]:
+        pending: dict[str, AuditLog] = {}
+        maximum = self._config.maximum_queue_items_per_source * max(len(self._sources), 1)
+        for source in self._sources.values():
+            for review_id, item in source.items.items():
+                directory = self._decision_directory(source.source_id, review_id)
+                if not directory.exists():
+                    continue
+                for path in sorted(directory.glob("[0-9]" * 8 + ".json")):
+                    if path.is_symlink() or not path.is_file() or path.stat().st_size > 5_000_000:
+                        raise DatasetReviewStorageError(
+                            "detector review audit outbox file is unsafe"
+                        )
+                    try:
+                        document = json.loads(path.read_bytes())
+                        decision = _decision_from_json(document, item, source)
+                        raw_entry = document.get("auditOutbox")
+                        if raw_entry is None:
+                            continue
+                        entry = audit_log_from_json(raw_entry)
+                        _validate_review_audit(entry, item, decision)
+                        self._validate_delivery_marker(entry)
+                    except DatasetReviewStorageError:
+                        raise
+                    except (
+                        KeyError,
+                        OSError,
+                        TypeError,
+                        UnicodeDecodeError,
+                        ValueError,
+                        json.JSONDecodeError,
+                    ) as exc:
+                        raise DatasetReviewStorageError(
+                            "detector review audit outbox is invalid"
+                        ) from exc
+                    existing = pending.get(entry.id)
+                    if existing is not None and existing != entry:
+                        raise DatasetReviewStorageError(
+                            "detector review audit outbox id is duplicated"
+                        )
+                    if not self._audit_delivery_path(entry.id).exists():
+                        pending[entry.id] = entry
+                    if len(pending) > maximum:
+                        raise DatasetReviewStorageError(
+                            "detector review audit outbox exceeds configured limit"
+                        )
+        return pending
+
+    def _audit_delivery_path(self, entry_id: str) -> Path:
+        if not _IDENTIFIER.fullmatch(entry_id):
+            raise DatasetReviewStorageError("detector review audit id is not path-safe")
+        root = self._audit_delivery_root()
+        path = root / f"{entry_id}.json"
+        if not path.is_relative_to(root):
+            raise DatasetReviewStorageError("detector review audit marker path is unsafe")
+        return path
+
+    def _audit_delivery_root(self) -> Path:
+        root = self._workspace / "audit-outbox" / "delivered"
+        try:
+            resolved = root.resolve()
+        except OSError as exc:
+            raise DatasetReviewStorageError(
+                "detector review audit marker directory is unsafe"
+            ) from exc
+        if resolved != root or not resolved.is_relative_to(self._workspace):
+            raise DatasetReviewStorageError("detector review audit marker directory is unsafe")
+        return root
+
+    def _validate_delivery_marker(self, entry: AuditLog) -> None:
+        path = self._audit_delivery_path(entry.id)
+        if not path.exists():
+            return
+        if not path.is_file() or path.is_symlink() or path.stat().st_size > 4096:
+            raise DatasetReviewStorageError("detector review audit marker is unsafe")
+        try:
+            marker = json.loads(path.read_bytes())
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise DatasetReviewStorageError("detector review audit marker is invalid") from exc
+        if (
+            not isinstance(marker, dict)
+            or marker.get("schemaVersion") != 1
+            or marker.get("auditId") != entry.id
+            or marker.get("entrySha256") != _audit_sha256(entry)
+        ):
+            raise DatasetReviewStorageError("detector review audit marker binding is invalid")
+
+    def _validate_existing_delivery_marker(self, entry_id: str) -> None:
+        path = self._audit_delivery_path(entry_id)
+        if (
+            not path.exists()
+            or not path.is_file()
+            or path.is_symlink()
+            or path.stat().st_size > 4096
+        ):
+            raise DatasetReviewStorageError(f"detector review audit is not pending: {entry_id}")
+        try:
+            marker = json.loads(path.read_bytes())
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise DatasetReviewStorageError("detector review audit marker is invalid") from exc
+        if not isinstance(marker, dict) or marker.get("auditId") != entry_id:
+            raise DatasetReviewStorageError("detector review audit marker binding is invalid")
+
+    def _write_delivery_marker(self, entry: AuditLog) -> None:
+        path = self._audit_delivery_path(entry.id)
+        self._validate_delivery_marker(entry)
+        if path.exists():
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Re-resolve after creation so an existing parent symlink cannot redirect
+        # the marker outside the review workspace.
+        if self._audit_delivery_root() != path.parent:
+            raise DatasetReviewStorageError("detector review audit marker directory is unsafe")
+        payload = _json_bytes(
+            {
+                "schemaVersion": 1,
+                "auditId": entry.id,
+                "entrySha256": _audit_sha256(entry),
+                "deliveredAt": _timestamp(_now(self._clock)),
+            }
+        )
+        try:
+            _write_exclusive(path, payload)
+        except DatasetReviewConflictError:
+            self._validate_delivery_marker(entry)
 
     def _load_history(
         self,
@@ -879,8 +1045,9 @@ def _decision_json(
     item: DetectorReviewItem,
     source: _SourceState,
     decision: DetectorReviewDecision,
+    audit_entry: AuditLog | None,
 ) -> dict[str, object]:
-    return {
+    result: dict[str, object] = {
         "schemaVersion": 1,
         "sourceId": item.source_id,
         "sourceManifestSha256": source.manifest_sha256,
@@ -896,6 +1063,35 @@ def _decision_json(
         "reviewedAt": _timestamp(decision.reviewed_at),
         "note": decision.note,
     }
+    if audit_entry is not None:
+        result["auditOutbox"] = audit_log_to_json(audit_entry)
+    return result
+
+
+def _validate_review_audit(
+    entry: AuditLog,
+    item: DetectorReviewItem,
+    decision: DetectorReviewDecision,
+) -> None:
+    expected_resource_id = f"{item.source_id}:{item.review_id}"
+    if (
+        not _IDENTIFIER.fullmatch(entry.id)
+        or entry.action is not AuditAction.DETECTOR_SAMPLE_REVIEWED
+        or entry.resource_type is not AuditResourceType.DETECTOR_DATASET_SAMPLE
+        or entry.resource_id != expected_resource_id
+        or entry.actor.id != decision.reviewed_by
+        or entry.metadata.get("sourceId") != item.source_id
+        or entry.metadata.get("reviewAction") != decision.action.value
+        or entry.metadata.get("reviewRevision") != decision.revision
+        or entry.after is None
+        or entry.after.get("status") != decision.status.value
+        or entry.after.get("revision") != decision.revision
+    ):
+        raise DatasetReviewStorageError("detector review audit outbox binding is invalid")
+
+
+def _audit_sha256(entry: AuditLog) -> str:
+    return _sha256(_json_bytes(audit_log_to_json(entry)))
 
 
 def _decision_from_json(

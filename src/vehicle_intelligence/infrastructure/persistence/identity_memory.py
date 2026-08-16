@@ -102,14 +102,25 @@ class InMemoryVehicleIdentityRepository:
     async def get_fingerprint(self, fingerprint_id: str) -> VehicleFingerprint | None:
         return self._fingerprints.get(fingerprint_id)
 
+    async def get_fingerprints(
+        self,
+        fingerprint_ids: tuple[str, ...],
+    ) -> tuple[VehicleFingerprint, ...]:
+        unique_ids = tuple(dict.fromkeys(fingerprint_ids))
+        if len(unique_ids) > 1000:
+            raise ValueError("fingerprint batch is bounded to 1000 IDs")
+        return tuple(
+            fingerprint
+            for fingerprint_id in unique_ids
+            if (fingerprint := self._fingerprints.get(fingerprint_id)) is not None
+        )
+
     async def list_fingerprints(
         self,
         vehicle_id: str,
         limit: int = 200,
     ) -> tuple[VehicleFingerprint, ...]:
-        values = [
-            item for item in self._fingerprints.values() if item.vehicle_id == vehicle_id
-        ]
+        values = [item for item in self._fingerprints.values() if item.vehicle_id == vehicle_id]
         values.sort(key=lambda item: (item.observed_at, item.id), reverse=True)
         return tuple(values[:limit])
 
@@ -165,14 +176,10 @@ class InMemoryVehicleIdentityRepository:
             ):
                 raise IdentityConflictError("identity merge revision conflict")
             source_fingerprints = [
-                item
-                for item in self._fingerprints.values()
-                if item.vehicle_id == source.id
+                item for item in self._fingerprints.values() if item.vehicle_id == source.id
             ]
             target_fingerprints = [
-                item
-                for item in self._fingerprints.values()
-                if item.vehicle_id == target.id
+                item for item in self._fingerprints.values() if item.vehicle_id == target.id
             ]
             if not source_fingerprints or not target_fingerprints:
                 raise IdentityConflictError("identity merge requires fingerprint evidence")
@@ -232,9 +239,7 @@ class InMemoryVehicleIdentityRepository:
             if review.new_vehicle_id in self._identities:
                 raise IdentityConflictError("split destination identity already exists")
             all_fingerprints = [
-                item
-                for item in self._fingerprints.values()
-                if item.vehicle_id == source.id
+                item for item in self._fingerprints.values() if item.vehicle_id == source.id
             ]
             selected_ids = set(review.fingerprint_ids)
             selected = [item for item in all_fingerprints if item.id in selected_ids]
@@ -377,9 +382,7 @@ def identity_from_fingerprints(
             color_counts[item.color] = color_counts.get(item.color, 0) + 1
     vehicle_type = max(type_scores, key=lambda value: (type_scores[value], value))
     color = (
-        max(color_counts, key=lambda value: (color_counts[value], value))
-        if color_counts
-        else None
+        max(color_counts, key=lambda value: (color_counts[value], value)) if color_counts else None
     )
     return VehicleIdentity(
         id=vehicle_id,
