@@ -24,7 +24,7 @@ dependencies = [
   "pydantic-settings>=2.6,<3",
   "pymongo>=4.17,<5",
   "PyYAML>=6,<7",
-  "redis>=7.4,<8",
+  "redis>=7.4,<9",
   "uvicorn[standard]>=0.31,<1",
 ]
 
