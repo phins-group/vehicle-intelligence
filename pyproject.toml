@@ -34,7 +34,7 @@ build = [
   "wheel",
 ]
 edge = [
-  "paddlepaddle==3.2.2; sys_platform == 'linux'",
+  "paddlepaddle==3.3.1; sys_platform == 'linux'",
 ]
 vision = [
   "paddleocr>=3.3,<4",
