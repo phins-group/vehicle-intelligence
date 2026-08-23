@@ -28,7 +28,7 @@ jobs:
           python-version-file: .python-version
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: "0.8.8"
           enable-cache: true
@@ -90,7 +90,7 @@ jobs:
           python-version-file: .python-version
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: "0.8.8"
           enable-cache: true
