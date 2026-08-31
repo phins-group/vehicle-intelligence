@@ -150,6 +150,10 @@ services:
       VIP_IDENTITY__ENABLED: ${VIP_IDENTITY__ENABLED:-true}
       VIP_RULE_ENGINE__ENABLED: "true"
       VIP_RULE_ENGINE__EXTERNAL_ACTIONS_ENABLED: "false"
+      VIP_OBSERVABILITY__PROMETHEUS_ENABLED: ${VIP_OBSERVABILITY__PROMETHEUS_ENABLED:-true}
+      VIP_OBSERVABILITY__EVENT_WORKER_METRICS_PORT: ${VIP_OBSERVABILITY__EVENT_WORKER_METRICS_PORT:-9102}
+    expose:
+      - "9102"
     depends_on:
       redis:
         condition: service_healthy
@@ -199,6 +203,7 @@ services:
       - --storage.tsdb.retention.time=15d
     volumes:
       - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infrastructure/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus_data:/prometheus
     ports:
       - "${HOST_BIND_ADDRESS:-127.0.0.1}:${PROMETHEUS_HOST_PORT:-9090}:9090"

@@ -137,7 +137,14 @@ async def test_registry_builds_verified_export_and_idempotently_syncs_private_so
 
 
 @pytest.mark.asyncio
-async def test_registry_ignores_review_only_video_sources(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "source_type",
+    ["VIDEO_DETECTOR_REVIEW_SOURCE", "WAREHOUSE_PLATE_REVIEW_SOURCE"],
+)
+async def test_registry_ignores_review_only_sources(
+    tmp_path: Path,
+    source_type: str,
+) -> None:
     _ready_source(tmp_path)
     review_id = "phins-video-review-only-v1"
     review = tmp_path / "sources" / review_id
@@ -146,7 +153,7 @@ async def test_registry_ignores_review_only_video_sources(tmp_path: Path) -> Non
         json.dumps(
             {
                 "schemaVersion": 1,
-                "type": "VIDEO_DETECTOR_REVIEW_SOURCE",
+                "type": source_type,
                 "role": "plate",
                 "sourceId": review_id,
                 "releaseEligible": False,

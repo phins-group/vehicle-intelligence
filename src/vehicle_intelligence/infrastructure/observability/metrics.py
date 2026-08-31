@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator
 
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
@@ -15,7 +15,9 @@ from prometheus_client import (
     ProcessCollector,
     generate_latest,
 )
+from prometheus_client.core import CounterMetricFamily
 
+from vehicle_intelligence.application.event_worker import EventWorkerStats
 from vehicle_intelligence.domain import CameraHealth
 
 
@@ -99,6 +101,55 @@ class PrometheusMetrics:
 
     def render(self, camera_health: Iterable[CameraHealth] = ()) -> bytes:
         return generate_latest(self.registry) + _render_camera_health(tuple(camera_health))
+
+
+class EventWorkerPrometheusMetrics:
+    """Expose a consistent scrape-time snapshot of durable consumer counters."""
+
+    def __init__(
+        self,
+        stats: Callable[[], EventWorkerStats],
+        *,
+        include_process_metrics: bool = True,
+    ) -> None:
+        self.registry = CollectorRegistry(auto_describe=True)
+        if include_process_metrics:
+            ProcessCollector(registry=self.registry)
+            PlatformCollector(registry=self.registry)
+            GCCollector(registry=self.registry)
+        self.registry.register(_EventWorkerStatsCollector(stats))
+
+    def render(self) -> bytes:
+        return generate_latest(self.registry)
+
+
+class _EventWorkerStatsCollector:
+    _counters = (
+        ("messages_read", "Messages read from the new-entry stream."),
+        ("messages_reclaimed", "Stale pending messages reclaimed for delivery."),
+        ("events_persisted", "Canonical events persisted to MongoDB."),
+        ("duplicate_events", "Idempotent duplicate events observed."),
+        ("invalid_messages", "Invalid messages moved to the dead-letter stream."),
+        ("persistence_failures", "Event persistence failures."),
+        ("policy_failures", "Post-persistence policy processing failures."),
+        ("matched_rules", "Policy rules matched by persisted events."),
+        ("actions_succeeded", "Policy actions completed successfully."),
+        ("actions_skipped", "Policy actions skipped idempotently."),
+        ("realtime_published", "Realtime event notifications published."),
+        ("realtime_failures", "Realtime publication failures."),
+    )
+
+    def __init__(self, stats: Callable[[], EventWorkerStats]) -> None:
+        self._stats = stats
+
+    def collect(self) -> Iterator[CounterMetricFamily]:
+        snapshot = self._stats()
+        for attribute, description in self._counters:
+            yield CounterMetricFamily(
+                f"event_worker_{attribute}",
+                description,
+                value=getattr(snapshot, attribute),
+            )
 
 
 def _render_camera_health(items: tuple[CameraHealth, ...]) -> bytes:

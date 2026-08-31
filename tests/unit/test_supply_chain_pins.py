@@ -67,6 +67,42 @@ def test_all_compose_variants_are_checked(monkeypatch, tmp_path) -> None:
     ]
 
 
+def test_named_production_image_inputs_must_fail_when_omitted(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(pins, "ROOT", tmp_path)
+    _write(
+        tmp_path / "docker-compose.production.yml",
+        "services:\n  api:\n    image: "
+        "${VIP_API_IMAGE:?Set image}@sha256:${VIP_API_IMAGE_SHA256:?Set digest}\n",
+    )
+
+    assert pins._compose_failures() == []
+
+    _write(
+        tmp_path / "docker-compose.production.yml",
+        "services:\n  api:\n    image: "
+        "${VIP_API_IMAGE:-mutable:latest}@sha256:${VIP_API_IMAGE_SHA256:?Set digest}\n",
+    )
+
+    assert pins._compose_failures() == [
+        "docker-compose.production.yml:api: unpinned image "
+        "'${VIP_API_IMAGE:-mutable:latest}@sha256:${VIP_API_IMAGE_SHA256:?Set digest}'"
+    ]
+
+
+def test_unapproved_compose_image_input_cannot_bypass_pin_check(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(pins, "ROOT", tmp_path)
+    _write(
+        tmp_path / "docker-compose.production.yml",
+        "services:\n  database:\n    image: "
+        "${DATABASE_IMAGE:?Set image}@sha256:${DATABASE_IMAGE_SHA256:?Set digest}\n",
+    )
+
+    assert pins._compose_failures() == [
+        "docker-compose.production.yml:database: unpinned image "
+        "'${DATABASE_IMAGE:?Set image}@sha256:${DATABASE_IMAGE_SHA256:?Set digest}'"
+    ]
+
+
 def test_yaml_workflow_actions_must_be_commit_pinned(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(pins, "ROOT", tmp_path)
     _write(

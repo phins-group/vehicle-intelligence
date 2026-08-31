@@ -58,6 +58,7 @@
             @for (source of sources(); track source.sourceId) {
               <option [value]="source.sourceId">
                 {{ source.sourceId
+                }}{{ source.pendingCount ? " · " + source.pendingCount + " chờ duyệt" : ""
                 }}{{ source.promotionEligible ? "" : " · chỉ duyệt" }}
               </option>
             }
@@ -362,7 +363,10 @@
                   class="bbox-row"
                   [class.selected]="selectedBox() === index"
                   [attr.aria-current]="selectedBox() === index ? 'true' : null"
+                  tabindex="0"
                   (click)="selectedBox.set(index)"
+                  (keydown.enter)="selectedBox.set(index)"
+                  (keydown.space)="selectedBox.set(index); $event.preventDefault()"
                 >
                   <strong>#{{ index + 1 }}</strong>
                   <label

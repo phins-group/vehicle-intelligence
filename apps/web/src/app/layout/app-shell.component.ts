@@ -197,8 +197,7 @@ export class AppShellComponent implements OnInit, OnDestroy {
 
   logout(): void {
     this.realtime.disconnect();
-    this.auth.logout();
-    void this.router.navigate(['/login']);
+    if (!this.auth.logout()) void this.router.navigate(['/login']);
   }
 
   private updateDatasetSection(url: string): void {

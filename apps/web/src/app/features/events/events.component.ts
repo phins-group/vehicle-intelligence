@@ -90,7 +90,7 @@ export class EventsComponent implements OnInit, OnDestroy {
   private queuedResetFilters: EventFilters | null = null;
   private destroyed = false;
   private realtimeRevision = 0;
-  private realtimeLog: Array<{ revision: number; event: VehicleEvent }> = [];
+  private realtimeLog: { revision: number; event: VehicleEvent }[] = [];
 
   plate = '';
   cameraId = '';
@@ -188,13 +188,14 @@ export class EventsComponent implements OnInit, OnDestroy {
       }
     } finally {
       this.requestInFlight = false;
-      if (this.destroyed) return;
-      this.loading.set(false);
-      this.loadingMore.set(false);
-      if (this.queuedResetFilters !== null) {
-        const queuedFilters = this.queuedResetFilters;
-        this.queuedResetFilters = null;
-        void this.loadWithFilters(true, queuedFilters);
+      if (!this.destroyed) {
+        this.loading.set(false);
+        this.loadingMore.set(false);
+        if (this.queuedResetFilters !== null) {
+          const queuedFilters = this.queuedResetFilters;
+          this.queuedResetFilters = null;
+          void this.loadWithFilters(true, queuedFilters);
+        }
       }
     }
   }

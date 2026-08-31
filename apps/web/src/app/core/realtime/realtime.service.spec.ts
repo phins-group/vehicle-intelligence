@@ -65,7 +65,7 @@ function event(id: string): VehicleEvent {
   };
 }
 
-function createService(auth: Pick<AuthService, 'apiKey' | 'invalidate'>): RealtimeService {
+function createService(auth: Pick<AuthService, 'bearerToken' | 'invalidate'>): RealtimeService {
   const injector = Injector.create({ providers: [{ provide: AuthService, useValue: auth }] });
   return runInInjectionContext(injector, () => new RealtimeService());
 }
@@ -88,7 +88,7 @@ describe('RealtimeService', () => {
   });
 
   it('authenticates, becomes ready and publishes event plus gap recovery signals', () => {
-    const auth = { apiKey: vi.fn(() => 'secret'), invalidate: vi.fn() };
+    const auth = { bearerToken: vi.fn(() => 'secret'), invalidate: vi.fn() };
     const service = createService(auth);
     const events: VehicleEvent[] = [];
     const gaps: RealtimeGap[] = [];
@@ -124,7 +124,7 @@ describe('RealtimeService', () => {
   });
 
   it('reconnects with the latest cursor and stops after an authorization close', () => {
-    const auth = { apiKey: vi.fn(() => 'secret'), invalidate: vi.fn() };
+    const auth = { bearerToken: vi.fn(() => 'secret'), invalidate: vi.fn() };
     const service = createService(auth);
     service.connect();
     const first = FakeWebSocket.instances[0];

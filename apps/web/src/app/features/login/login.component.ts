@@ -45,13 +45,32 @@ export class LoginComponent implements OnInit {
     }
   }
 
+  async loginWithOidc(): Promise<void> {
+    if (this.busy()) return;
+    this.busy.set(true);
+    this.error.set(null);
+    try {
+      await this.auth.beginOidcLogin(this.requestedReturnUrl());
+    } catch (error) {
+      this.error.set(
+        error instanceof Error ? error.message : 'Không thể bắt đầu đăng nhập tập trung.',
+      );
+      this.busy.set(false);
+    }
+  }
+
   toggleVisibility(): void {
     this.showKey.update((visible) => !visible);
   }
 
   private navigateAfterLogin(): Promise<boolean> {
+    return this.router.navigateByUrl(this.requestedReturnUrl());
+  }
+
+  private requestedReturnUrl(): string {
     const requested = this.route.snapshot.queryParamMap.get('returnUrl');
-    const target = requested?.startsWith('/') && !requested.startsWith('//') ? requested : '/dashboard';
-    return this.router.navigateByUrl(target);
+    return requested?.startsWith('/') && !requested.startsWith('//') && !requested.includes('\\')
+      ? requested
+      : '/dashboard';
   }
 }

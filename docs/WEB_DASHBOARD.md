@@ -3,8 +3,8 @@
 ## Scope
 
 The web application in apps/web is the Phase 2 operator-console foundation. It
-uses Angular 21, standalone lazy routes, TypeScript strict mode, RxJS for stream
-coordination, and Angular signals for local view state. It renders only API data;
+uses Angular 22, standalone lazy routes, TypeScript 6 strict mode, RxJS for stream
+coordination, zoneless change detection, and Angular signals for local view state. It renders only API data;
 there is no demo-data fallback in production code.
 
 Implemented routes:
@@ -24,7 +24,7 @@ Implemented routes:
 | /rules | Priority-ordered rule cards and allowlisted ADMIN rule builder |
 | /model-quality | Bounded model-version quality, daily trend, and retraining feedback state |
 | /system-health | API, realtime, and per-camera health with ten-second refresh |
-| /login | API-key authentication and safe return-route handling |
+| /login | OIDC Authorization Code + PKCE or API-key fallback with safe return-route handling |
 
 Logical vehicle identity and cross-camera journeys are available through the
 vehicle detail route. Automatic ReID mutation and full-rate HLS/WebRTC video are
@@ -49,9 +49,12 @@ endpoints; camera cards otherwise show only latest telemetry.
 
 ## Authentication and RBAC
 
-The client first reads the public /api/system/health endpoint. When backend
-authentication is disabled, it resolves the development principal through
-/api/auth/me. When authentication is enabled, the operator supplies an API key.
+The client reads `/api/system/health` and the public, secret-free
+`/api/auth/config` contract. When authentication is disabled, it resolves the
+development principal through `/api/auth/me`. An `api_key` deployment accepts a
+manually supplied key. An `oidc` deployment redirects through Authorization Code
+with PKCE S256, validates the callback state and age, exchanges the one-time code,
+and asks `/api/auth/me` to authorize the resulting access token.
 
 The raw key:
 
@@ -60,6 +63,11 @@ The raw key:
 - is sent in the WebSocket authenticate first frame, never in its URL;
 - is cleared after logout, failed validation, or WebSocket 4401/4403;
 - is never rendered after login or written to application logs.
+
+OIDC access tokens are kept in memory only and disappear on reload or logout.
+Only the short-lived PKCE verifier/state transaction is kept in `sessionStorage`.
+The IdP must register the exact callback path and allow token-endpoint CORS only
+for the console origin.
 
 The UI hides mutation controls according to the backend role matrix, but this is
 only a usability measure. FastAPI remains the authorization boundary:
@@ -251,7 +259,7 @@ boundaries.
 
 ## Local development
 
-Use an Angular-supported Node version. The repository pins Node 24.12.0 in
+Use an Angular-supported Node version. The repository pins Node 24.15.0 in
 apps/web/.nvmrc.
 
     cd apps/web
@@ -264,6 +272,7 @@ separately; no CORS configuration is needed.
 
 Useful checks:
 
+    npm run lint
     npm run typecheck
     npm test
     npm run build
@@ -287,11 +296,9 @@ at Nginx or an upstream ingress in non-local environments.
 
 ## Operational limitations
 
-- The complete development audit currently reports eleven advisories in the
-  Angular CLI/build-only dependency graph. The production dependency audit is
-  zero and the final Nginx image contains no Node build toolchain. CI builders
-  should remain isolated from untrusted projects/inputs while upstream packages
-  are updated.
+- Both the production and complete web lockfile graphs pass `npm audit` without
+  exceptions. The final Nginx image contains no Node build toolchain; CI still
+  audits the complete builder graph before compiling it.
 - The dashboard summary reads at most 200 events from the current local day and
   explicitly displays a plus sign when a continuation cursor exists; it does not
   claim an exact aggregate beyond the loaded page.
@@ -315,9 +322,11 @@ at Nginx or an upstream ingress in non-local environments.
 - Live preview is intentionally low-rate and best effort. Its frame ring is
   API-process-local, so state/frame requests need sticky routing until a shared
   bounded cache or dedicated HLS/WebRTC gateway is introduced.
-- The backend accepts API-key or OIDC/JWKS Bearer credentials. The console keeps
-  a manually supplied bearer token only in tab-scoped session storage; it does
-  not implement an OIDC authorization-code/PKCE redirect or server cookie session.
+- The backend accepts API-key or OIDC/JWKS Bearer credentials. The console now
+  implements Authorization Code + PKCE for public OIDC clients and retains the
+  access token in memory. It does not provide a server-side BFF/cookie session;
+  deployments requiring refresh without a redirect should add that as a separate
+  reviewed trust boundary.
 - Browser visual automation was unavailable in the current execution
   environment; compiler, deterministic tests, container and HTTP/proxy smoke
   checks remain the acceptance evidence.

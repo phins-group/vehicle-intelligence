@@ -66,7 +66,7 @@ export class RealtimeService {
     const socket = new WebSocket(url.toString());
     this.socket = socket;
     socket.onopen = () => {
-      const token = this.auth.apiKey();
+      const token = this.auth.bearerToken();
       if (token) {
         socket.send(
           JSON.stringify({

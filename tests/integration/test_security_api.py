@@ -224,6 +224,7 @@ def test_api_authentication_rbac_and_actor_audit(sample_event) -> None:
 
     with TestClient(app) as client:
         health = client.get("/api/system/health")
+        auth_configuration = client.get("/api/auth/config")
         missing = client.get("/api/events")
         invalid = client.get(
             "/api/events",
@@ -311,6 +312,13 @@ def test_api_authentication_rbac_and_actor_audit(sample_event) -> None:
 
     assert health.status_code == 200
     assert health.json()["authentication"] == "enabled"
+    assert auth_configuration.status_code == 200
+    assert auth_configuration.headers["cache-control"] == "no-store"
+    assert auth_configuration.json() == {
+        "enabled": True,
+        "provider": "api_key",
+        "oidc": None,
+    }
     assert missing.status_code == 401
     assert missing.headers["www-authenticate"].startswith("Bearer")
     assert invalid.status_code == 401

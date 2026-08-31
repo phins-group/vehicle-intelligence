@@ -25,13 +25,12 @@ class FunctionBudget:
 LEGACY_BASELINE: dict[str, FunctionBudget] = {
     "src/vehicle_intelligence/infrastructure/training/dataset_registry_files.py:"
     "FileDatasetRegistryRepository._load_sources": FunctionBudget(32, 78),
-    "src/vehicle_intelligence/interfaces/api.py:create_app": FunctionBudget(49, 787),
+    "src/vehicle_intelligence/interfaces/api.py:create_app": FunctionBudget(49, 431),
     "src/vehicle_intelligence/interfaces/dataset_review_api.py:build_dataset_review_router": (
         FunctionBudget(1, 215)
     ),
     "src/vehicle_intelligence/interfaces/policy_api.py:build_policy_router": FunctionBudget(2, 334),
-    "src/vehicle_intelligence/training/cli.py:build_parser": FunctionBudget(1, 251),
-    "src/vehicle_intelligence/training/cli.py:run": FunctionBudget(45, 317),
+    "src/vehicle_intelligence/training/cli.py:build_parser": FunctionBudget(1, 234),
     "src/vehicle_intelligence/training/dataset.py:verify_detector_dataset": FunctionBudget(52, 106),
     "src/vehicle_intelligence/training/first_party.py:verify_first_party_detector_source": (
         FunctionBudget(35, 83)

@@ -8,7 +8,7 @@ export interface DisplayMediaAsset {
   asset: SignedMediaAsset;
 }
 
-const MEDIA_SLOTS: ReadonlyArray<{ slot: MediaSlot; label: string }> = [
+const MEDIA_SLOTS: readonly { slot: MediaSlot; label: string }[] = [
   { slot: 'snapshot', label: 'Toàn cảnh sự kiện' },
   { slot: 'vehicleCrop', label: 'Phương tiện' },
   { slot: 'plateCrop', label: 'Biển số' },

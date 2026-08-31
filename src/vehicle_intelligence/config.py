@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
@@ -16,6 +16,7 @@ from pydantic_settings import (
     EnvSettingsSource,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
+    SettingsError,
 )
 
 from vehicle_intelligence.exceptions import ConfigurationError
@@ -430,6 +431,71 @@ class SecurityConfig(BaseModel):
         return self
 
 
+class OIDCConsoleConfig(BaseModel):
+    """Public OAuth metadata used by the browser Authorization Code + PKCE flow."""
+
+    authorization_endpoint: str
+    token_endpoint: str
+    client_id: str
+    scopes: list[str] = Field(default_factory=lambda: ["openid", "profile"], max_length=32)
+    end_session_endpoint: str | None = None
+    callback_path: str = "/login"
+
+    @field_validator("authorization_endpoint", "token_endpoint", "end_session_endpoint")
+    @classmethod
+    def validate_endpoint(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        parsed = urlsplit(stripped)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or len(stripped) > 2048
+        ):
+            raise ValueError("OIDC console endpoints must be safe HTTP(S) URLs")
+        return stripped
+
+    @field_validator("client_id")
+    @classmethod
+    def validate_client_id(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped or len(stripped) > 256 or any(char.isspace() for char in stripped):
+            raise ValueError("OIDC console client_id is invalid")
+        return stripped
+
+    @field_validator("scopes")
+    @classmethod
+    def validate_scopes(cls, value: list[str]) -> list[str]:
+        normalized = [item.strip() for item in value if item.strip()]
+        if (
+            "openid" not in normalized
+            or len(normalized) != len(value)
+            or any(any(char.isspace() for char in item) or len(item) > 128 for item in normalized)
+        ):
+            raise ValueError("OIDC console scopes must be unique tokens including openid")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("OIDC console scopes must be unique tokens including openid")
+        return normalized
+
+    @field_validator("callback_path")
+    @classmethod
+    def validate_callback_path(cls, value: str) -> str:
+        stripped = value.strip()
+        if (
+            not stripped.startswith("/")
+            or stripped.startswith("//")
+            or any(char in stripped for char in "?#\\\0")
+            or len(stripped) > 256
+        ):
+            raise ValueError("OIDC console callback_path must be a safe absolute path")
+        return stripped
+
+
 class OIDCConfig(BaseModel):
     issuer: str = ""
     jwks_url: str = ""
@@ -452,6 +518,7 @@ class OIDCConfig(BaseModel):
     jwks_cache_seconds: int = Field(default=300, ge=30, le=86_400)
     maximum_token_length: int = Field(default=16_384, ge=512, le=65_536)
     allow_insecure_http: bool = False
+    console: OIDCConsoleConfig | None = None
 
     @field_validator("issuer", "jwks_url")
     @classmethod
@@ -498,6 +565,16 @@ class OIDCConfig(BaseModel):
             raise ValueError("OIDC requires an explicit JWT algorithm allowlist")
         if not self.role_mapping:
             raise ValueError("OIDC requires at least one role mapping")
+        if not self.allow_insecure_http and self.console is not None:
+            endpoints = (
+                self.console.authorization_endpoint,
+                self.console.token_endpoint,
+                self.console.end_session_endpoint,
+            )
+            if any(value is not None and urlsplit(value).scheme != "https" for value in endpoints):
+                raise ValueError(
+                    "OIDC console requires HTTPS unless allow_insecure_http is explicit"
+                )
         return self
 
 
@@ -1147,6 +1224,7 @@ class ObservabilityConfig(BaseModel):
     prometheus_enabled: bool = True
     prometheus_path: str = "/metrics"
     retention_metrics_port: int = Field(default=9101, ge=1024, le=65535)
+    event_worker_metrics_port: int = Field(default=9102, ge=1024, le=65535)
     opentelemetry_enabled: bool = False
     otlp_traces_endpoint: str | None = None
     otlp_headers: SecretStr | None = None
@@ -1200,6 +1278,8 @@ class ObservabilityConfig(BaseModel):
     def validate_telemetry(self) -> ObservabilityConfig:
         if self.opentelemetry_enabled and self.otlp_traces_endpoint is None:
             raise ValueError("enabled OpenTelemetry requires an OTLP traces endpoint")
+        if self.retention_metrics_port == self.event_worker_metrics_port:
+            raise ValueError("worker Prometheus ports must be unique")
         return self
 
 
@@ -1244,6 +1324,45 @@ class PrefixFilteredDotEnvSettingsSource(DotEnvSettingsSource):
         prefix = self.env_prefix if self.case_sensitive else self.env_prefix.lower()
         unprefixed_names = {name for name in self.env_vars if not name.startswith(prefix)}
         return {name: value for name, value in values.items() if name not in unprefixed_names}
+
+
+class FileAwareEnvSettingsSource(EnvSettingsSource):
+    """Resolve ``VIP_*_FILE`` values from mounted secret files.
+
+    The target name follows the normal nested environment contract. For example,
+    ``VIP_REDIS__URL_FILE=/run/secrets/redis_url`` behaves exactly like
+    ``VIP_REDIS__URL=...`` without putting the value in the container environment.
+    """
+
+    maximum_secret_bytes = 1024 * 1024
+
+    def _load_env_vars(self) -> dict[str, str | None]:
+        values = dict(super()._load_env_vars())
+        normalized_prefix = self.env_prefix if self.case_sensitive else self.env_prefix.lower()
+        suffix = "_FILE" if self.case_sensitive else "_file"
+        for name, raw_path in tuple(values.items()):
+            if not name.startswith(normalized_prefix) or not name.endswith(suffix):
+                continue
+            target = name[: -len(suffix)]
+            if target in values:
+                raise SettingsError(
+                    f"configure only one of {target} and {name}; both were provided"
+                )
+            if raw_path is None or not raw_path.strip():
+                raise SettingsError(f"secret file path is empty for {name}")
+            path = Path(raw_path).expanduser()
+            try:
+                stat = path.stat()
+                if not path.is_file() or stat.st_size > self.maximum_secret_bytes:
+                    raise SettingsError(f"secret file is invalid or too large for {name}")
+                value = path.read_text(encoding="utf-8").rstrip("\r\n")
+            except OSError as exc:
+                raise SettingsError(f"cannot read secret file for {name}") from exc
+            if not value:
+                raise SettingsError(f"secret file is empty for {name}")
+            values[target] = value
+            del values[name]
+        return values
 
 
 class Settings(BaseSettings):
@@ -1335,8 +1454,9 @@ class Settings(BaseSettings):
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         # Environment and .env values intentionally override YAML/init values.
+        file_aware_env = FileAwareEnvSettingsSource(settings_cls)
         filtered_dotenv = PrefixFilteredDotEnvSettingsSource(settings_cls)
-        return env_settings, filtered_dotenv, init_settings, file_secret_settings
+        return file_aware_env, filtered_dotenv, init_settings, file_secret_settings
 
 
 def load_settings(path: str | Path = "configs/default.yaml") -> Settings:

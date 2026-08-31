@@ -429,8 +429,8 @@ is deliberately limited to `debug/` and `temporary/`; it does not bypass pins on
 canonical `vehicles/` media.
 
 ```bash
-docker compose --profile observability --profile maintenance up -d \
-  api prometheus otel-collector retention-worker
+docker compose --profile observability --profile maintenance --profile event-driven up -d \
+  api event-worker prometheus otel-collector retention-worker
 
 # One bounded host-native pass (MongoDB must also be enabled/configured):
 VIP_RETENTION__ENABLED=true vehicle-retention-worker --once
@@ -613,7 +613,9 @@ python run_production_readiness.py \
 
 See [Production Readiness Gate](docs/PRODUCTION_READINESS.md) for checked
 invariants and the required live acceptance steps that remain outside a static
-preflight.
+preflight. The hardened application profile, file-secret contract, OIDC/PKCE
+requirements, and startup commands are in
+[Production deployment](docs/PRODUCTION_DEPLOYMENT.md).
 
 ## Verification
 

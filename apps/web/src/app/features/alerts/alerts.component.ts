@@ -148,13 +148,14 @@ export class AlertsComponent implements OnInit, OnDestroy {
       }
     } finally {
       this.requestInFlight = false;
-      if (this.destroyed) return;
-      this.loading.set(false);
-      this.loadingMore.set(false);
-      if (this.queuedResetFilters !== null) {
-        const queuedFilters = this.queuedResetFilters;
-        this.queuedResetFilters = null;
-        void this.loadWithFilters(true, queuedFilters);
+      if (!this.destroyed) {
+        this.loading.set(false);
+        this.loadingMore.set(false);
+        if (this.queuedResetFilters !== null) {
+          const queuedFilters = this.queuedResetFilters;
+          this.queuedResetFilters = null;
+          void this.loadWithFilters(true, queuedFilters);
+        }
       }
     }
   }

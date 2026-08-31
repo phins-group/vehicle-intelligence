@@ -18,6 +18,8 @@ from vehicle_intelligence.config import (
     MinioConfig,
     MongoConfig,
     ObservabilityConfig,
+    OIDCConfig,
+    OIDCConsoleConfig,
     RedisConfig,
     RetentionConfig,
     SecurityConfig,
@@ -176,6 +178,43 @@ def test_production_gate_requires_durable_finalization_outbox(tmp_path) -> None:
 
     assert not report.ready
     assert statuses["durability.finalization_outbox"] is ReadinessStatus.FAIL
+
+
+def test_production_oidc_requires_browser_pkce_metadata(tmp_path) -> None:
+    settings = _production_settings(tmp_path)
+    oidc = OIDCConfig(
+        issuer="https://identity.example",
+        jwks_url="https://identity.example/jwks",
+        audiences=["vehicle-api"],
+    )
+    settings = settings.model_copy(
+        update={"auth": AuthConfig(enabled=True, provider="oidc", oidc=oidc)}
+    )
+
+    missing = assess_production_readiness(settings, base_directory=tmp_path)
+    missing_statuses = {check.id: check.status for check in missing.checks}
+
+    assert missing_statuses["auth.oidc_console"] is ReadinessStatus.FAIL
+
+    console = OIDCConsoleConfig(
+        authorization_endpoint="https://identity.example/authorize",
+        token_endpoint="https://identity.example/token",
+        client_id="vehicle-console",
+    )
+    configured = settings.model_copy(
+        update={
+            "auth": AuthConfig(
+                enabled=True,
+                provider="oidc",
+                oidc=oidc.model_copy(update={"console": console}),
+            )
+        }
+    )
+    report = assess_production_readiness(configured, base_directory=tmp_path)
+    statuses = {check.id: check.status for check in report.checks}
+
+    assert report.ready
+    assert statuses["auth.oidc_console"] is ReadinessStatus.PASS
 
 
 def test_model_tampering_fails_hash_gate(tmp_path) -> None:

@@ -1,4 +1,4 @@
-FROM node:24.12.0-alpine@sha256:c921b97d4b74f51744057454b306b418cf693865e73b8100559189605f6955b8 AS build
+FROM node:24.15.0-alpine@sha256:d1b3b4da11eefd5941e7f0b9cf17783fc99d9c6fc34884a665f40a06dbdfc94f AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -6,9 +6,14 @@ RUN npm ci --ignore-scripts
 COPY . .
 RUN npm run build
 
-FROM nginxinc/nginx-unprivileged:1.27-alpine@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0
+FROM nginxinc/nginx-unprivileged:1.30.4-alpine3.24@sha256:93722936b82ec8a1178d48448e619226680d2de3706a1640800e186cd5fa7fd3
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+ENV WEB_API_UPSTREAM=http://api:8000 \
+    WEB_MEDIA_UPSTREAM=http://minio:9000 \
+    WEB_REALTIME_CONNECT_SRC="ws: wss:" \
+    WEB_OIDC_CONNECT_SRC=""
+
+COPY nginx.conf /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist/web/browser /usr/share/nginx/html
 
 EXPOSE 8080

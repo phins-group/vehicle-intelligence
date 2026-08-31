@@ -10,8 +10,11 @@ import socket
 import uuid
 from pathlib import Path
 
+from prometheus_client import start_http_server
+
 from vehicle_intelligence.config import load_settings
 from vehicle_intelligence.exceptions import ConfigurationError, VehicleIntelligenceError
+from vehicle_intelligence.infrastructure.observability.metrics import EventWorkerPrometheusMetrics
 from vehicle_intelligence.infrastructure.persistence.mongo_runtime import MongoRuntime
 from vehicle_intelligence.interfaces.event_worker_composition import build_event_worker
 from vehicle_intelligence.logging_config import configure_logging
@@ -51,6 +54,9 @@ async def run(args: argparse.Namespace) -> int:
         settings.realtime,
         args.consumer_name or default_consumer_name(),
     ).worker
+    metrics = EventWorkerPrometheusMetrics(lambda: worker.stats)
+    metrics_server = None
+    metrics_thread = None
 
     await mongo_runtime.initialize()
     try:
@@ -61,6 +67,11 @@ async def run(args: argparse.Namespace) -> int:
             finally:
                 await worker.close()
         else:
+            if settings.observability.prometheus_enabled:
+                metrics_server, metrics_thread = start_http_server(
+                    settings.observability.event_worker_metrics_port,
+                    registry=metrics.registry,
+                )
             stop_event = asyncio.Event()
             loop = asyncio.get_running_loop()
             installed: list[signal.Signals] = []
@@ -76,7 +87,14 @@ async def run(args: argparse.Namespace) -> int:
                 for signum in installed:
                     loop.remove_signal_handler(signum)
     finally:
-        await mongo_runtime.close()
+        try:
+            await mongo_runtime.close()
+        finally:
+            if metrics_server is not None:
+                await asyncio.to_thread(metrics_server.shutdown)
+                metrics_server.server_close()
+            if metrics_thread is not None:
+                await asyncio.to_thread(metrics_thread.join, 5)
 
     stats = worker.stats
     print(

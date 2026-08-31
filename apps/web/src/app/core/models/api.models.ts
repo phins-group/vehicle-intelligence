@@ -43,6 +43,29 @@ export interface Principal {
   authenticationMethod: 'API_KEY' | 'OIDC' | 'SYSTEM' | 'DEVELOPMENT';
 }
 
+export interface OidcConsoleConfiguration {
+  issuer: string;
+  authorizationEndpoint: string;
+  tokenEndpoint: string;
+  clientId: string;
+  scopes: string[];
+  endSessionEndpoint: string | null;
+  callbackPath: string;
+}
+
+export interface AuthenticationConfiguration {
+  enabled: boolean;
+  provider: 'disabled' | 'api_key' | 'oidc';
+  oidc: OidcConsoleConfiguration | null;
+}
+
+export interface OidcTokenResponse {
+  access_token: string;
+  token_type: string;
+  expires_in?: number;
+  scope?: string;
+}
+
 export interface SystemHealth {
   status: string;
   phase: string;
@@ -118,10 +141,10 @@ export interface CameraHealth {
 }
 
 export interface CameraHealthSnapshot {
-  items: Array<{
+  items: {
     camera: Camera;
     health: CameraHealth | null;
-  }>;
+  }[];
 }
 
 export interface CameraConnectionTest {
@@ -152,11 +175,11 @@ export interface OnvifDiscoveryResult {
 export type CameraBatchStatus = 'CREATED' | 'CONFLICT' | 'CAPACITY_REACHED';
 
 export interface CameraBatchResult {
-  items: Array<{
+  items: {
     cameraId: string;
     status: CameraBatchStatus;
     camera: Camera | null;
-  }>;
+  }[];
   createdCount: number;
   conflictCount: number;
   capacityReachedCount: number;
@@ -255,24 +278,24 @@ export interface VehicleEvent {
     confidence: number;
     observationCount: number;
     partial?: boolean;
-    corrections: Array<{
+    corrections: {
       position: number;
       from: string;
       to: string;
       confidence: number;
-    }>;
+    }[];
     prediction?: {
       raw: string;
       normalized: string;
       confidence: number;
       observationCount: number;
       partial?: boolean;
-      corrections: Array<{
+      corrections: {
         position: number;
         from: string;
         to: string;
         confidence: number;
-      }>;
+      }[];
     };
     review?: {
       normalized: string;
@@ -322,12 +345,12 @@ export interface VehicleIdentity {
   revision: number;
   status: VehicleIdentityStatus;
   primaryPlate: string | null;
-  plates: Array<{
+  plates: {
     text: string;
     confidence: number;
     firstSeenAt: string;
     lastSeenAt: string;
-  }>;
+  }[];
   attributes: {
     type: string | null;
     color: string | null;
@@ -747,11 +770,11 @@ export interface ModelQualityReport {
   window: { from: string; to: string };
   generatedAt: string;
   totals: ModelQualityMetrics;
-  models: Array<{
+  models: {
     model: { name: string; version: string; hash: string | null } | null;
     metrics: ModelQualityMetrics;
-  }>;
-  daily: Array<{ day: string; metrics: ModelQualityMetrics }>;
+  }[];
+  daily: { day: string; metrics: ModelQualityMetrics }[];
   feedback: {
     total: number;
     ready: number;

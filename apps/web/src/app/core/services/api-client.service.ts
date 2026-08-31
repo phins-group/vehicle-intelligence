@@ -6,6 +6,7 @@ import {
   Alert,
   AlertPage,
   AlertStatus,
+  AuthenticationConfiguration,
   Camera,
   CameraBatchResult,
   CameraConnectionTest,
@@ -22,6 +23,7 @@ import {
   ModelTrainingRun,
   ModelQualityReport,
   OnvifDiscoveryResult,
+  OidcTokenResponse,
   DatasetSample,
   DatasetHubSyncJob,
   DatasetRegistryResponse,
@@ -58,6 +60,30 @@ export class ApiClientService {
 
   systemHealth(): Observable<SystemHealth> {
     return this.http.get<SystemHealth>('/api/system/health');
+  }
+
+  authenticationConfiguration(): Observable<AuthenticationConfiguration> {
+    return this.http.get<AuthenticationConfiguration>('/api/auth/config');
+  }
+
+  exchangeOidcCode(
+    tokenEndpoint: string,
+    request: {
+      code: string;
+      clientId: string;
+      codeVerifier: string;
+      redirectUri: string;
+    },
+  ): Observable<OidcTokenResponse> {
+    const body = new HttpParams()
+      .set('grant_type', 'authorization_code')
+      .set('code', request.code)
+      .set('client_id', request.clientId)
+      .set('code_verifier', request.codeVerifier)
+      .set('redirect_uri', request.redirectUri);
+    return this.http.post<OidcTokenResponse>(tokenEndpoint, body.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
   }
 
   currentPrincipal(): Observable<Principal> {

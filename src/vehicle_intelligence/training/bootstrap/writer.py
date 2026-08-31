@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import uuid
+from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -41,6 +42,8 @@ class BootstrapSourceWriter:
         self,
         source: BootstrapSourceInfo,
         samples: list[AcquiredDetectorSample],
+        *,
+        evidence_files: Mapping[str, bytes] | None = None,
     ) -> BootstrapBuildResult:
         if source.acceptance_eligible:
             raise SampleDataAcquisitionError("external bootstrap source cannot be acceptance data")
@@ -86,6 +89,17 @@ class BootstrapSourceWriter:
             notice_path = temporary / "BOOTSTRAP_ONLY.md"
             _write_new(notice_path, _notice(source).encode())
             files.append(_file_entry(notice_path, temporary))
+            occupied = {str(item["path"]) for item in files}
+            for relative, data in sorted((evidence_files or {}).items()):
+                if relative == "source-manifest.json" or relative in occupied:
+                    raise SampleDataAcquisitionError(
+                        "bootstrap evidence path collides with a canonical source file"
+                    )
+                evidence_path = _safe_child(temporary, relative)
+                evidence_path.parent.mkdir(parents=True, exist_ok=True)
+                _write_new(evidence_path, data)
+                files.append(_file_entry(evidence_path, temporary))
+                occupied.add(relative)
             manifest = {
                 "schemaVersion": 1,
                 "type": "DETECTOR_BOOTSTRAP_SOURCE",

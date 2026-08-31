@@ -6,9 +6,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+from vehicle_intelligence.application.event_worker import EventWorkerStats
 from vehicle_intelligence.config import ObservabilityConfig
 from vehicle_intelligence.domain import CameraHealth, CameraStatus
-from vehicle_intelligence.infrastructure.observability.metrics import PrometheusMetrics
+from vehicle_intelligence.infrastructure.observability.metrics import (
+    EventWorkerPrometheusMetrics,
+    PrometheusMetrics,
+)
 from vehicle_intelligence.infrastructure.observability.tracing import build_tracing_runtime
 from vehicle_intelligence.logging_config import JsonFormatter
 
@@ -56,6 +60,25 @@ def test_prometheus_metrics_use_normalized_bounded_labels_and_camera_counters() 
     assert 'ocr_success_total{camera_id="gate-01"} 5.0' in payload
     assert 'inference_latency_ms{camera_id="gate-01",stage="vehicle"} 14.5' in payload
     assert "event-123" not in payload
+
+
+def test_event_worker_metrics_render_a_scrape_time_stats_snapshot() -> None:
+    stats = EventWorkerStats(
+        messages_read=12,
+        messages_reclaimed=2,
+        events_persisted=9,
+        duplicate_events=1,
+        invalid_messages=1,
+        persistence_failures=3,
+    )
+    metrics = EventWorkerPrometheusMetrics(lambda: stats, include_process_metrics=False)
+
+    payload = metrics.render().decode()
+
+    assert "event_worker_messages_read_total 12.0" in payload
+    assert "event_worker_events_persisted_total 9.0" in payload
+    assert "event_worker_invalid_messages_total 1.0" in payload
+    assert "event_worker_persistence_failures_total 3.0" in payload
 
 
 def test_opentelemetry_fastapi_spans_and_json_logs_share_trace_context() -> None:

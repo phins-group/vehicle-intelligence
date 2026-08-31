@@ -14,14 +14,14 @@ import {
 import { ApiClientService } from '../../core/services/api-client.service';
 import { DatasetManagementComponent } from './dataset-management.component';
 
-type TestableDatasetManagement = {
+interface TestableDatasetManagement {
   loadSampleImages(
     items: DetectorDatasetSamplePreview[],
     sourceId: string,
     generation: number,
   ): Promise<void>;
   startPolling(jobId: string): void;
-};
+}
 
 function sample(index: number): DetectorDatasetSamplePreview {
   return {

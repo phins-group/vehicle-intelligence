@@ -51,7 +51,17 @@ def test_huggingface_dataset_upload_is_forced_private_and_verified(tmp_path) -> 
     assert result.revision == "commit123"
 
 
-def test_huggingface_replaces_remote_with_attested_video_dataset(tmp_path) -> None:
+@pytest.mark.parametrize(
+    "rights_assertion",
+    [
+        "USER_CONFIRMED_FIRST_PARTY_VIDEO_COLLECTION",
+        "USER_CONFIRMED_FIRST_PARTY_WAREHOUSE_CAMERA_COLLECTION",
+    ],
+)
+def test_huggingface_replaces_remote_with_attested_private_dataset(
+    tmp_path,
+    rights_assertion: str,
+) -> None:
     dataset, _ = build_detector_dataset(tmp_path, DetectorRole.PLATE)
     manifest_path = dataset / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -61,7 +71,7 @@ def test_huggingface_replaces_remote_with_attested_video_dataset(tmp_path) -> No
             "releaseEligible": True,
             "source": {
                 "type": "FIRST_PARTY_SOURCE",
-                "rightsAssertion": "USER_CONFIRMED_FIRST_PARTY_VIDEO_COLLECTION",
+                "rightsAssertion": rights_assertion,
                 "licenseReviewStatus": "PROPRIETARY_FIRST_PARTY_USER_CONFIRMED",
             },
         }

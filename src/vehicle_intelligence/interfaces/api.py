@@ -2,32 +2,25 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
-from datetime import datetime
 from pathlib import Path
-from typing import Annotated, NoReturn
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
+from fastapi import FastAPI, Request, Response, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from opentelemetry import trace
-from pydantic import BaseModel
 
-from vehicle_intelligence.application.audit import AuditRecord, AuditService
+from vehicle_intelligence.application.audit import AuditService
 from vehicle_intelligence.application.cameras import CameraService
 from vehicle_intelligence.application.dataset_registry import DatasetRegistryService
 from vehicle_intelligence.application.dataset_review import DetectorDatasetReviewService
 from vehicle_intelligence.application.discovery import OnvifDiscoveryService
 from vehicle_intelligence.application.journeys import VehicleJourneyService
-from vehicle_intelligence.application.live_monitor import (
-    LiveMonitorService,
-    LiveMonitorSourceState,
-)
+from vehicle_intelligence.application.live_monitor import LiveMonitorService
 from vehicle_intelligence.application.media_access import VehicleEventMediaService
 from vehicle_intelligence.application.model_quality import ModelQualityService
 from vehicle_intelligence.application.model_training import ModelTrainingService
@@ -42,24 +35,19 @@ from vehicle_intelligence.application.ports import (
     Authenticator,
     CameraTopologyRepository,
     DatasetSampleRepository,
-    EventQuery,
     MediaStorage,
     MediaUrlSigner,
     VectorRepository,
     VehicleEventRepository,
     VehicleIdentityRepository,
 )
-from vehicle_intelligence.application.realtime import RealtimeEventService, RealtimeSourceState
+from vehicle_intelligence.application.realtime import RealtimeEventService
 from vehicle_intelligence.application.reid import IdentityReviewService, ReIDScoringService
 from vehicle_intelligence.application.review import HumanPlateReviewService
 from vehicle_intelligence.application.rules import RuleEvaluator
-from vehicle_intelligence.application.runtime_health import (
-    RuntimeDependency,
-    RuntimeHealthService,
-)
+from vehicle_intelligence.application.runtime_health import RuntimeHealthService
 from vehicle_intelligence.application.security import (
     DevelopmentAuthenticator,
-    Permission,
     StaticApiKeyAuthenticator,
 )
 from vehicle_intelligence.application.topology import (
@@ -67,23 +55,10 @@ from vehicle_intelligence.application.topology import (
     CrossCameraCandidateGenerator,
 )
 from vehicle_intelligence.config import Settings, load_settings
-from vehicle_intelligence.domain import (
-    AuditAction,
-    AuditResourceType,
-    Principal,
-)
+from vehicle_intelligence.domain import CameraHealth
 from vehicle_intelligence.exceptions import (
-    AuditWriteError,
-    CameraConflictError,
-    CameraDiscoveryError,
-    CameraNotFoundError,
     ConfigurationError,
-    CredentialEncryptionError,
     PersistenceError,
-)
-from vehicle_intelligence.infrastructure.identity_serialization import (
-    fingerprint_to_jsonable,
-    identity_to_jsonable,
 )
 from vehicle_intelligence.infrastructure.messaging.codec import JsonEventEnvelopeCodec
 from vehicle_intelligence.infrastructure.messaging.live_codec import JsonLiveFrameCodec
@@ -149,7 +124,6 @@ from vehicle_intelligence.infrastructure.persistence.topology_mongo import (
 from vehicle_intelligence.infrastructure.persistence.vector_mongo import MongoVectorRepository
 from vehicle_intelligence.infrastructure.security.aes_gcm import AesGcmCredentialCipher
 from vehicle_intelligence.infrastructure.security.oidc import OIDCAuthenticator
-from vehicle_intelligence.infrastructure.serialization import event_to_jsonable
 from vehicle_intelligence.infrastructure.storage.local import LocalMediaStorage
 from vehicle_intelligence.infrastructure.storage.minio import MinioMediaStorage
 from vehicle_intelligence.infrastructure.training.dataset_registry_files import (
@@ -171,22 +145,10 @@ from vehicle_intelligence.infrastructure.vision.onvif_discovery import (
     WSDiscoveryOnvifProvider,
 )
 from vehicle_intelligence.interfaces.audit_api import build_audit_router
-from vehicle_intelligence.interfaces.camera_schemas import (
-    CameraBatchCreateRequest,
-    CameraBatchPublic,
-    CameraConnectionTestPublic,
-    CameraCreateRequest,
-    CameraHealthPublic,
-    CameraHealthSnapshotItemPublic,
-    CameraHealthSnapshotPublic,
-    CameraListPublic,
-    CameraPublic,
-    CameraUpdateRequest,
-    OnvifDevicePublic,
-    OnvifDiscoveryPublic,
-)
+from vehicle_intelligence.interfaces.camera_api import build_camera_router
 from vehicle_intelligence.interfaces.dataset_registry_api import build_dataset_registry_router
 from vehicle_intelligence.interfaces.dataset_review_api import build_dataset_review_router
+from vehicle_intelligence.interfaces.event_api import build_event_router
 from vehicle_intelligence.interfaces.journey_api import build_journey_router
 from vehicle_intelligence.interfaces.live_monitor_api import build_live_monitor_router
 from vehicle_intelligence.interfaces.media_api import build_media_router
@@ -195,8 +157,12 @@ from vehicle_intelligence.interfaces.policy_api import build_policy_router
 from vehicle_intelligence.interfaces.quality_api import build_quality_router
 from vehicle_intelligence.interfaces.realtime_api import build_realtime_router
 from vehicle_intelligence.interfaces.reid_api import build_reid_router
-from vehicle_intelligence.interfaces.request_context import request_id, resolve_request_id
+from vehicle_intelligence.interfaces.request_context import resolve_request_id
 from vehicle_intelligence.interfaces.review_api import build_review_router
+from vehicle_intelligence.interfaces.runtime_health_api import (
+    build_runtime_health,
+    build_runtime_health_router,
+)
 from vehicle_intelligence.interfaces.security import APISecurity, build_auth_router
 from vehicle_intelligence.interfaces.topology_api import build_topology_router
 from vehicle_intelligence.training.config import load_training_settings
@@ -383,184 +349,10 @@ def _model_quality_service(
     return ModelQualityService(quality_repository, settings.model_quality)
 
 
-async def _probe_event_store(mongodb_enabled: bool, mongo: MongoRuntime | None) -> bool:
-    if not mongodb_enabled:
-        return True
-    if mongo is None:
-        return False
-    await mongo.ping()
-    return True
-
-
-async def _probe_minio(minio: MinioMediaStorage | None) -> bool:
-    if minio is None:
-        return False
-    await minio.ping()
-    return True
-
-
-async def _probe_available(available: bool) -> bool:
-    return available
-
-
-async def _probe_realtime(service: RealtimeEventService | None) -> bool:
-    return service is not None and service.stats.source_state is RealtimeSourceState.ONLINE
-
-
-async def _probe_live_monitor(service: LiveMonitorService | None) -> bool:
-    return service is not None and service.stats.source_state is LiveMonitorSourceState.ONLINE
-
-
 def _configured_minio(settings: Settings) -> MinioMediaStorage | None:
     if settings.storage.backend != "minio":
         return None
     return MinioMediaStorage(settings.minio)
-
-
-def _build_runtime_health(
-    settings: Settings,
-    mongo: MongoRuntime | None,
-    minio: MinioMediaStorage | None,
-    cameras: CameraService | None,
-    realtime: RealtimeEventService | None,
-    live_monitor: LiveMonitorService | None,
-    configured: RuntimeHealthService | None = None,
-) -> RuntimeHealthService:
-    if configured is not None:
-        return configured
-    return RuntimeHealthService(
-        (
-            RuntimeDependency(
-                "eventStore",
-                required=True,
-                probe=lambda: _probe_event_store(settings.mongodb.enabled, mongo),
-            ),
-            RuntimeDependency(
-                "cameraManagement",
-                required=False,
-                probe=lambda: _probe_available(cameras is not None),
-            ),
-            RuntimeDependency(
-                "minio",
-                required=False,
-                probe=(lambda: _probe_minio(minio))
-                if settings.storage.backend == "minio"
-                else None,
-            ),
-            RuntimeDependency(
-                "realtime",
-                required=False,
-                probe=(lambda: _probe_realtime(realtime)) if settings.realtime.enabled else None,
-            ),
-            RuntimeDependency(
-                "liveMonitor",
-                required=False,
-                probe=(lambda: _probe_live_monitor(live_monitor))
-                if settings.live_monitor.enabled
-                else None,
-            ),
-        )
-    )
-
-
-def _register_runtime_health_routes(
-    app: FastAPI,
-    runtime_health: RuntimeHealthService,
-    api_security: APISecurity,
-    cameras: CameraService | None,
-    onvif_discovery: OnvifDiscoveryService | None,
-    media_access: VehicleEventMediaService | None,
-    detector_reviews: DetectorDatasetReviewService | None,
-    dataset_registry: DatasetRegistryService | None,
-    model_training: ModelTrainingService | None,
-    live_monitor: LiveMonitorService | None,
-    realtime: RealtimeEventService | None,
-) -> None:
-    @app.get("/livez", include_in_schema=False)
-    async def liveness() -> JSONResponse:
-        return JSONResponse(
-            content={"status": "alive"},
-            headers={"Cache-Control": "no-store"},
-        )
-
-    @app.get("/readyz", include_in_schema=False)
-    async def readiness() -> JSONResponse:
-        snapshot = await runtime_health.assess()
-        return JSONResponse(
-            status_code=status.HTTP_200_OK
-            if snapshot.ready
-            else status.HTTP_503_SERVICE_UNAVAILABLE,
-            content=snapshot.to_document(),
-            headers={"Cache-Control": "no-store"},
-        )
-
-    @app.get("/api/system/health")
-    async def health() -> dict[str, object]:
-        return {
-            "status": "ok",
-            "phase": "4",
-            "authentication": "enabled" if api_security.enabled else "disabled",
-            "cameraManagement": "available" if cameras is not None else "unavailable",
-            "onvifDiscovery": "available" if onvif_discovery is not None else "disabled",
-            "policyEngine": "available",
-            "auditLog": "available",
-            "mediaAccess": "available" if media_access is not None else "unavailable",
-            "humanReview": "available",
-            "datasetReview": "available" if detector_reviews is not None else "disabled",
-            "datasetRegistry": "available" if dataset_registry is not None else "disabled",
-            "modelTraining": "available" if model_training is not None else "disabled",
-            "modelQuality": "available",
-            "liveMonitor": (
-                live_monitor.stats.source_state.value if live_monitor is not None else "DISABLED"
-            ),
-            "realtime": realtime.stats.source_state.value if realtime is not None else "DISABLED",
-        }
-
-
-def _register_camera_health_routes(
-    app: FastAPI,
-    camera_service: CameraService | None,
-    read_access: Callable[..., Awaitable[Principal]],
-) -> None:
-    @app.get("/api/camera-health", response_model=CameraHealthSnapshotPublic)
-    async def list_camera_health(
-        _principal: Principal = Depends(read_access),
-    ) -> CameraHealthSnapshotPublic:
-        service = _require_camera_service(camera_service)
-        try:
-            cameras, health_items = await asyncio.gather(service.list(), service.list_health())
-            health_by_camera = {item.camera_id: item for item in health_items}
-            return CameraHealthSnapshotPublic(
-                items=[
-                    CameraHealthSnapshotItemPublic(
-                        camera=CameraPublic.from_domain(camera),
-                        health=(
-                            CameraHealthPublic.from_domain(health)
-                            if (health := health_by_camera.get(camera.id)) is not None
-                            else None
-                        ),
-                    )
-                    for camera in cameras
-                ]
-            )
-        except Exception as exc:
-            _raise_camera_http(exc)
-
-    @app.get("/api/cameras/{camera_id}/health", response_model=CameraHealthPublic)
-    async def get_camera_health(
-        camera_id: str,
-        _principal: Principal = Depends(read_access),
-    ) -> CameraHealthPublic:
-        service = _require_camera_service(camera_service)
-        try:
-            camera_health = await service.get_health(camera_id)
-            if camera_health is None:
-                raise HTTPException(status_code=404, detail="camera health is not available")
-            return CameraHealthPublic.from_domain(camera_health)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            _raise_camera_http(exc)
 
 
 def create_app(
@@ -703,7 +495,7 @@ def create_app(
     event_codec = JsonEventEnvelopeCodec()
     managed_metrics = prometheus_metrics or PrometheusMetrics()
     managed_tracing = tracing_runtime or build_tracing_runtime(settings.observability)
-    managed_runtime_health = _build_runtime_health(
+    managed_runtime_health = build_runtime_health(
         settings,
         managed_mongo,
         managed_minio,
@@ -813,7 +605,7 @@ def create_app(
         version="0.1.0",
         lifespan=lifespan,
     )
-    app.include_router(build_auth_router(api_security))
+    app.include_router(build_auth_router(api_security, settings.auth))
     app.include_router(
         build_policy_router(
             managed_policies,
@@ -892,6 +684,15 @@ def create_app(
             event_codec,
         )
     )
+    app.include_router(
+        build_camera_router(
+            managed_cameras,
+            managed_onvif_discovery,
+            api_security,
+            managed_audits,
+            mutation_transaction,
+        )
+    )
 
     @app.middleware("http")
     async def observe_http_request(
@@ -928,10 +729,6 @@ def create_app(
         response.headers["X-Request-ID"] = http_request.state.request_id
         return response
 
-    read_access = api_security.require(Permission.READ_PLATFORM)
-    camera_admin_access = api_security.require(Permission.MANAGE_CAMERAS)
-    camera_test_access = api_security.require(Permission.TEST_CAMERAS)
-
     @app.exception_handler(RequestValidationError)
     async def sanitized_validation_error(
         _request: object,
@@ -942,25 +739,26 @@ def create_app(
             content={"detail": jsonable_encoder(_sanitize_validation_errors(exc.errors()))},
         )
 
-    _register_runtime_health_routes(
-        app,
-        managed_runtime_health,
-        api_security,
-        managed_cameras,
-        managed_onvif_discovery,
-        managed_media_access,
-        managed_detector_reviews,
-        managed_dataset_registry,
-        managed_model_training,
-        managed_live_monitor,
-        managed_realtime,
+    app.include_router(
+        build_runtime_health_router(
+            managed_runtime_health,
+            api_security,
+            managed_cameras,
+            managed_onvif_discovery,
+            managed_media_access,
+            managed_detector_reviews,
+            managed_dataset_registry,
+            managed_model_training,
+            managed_live_monitor,
+            managed_realtime,
+        )
     )
 
     if settings.observability.prometheus_enabled:
 
         @app.get(settings.observability.prometheus_path, include_in_schema=False)
         async def prometheus_metrics_endpoint() -> Response:
-            camera_health = []
+            camera_health: Sequence[CameraHealth] = ()
             if managed_cameras is not None:
                 try:
                     camera_health = await managed_cameras.list_health()
@@ -975,416 +773,19 @@ def create_app(
                 },
             )
 
-    @app.post(
-        "/api/cameras",
-        response_model=CameraPublic,
-        status_code=status.HTTP_201_CREATED,
-        dependencies=[Depends(mutation_transaction)],
+    app.include_router(
+        build_event_router(
+            event_repository,
+            managed_identities,
+            managed_journeys,
+            normalizer,
+            api_security,
+        )
     )
-    async def create_camera(
-        http_request: Request,
-        request: CameraCreateRequest,
-        principal: Principal = Depends(camera_admin_access),
-    ) -> CameraPublic:
-        service = _require_camera_service(managed_cameras)
-        try:
-            created = CameraPublic.from_domain(await service.create(request.to_command()))
-            await managed_audits.record(
-                AuditRecord(
-                    principal=principal,
-                    action=AuditAction.CAMERA_CREATED,
-                    resource_type=AuditResourceType.CAMERA,
-                    resource_id=created.id,
-                    request_id=request_id(http_request),
-                    after=_snapshot(created),
-                )
-            )
-            return created
-        except Exception as exc:
-            _raise_camera_http(exc)
-
-    @app.post(
-        "/api/cameras/batch",
-        response_model=CameraBatchPublic,
-        dependencies=[Depends(mutation_transaction)],
-    )
-    async def create_camera_batch(
-        http_request: Request,
-        request: CameraBatchCreateRequest,
-        principal: Principal = Depends(camera_admin_access),
-    ) -> CameraBatchPublic:
-        service = _require_camera_service(managed_cameras)
-        try:
-            result = await service.create_many(tuple(item.to_command() for item in request.items))
-            public_result = CameraBatchPublic.from_domain(result)
-            for item in public_result.items:
-                if item.camera is None:
-                    continue
-                await managed_audits.record(
-                    AuditRecord(
-                        principal=principal,
-                        action=AuditAction.CAMERA_CREATED,
-                        resource_type=AuditResourceType.CAMERA,
-                        resource_id=item.camera_id,
-                        request_id=request_id(http_request),
-                        after=_snapshot(item.camera),
-                        metadata={"source": "BATCH"},
-                    )
-                )
-            return public_result
-        except Exception as exc:
-            _raise_camera_http(exc)
-
-    @app.post("/api/cameras/discover", response_model=OnvifDiscoveryPublic)
-    async def discover_onvif_cameras(
-        http_request: Request,
-        principal: Principal = Depends(camera_test_access),
-    ) -> OnvifDiscoveryPublic:
-        if managed_onvif_discovery is None:
-            raise HTTPException(status_code=503, detail="ONVIF discovery is disabled")
-        try:
-            devices = await managed_onvif_discovery.discover()
-            response = OnvifDiscoveryPublic(
-                items=[OnvifDevicePublic.from_domain(item) for item in devices],
-                count=len(devices),
-            )
-            await managed_audits.record(
-                AuditRecord(
-                    principal=principal,
-                    action=AuditAction.CAMERA_DISCOVERY_RUN,
-                    resource_type=AuditResourceType.CAMERA,
-                    resource_id="onvif-discovery",
-                    request_id=request_id(http_request),
-                    metadata={"resultCount": len(devices)},
-                )
-            )
-            return response
-        except CameraDiscoveryError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail="ONVIF discovery is temporarily unavailable",
-            ) from exc
-        except AuditWriteError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail="audit persistence is unavailable",
-            ) from exc
-
-    @app.get("/api/cameras", response_model=CameraListPublic)
-    async def list_cameras(
-        _principal: Principal = Depends(read_access),
-        enabled_only: Annotated[bool, Query(alias="enabledOnly")] = False,
-    ) -> CameraListPublic:
-        service = _require_camera_service(managed_cameras)
-        try:
-            cameras = await service.list(enabled_only)
-            return CameraListPublic(items=[CameraPublic.from_domain(item) for item in cameras])
-        except Exception as exc:
-            _raise_camera_http(exc)
-
-    _register_camera_health_routes(app, managed_cameras, read_access)
-
-    @app.get("/api/cameras/{camera_id}", response_model=CameraPublic)
-    async def get_camera(
-        camera_id: str,
-        _principal: Principal = Depends(read_access),
-    ) -> CameraPublic:
-        service = _require_camera_service(managed_cameras)
-        try:
-            return CameraPublic.from_domain(await service.get(camera_id))
-        except Exception as exc:
-            _raise_camera_http(exc)
-
-    @app.put(
-        "/api/cameras/{camera_id}",
-        response_model=CameraPublic,
-        dependencies=[Depends(mutation_transaction)],
-    )
-    async def update_camera(
-        camera_id: str,
-        http_request: Request,
-        request: CameraUpdateRequest,
-        principal: Principal = Depends(camera_admin_access),
-    ) -> CameraPublic:
-        service = _require_camera_service(managed_cameras)
-        try:
-            before = CameraPublic.from_domain(await service.get(camera_id))
-            updated = CameraPublic.from_domain(
-                await service.update(camera_id, request.to_command())
-            )
-            await managed_audits.record(
-                AuditRecord(
-                    principal=principal,
-                    action=AuditAction.CAMERA_UPDATED,
-                    resource_type=AuditResourceType.CAMERA,
-                    resource_id=camera_id,
-                    request_id=request_id(http_request),
-                    before=_snapshot(before),
-                    after=_snapshot(updated),
-                )
-            )
-            return updated
-        except Exception as exc:
-            _raise_camera_http(exc)
-
-    @app.delete(
-        "/api/cameras/{camera_id}",
-        status_code=status.HTTP_204_NO_CONTENT,
-        dependencies=[Depends(mutation_transaction)],
-    )
-    async def delete_camera(
-        camera_id: str,
-        http_request: Request,
-        principal: Principal = Depends(camera_admin_access),
-    ) -> Response:
-        service = _require_camera_service(managed_cameras)
-        try:
-            before = CameraPublic.from_domain(await service.get(camera_id))
-            await service.delete(camera_id)
-            await managed_audits.record(
-                AuditRecord(
-                    principal=principal,
-                    action=AuditAction.CAMERA_DELETED,
-                    resource_type=AuditResourceType.CAMERA,
-                    resource_id=camera_id,
-                    request_id=request_id(http_request),
-                    before=_snapshot(before),
-                )
-            )
-            return Response(status_code=status.HTTP_204_NO_CONTENT)
-        except Exception as exc:
-            _raise_camera_http(exc)
-
-    @app.post(
-        "/api/cameras/{camera_id}/enable",
-        response_model=CameraPublic,
-        dependencies=[Depends(mutation_transaction)],
-    )
-    async def enable_camera(
-        camera_id: str,
-        http_request: Request,
-        principal: Principal = Depends(camera_admin_access),
-    ) -> CameraPublic:
-        service = _require_camera_service(managed_cameras)
-        try:
-            before = CameraPublic.from_domain(await service.get(camera_id))
-            updated = CameraPublic.from_domain(await service.set_enabled(camera_id, True))
-            await managed_audits.record(
-                AuditRecord(
-                    principal=principal,
-                    action=AuditAction.CAMERA_ENABLED,
-                    resource_type=AuditResourceType.CAMERA,
-                    resource_id=camera_id,
-                    request_id=request_id(http_request),
-                    before=_snapshot(before),
-                    after=_snapshot(updated),
-                )
-            )
-            return updated
-        except Exception as exc:
-            _raise_camera_http(exc)
-
-    @app.post(
-        "/api/cameras/{camera_id}/disable",
-        response_model=CameraPublic,
-        dependencies=[Depends(mutation_transaction)],
-    )
-    async def disable_camera(
-        camera_id: str,
-        http_request: Request,
-        principal: Principal = Depends(camera_admin_access),
-    ) -> CameraPublic:
-        service = _require_camera_service(managed_cameras)
-        try:
-            before = CameraPublic.from_domain(await service.get(camera_id))
-            updated = CameraPublic.from_domain(await service.set_enabled(camera_id, False))
-            await managed_audits.record(
-                AuditRecord(
-                    principal=principal,
-                    action=AuditAction.CAMERA_DISABLED,
-                    resource_type=AuditResourceType.CAMERA,
-                    resource_id=camera_id,
-                    request_id=request_id(http_request),
-                    before=_snapshot(before),
-                    after=_snapshot(updated),
-                )
-            )
-            return updated
-        except Exception as exc:
-            _raise_camera_http(exc)
-
-    @app.post(
-        "/api/cameras/{camera_id}/test-connection",
-        response_model=CameraConnectionTestPublic,
-    )
-    async def test_camera_connection(
-        camera_id: str,
-        http_request: Request,
-        principal: Principal = Depends(camera_test_access),
-    ) -> CameraConnectionTestPublic:
-        service = _require_camera_service(managed_cameras)
-        try:
-            camera = CameraPublic.from_domain(await service.get(camera_id))
-            result = await service.test_connection(camera_id)
-            public_result = CameraConnectionTestPublic.from_domain(result)
-            await managed_audits.record(
-                AuditRecord(
-                    principal=principal,
-                    action=AuditAction.CAMERA_CONNECTION_TESTED,
-                    resource_type=AuditResourceType.CAMERA,
-                    resource_id=camera_id,
-                    request_id=request_id(http_request),
-                    before=_snapshot(camera),
-                    after=_snapshot(public_result),
-                )
-            )
-            return public_result
-        except Exception as exc:
-            _raise_camera_http(exc)
-
-    @app.get("/api/events")
-    async def list_events(
-        _principal: Principal = Depends(read_access),
-        limit: Annotated[int, Query(ge=1, le=200)] = 50,
-        cursor: str | None = None,
-        camera_id: Annotated[str | None, Query(alias="cameraId")] = None,
-        plate: str | None = None,
-        event_type: Annotated[str | None, Query(alias="eventType")] = None,
-        direction: str | None = None,
-        status: str | None = None,
-        from_time: Annotated[datetime | None, Query(alias="from")] = None,
-        to_time: Annotated[datetime | None, Query(alias="to")] = None,
-    ) -> dict[str, object]:
-        canonical = _canonical_plate(normalizer, plate)
-        _validate_aware(from_time, "from")
-        _validate_aware(to_time, "to")
-        try:
-            page = await event_repository.list(
-                EventQuery(
-                    limit=limit,
-                    cursor=cursor,
-                    camera_id=camera_id,
-                    plate=canonical,
-                    event_type=event_type,
-                    direction=direction,
-                    status=status,
-                    from_time=from_time,
-                    to_time=to_time,
-                )
-            )
-        except PersistenceError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {
-            "items": [event_to_jsonable(event) for event in page.items],
-            "nextCursor": page.next_cursor,
-        }
-
-    @app.get("/api/events/{event_id}")
-    async def get_event(
-        event_id: str,
-        _principal: Principal = Depends(read_access),
-    ) -> dict[str, object]:
-        event = await event_repository.get(event_id)
-        if event is None:
-            raise HTTPException(status_code=404, detail="vehicle event not found")
-        return event_to_jsonable(event)
-
-    @app.get("/api/vehicles/search")
-    async def search_vehicles(
-        plate: Annotated[str, Query(min_length=4)],
-        _principal: Principal = Depends(read_access),
-        limit: Annotated[int, Query(ge=1, le=100)] = 20,
-        cursor: str | None = None,
-    ) -> dict[str, object]:
-        canonical = _canonical_plate(normalizer, plate)
-        if canonical is None:
-            raise HTTPException(status_code=422, detail="plate is required")
-        try:
-            page = await event_repository.list(
-                EventQuery(limit=limit, cursor=cursor, plate=canonical)
-            )
-        except PersistenceError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {
-            "query": canonical,
-            "items": [event_to_jsonable(event) for event in page.items],
-            "nextCursor": page.next_cursor,
-        }
-
-    @app.get("/api/vehicles/{vehicle_id}")
-    async def get_vehicle_identity(
-        vehicle_id: str,
-        _principal: Principal = Depends(read_access),
-    ) -> dict[str, object]:
-        identity = await managed_identities.get(vehicle_id)
-        if identity is None:
-            raise HTTPException(status_code=404, detail="vehicle identity not found")
-        result = identity_to_jsonable(identity)
-        latest = await managed_journeys.latest(vehicle_id)
-        result["latestEvent"] = event_to_jsonable(latest) if latest is not None else None
-        return result
-
-    @app.get("/api/vehicles/{vehicle_id}/fingerprints")
-    async def list_vehicle_fingerprints(
-        vehicle_id: str,
-        _principal: Principal = Depends(read_access),
-        limit: Annotated[int, Query(ge=1, le=200)] = 50,
-    ) -> dict[str, object]:
-        identity = await managed_identities.get(vehicle_id)
-        if identity is None:
-            raise HTTPException(status_code=404, detail="vehicle identity not found")
-        fingerprints = await managed_identities.list_fingerprints(vehicle_id, limit)
-        return {
-            "vehicleId": vehicle_id,
-            "items": [fingerprint_to_jsonable(item) for item in fingerprints],
-        }
 
     if managed_tracing is not None:
         managed_tracing.instrument(app)
     return app
-
-
-def _canonical_plate(normalizer: VietnamPlateNormalizer, plate: str | None) -> str | None:
-    if plate is None:
-        return None
-    normalized = normalizer.normalize(plate)
-    if not normalized.valid or normalized.normalized is None:
-        raise HTTPException(status_code=422, detail="invalid Vietnamese plate format")
-    return normalized.normalized
-
-
-def _validate_aware(value: datetime | None, field: str) -> None:
-    if value is not None and value.tzinfo is None:
-        raise HTTPException(status_code=422, detail=f"{field} timestamp must include a timezone")
-
-
-def _require_camera_service(service: CameraService | None) -> CameraService:
-    if service is None:
-        raise HTTPException(
-            status_code=503,
-            detail="camera management requires a configured credential encryption key",
-        )
-    return service
-
-
-def _raise_camera_http(exc: Exception) -> NoReturn:
-    if isinstance(exc, AuditWriteError):
-        raise HTTPException(status_code=503, detail="audit persistence is unavailable") from exc
-    if isinstance(exc, CameraNotFoundError):
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if isinstance(exc, CameraConflictError):
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    if isinstance(exc, CredentialEncryptionError):
-        raise HTTPException(status_code=503, detail="camera credential is unavailable") from exc
-    if isinstance(exc, PersistenceError):
-        raise HTTPException(status_code=503, detail="camera persistence is unavailable") from exc
-    if isinstance(exc, ValueError):
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    raise exc
-
-
-def _snapshot(model: BaseModel) -> dict[str, object]:
-    return model.model_dump(mode="python", by_alias=True)
 
 
 def _sanitize_validation_errors(

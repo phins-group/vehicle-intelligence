@@ -6,7 +6,8 @@
       <h1>Biến quan sát camera thành quyết định vận hành.</h1>
       <p>Theo dõi sự kiện phương tiện, camera và cảnh báo trong một bảng điều khiển bảo mật.</p>
       <ul class="trust-list">
-        <li><svg lucideShieldCheck aria-hidden="true"></svg> API key không được lưu lâu dài trên trình duyệt</li>
+        <li><svg lucideShieldCheck aria-hidden="true"></svg> OIDC sử dụng Authorization Code + PKCE</li>
+        <li><svg lucideShieldCheck aria-hidden="true"></svg> Access token OIDC chỉ được giữ trong bộ nhớ</li>
         <li><svg lucideShieldCheck aria-hidden="true"></svg> Quyền thao tác tuân theo vai trò backend</li>
         <li><svg lucideShieldCheck aria-hidden="true"></svg> Realtime sử dụng xác thực ở frame đầu tiên</li>
       </ul>
@@ -18,7 +19,11 @@
       <div>
         <p class="eyebrow">OPERATOR CONSOLE</p>
         <h2>Đăng nhập hệ thống</h2>
-        <p class="muted">Dùng API key do quản trị viên cấp. Key chỉ tồn tại trong phiên tab hiện tại.</p>
+        @if (auth.provider() === 'oidc') {
+          <p class="muted">Tiếp tục qua nhà cung cấp danh tính tập trung của tổ chức.</p>
+        } @else {
+          <p class="muted">Dùng API key do quản trị viên cấp. Key chỉ tồn tại trong phiên tab hiện tại.</p>
+        }
       </div>
 
       @if (auth.startupError()) {
@@ -28,33 +33,45 @@
         <div class="notice error" role="alert">{{ error() }}</div>
       }
 
-      <label class="field-label" for="api-key">API key</label>
-      <div class="secret-field">
-        <svg lucideKeyRound aria-hidden="true"></svg>
-        <input
-          id="api-key"
-          name="apiKey"
-          [type]="showKey() ? 'text' : 'password'"
-          [(ngModel)]="apiKey"
-          placeholder="Nhập API key"
-          autocomplete="current-password"
-          spellcheck="false"
-          required
+      @if (auth.provider() === 'oidc') {
+        <button
+          class="button primary full"
+          type="button"
+          [disabled]="busy() || !auth.oidcLoginAvailable()"
+          (click)="loginWithOidc()"
         >
-        <button type="button" class="icon-button" [attr.aria-label]="showKey() ? 'Ẩn API key' : 'Hiện API key'" (click)="toggleVisibility()">
-          @if (showKey()) {
-            <svg lucideEyeOff aria-hidden="true"></svg>
-          } @else {
-            <svg lucideEye aria-hidden="true"></svg>
-          }
+          {{ busy() ? 'Đang chuyển hướng…' : 'Đăng nhập với OIDC' }}
         </button>
-      </div>
+        <p class="login-footnote">Trình duyệt không lưu access token OIDC trong local hoặc session storage.</p>
+      } @else {
+        <label class="field-label" for="api-key">API key</label>
+        <div class="secret-field">
+          <svg lucideKeyRound aria-hidden="true"></svg>
+          <input
+            id="api-key"
+            name="apiKey"
+            [type]="showKey() ? 'text' : 'password'"
+            [(ngModel)]="apiKey"
+            placeholder="Nhập API key"
+            autocomplete="current-password"
+            spellcheck="false"
+            required
+          >
+          <button type="button" class="icon-button" [attr.aria-label]="showKey() ? 'Ẩn API key' : 'Hiện API key'" (click)="toggleVisibility()">
+            @if (showKey()) {
+              <svg lucideEyeOff aria-hidden="true"></svg>
+            } @else {
+              <svg lucideEye aria-hidden="true"></svg>
+            }
+          </button>
+        </div>
 
-      <button class="button primary full" type="submit" [disabled]="busy() || !apiKey.trim()">
-        {{ busy() ? 'Đang xác minh…' : 'Tiếp tục' }}
-      </button>
+        <button class="button primary full" type="submit" [disabled]="busy() || !apiKey.trim()">
+          {{ busy() ? 'Đang xác minh…' : 'Tiếp tục' }}
+        </button>
 
-      <p class="login-footnote">Không đưa API key vào URL, ảnh chụp màn hình hoặc log hỗ trợ.</p>
+        <p class="login-footnote">Không đưa API key vào URL, ảnh chụp màn hình hoặc log hỗ trợ.</p>
+      }
     </form>
   </section>
 </main>

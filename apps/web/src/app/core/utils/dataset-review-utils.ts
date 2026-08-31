@@ -144,6 +144,8 @@ export function detectorReviewReason(reason: string): string {
       MODEL_SUGGESTION_REQUIRES_HUMAN_REVIEW: 'Model đề xuất — cần xác nhận',
       VIDEO_MODEL_SUGGESTION_REQUIRES_HUMAN_REVIEW:
         'Video mới — model đề xuất, cần duyệt',
+      WAREHOUSE_IMAGE_REQUIRES_PLATE_REVIEW:
+        'Ảnh kho — cần khoanh biển số thủ công',
       AUTO_LABEL_CONFLICT_REQUIRES_HUMAN_REVIEW: 'Nhãn model xung đột',
       MISSING_VERIFIED_ANNOTATION: 'Chưa có nhãn được xác minh',
     }[reason] ?? reason

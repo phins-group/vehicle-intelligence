@@ -153,6 +153,13 @@ def _assess_authentication(settings: Settings, add: CheckAppender) -> None:
         "OIDC issuer and JWKS transport require HTTPS.",
         "OIDC insecure-HTTP override must be disabled in production.",
     )
+    _add_rule(
+        add,
+        "auth.oidc_console",
+        settings.auth.oidc.console is not None,
+        "The operator console has public Authorization Code + PKCE metadata.",
+        "Configure auth.oidc.console for operator-console OIDC login.",
+    )
 
 
 def _assess_camera_credentials(settings: Settings, add: CheckAppender) -> None:
@@ -354,7 +361,7 @@ def _assess_detector(
     )
     expected = config.model_hash
     hash_valid = artifact_exists and _valid_hash(expected)
-    hash_matches = hash_valid and _sha256_file(path) == expected.casefold()
+    hash_matches = hash_valid and expected is not None and _sha256_file(path) == expected.casefold()
     add(
         f"model.{role}_hash",
         ReadinessStatus.PASS if hash_matches else ReadinessStatus.FAIL,
@@ -434,6 +441,7 @@ def _assess_embedding(settings: Settings, root: Path, add: CheckAppender) -> Non
         exists
         and embedding.model_version.strip().casefold() not in _PLACEHOLDER_VERSIONS
         and _valid_hash(expected)
+        and expected is not None
         and _sha256_file(path) == expected.casefold()
     )
     add(

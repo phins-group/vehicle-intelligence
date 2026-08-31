@@ -409,6 +409,7 @@ observability:
   prometheus_enabled: true
   prometheus_path: /metrics
   retention_metrics_port: 9101
+  event_worker_metrics_port: 9102
   opentelemetry_enabled: false
   otlp_traces_endpoint: null
   otlp_headers: null

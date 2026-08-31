@@ -71,6 +71,13 @@ JWKS resolution is cached and fails closed. HTTPS is mandatory unless an explici
 local-development override is configured. This follows [OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0-18.html)
 and the [JWT Best Current Practices algorithm guidance](https://www.ietf.org/rfc/rfc8725.html).
 
+The operator console obtains only public OAuth metadata from `/api/auth/config`.
+It uses Authorization Code + PKCE S256, validates a one-use state transaction,
+and stores the access token in memory rather than browser storage. Configure
+`auth.oidc.console` with exact HTTPS authorization/token/logout endpoints, the
+public client ID, scopes, and `/login` callback. The IdP remains responsible for
+user lifecycle, MFA, access-token lifetime, revocation, and token-endpoint CORS.
+
 SSE uses the normal Bearer header. Browser WebSocket clients authenticate in the
 first TLS-protected frame because browser APIs cannot set an arbitrary handshake
 header. Raw keys are deliberately rejected in realtime URL query parameters.
@@ -222,7 +229,9 @@ The current milestone does not provide:
 - password login, user CRUD, token issuance, refresh tokens, or per-session
   revocation (these remain the external identity provider's responsibility);
 - API-key expiry or online rotation under one unchanged principal ID;
-- rate limiting, account lockout, ingress TLS, WAF, or IP policy;
+- account lockout, ingress TLS, WAF, or IP policy; the bundled web gateway applies
+  bounded per-client API and WebSocket limits, but the public ingress must enforce
+  the site-wide policy and trusted-client-IP boundary;
 - persisted audit records for failed authentication/authorization attempts;
 - immediate revocation of already issued presigned media URLs or per-object read
   audit records in MongoDB;

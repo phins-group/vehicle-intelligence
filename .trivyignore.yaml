@@ -1,0 +1,25 @@
+vulnerabilities:
+  - id: CVE-2026-8376
+    purls:
+      - pkg:deb/debian/perl-base
+    expired_at: 2026-11-30
+    statement: >-
+      Not affected: this heap overflow is limited to 32-bit Perl builds, while
+      the supported API images are built for 64-bit amd64 or arm64.
+
+  - id: CVE-2026-42496
+    purls:
+      - pkg:deb/debian/perl-base
+    expired_at: 2026-11-30
+    statement: >-
+      Not affected: Archive::Tar is not installed in the slim API runtime and
+      the Python application does not use Perl to extract archives.
+
+  - id: CVE-2026-13221
+    purls:
+      - pkg:deb/debian/perl-base
+    expired_at: 2026-11-30
+    statement: >-
+      Temporarily accepted until Debian publishes a fix: perl-base is an
+      Essential package, while the Python runtime never compiles
+      attacker-controlled Perl regular expressions.

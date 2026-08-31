@@ -167,7 +167,14 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
       this.sources.set(result.items);
       this.loadState.succeed();
       if (!result.items.some((source) => source.sourceId === this.sourceId)) {
-        this.sourceId = result.items[0]?.sourceId ?? '';
+        this.sourceId =
+          result.items.reduce<DetectorReviewSource | null>(
+            (selected, source) =>
+              selected === null || source.pendingCount > selected.pendingCount
+                ? source
+                : selected,
+            null,
+          )?.sourceId ?? '';
       }
       this.refreshTargetSourceId();
       if (this.sourceId) await this.loadItems(true);
@@ -214,7 +221,8 @@ export class DatasetReviewComponent implements OnInit, OnDestroy {
       this.items.set([]);
       this.nextCursor.set(null);
     }
-    reset ? this.loadingItems.set(true) : this.loadingMore.set(true);
+    if (reset) this.loadingItems.set(true);
+    else this.loadingMore.set(true);
     this.error.set(null);
     try {
       const page = await firstValueFrom(

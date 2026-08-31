@@ -29,6 +29,14 @@ from vehicle_intelligence.exceptions import DetectorDatasetError
 from vehicle_intelligence.training.first_party import (
     verify_first_party_detector_source,
 )
+from vehicle_intelligence.training.video_review_source import (
+    VIDEO_REVIEW_SOURCE_TYPE,
+    verify_video_plate_review_source,
+)
+from vehicle_intelligence.training.warehouse_plate_review import (
+    WAREHOUSE_PLATE_REVIEW_SOURCE_TYPE,
+    verify_warehouse_plate_review_source,
+)
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _REVIEW_ID = re.compile(r"^review-[0-9a-f]{24}$")
@@ -133,7 +141,7 @@ class DetectorReviewSuggestionGenerator:
     def generate(self) -> ReviewSuggestionResult:
         source = self._options.source_directory.expanduser().resolve()
         workspace = self._options.workspace_directory.expanduser().resolve()
-        manifest, manifest_sha256 = verify_first_party_detector_source(source)
+        manifest, manifest_sha256 = _verify_review_source(source)
         source_id = str(manifest.get("sourceId", ""))
         if not _IDENTIFIER.fullmatch(source_id):
             raise DetectorDatasetError("review suggestion source id is invalid")
@@ -367,6 +375,19 @@ def _candidate(value: object, source: Path) -> _Candidate:
         raise DetectorDatasetError("review suggestion queue identity is invalid")
     _safe_child(source, image_path)
     return _Candidate(review_id, image_path, image_sha256)
+
+
+def _verify_review_source(source: Path) -> tuple[dict[str, object], str]:
+    try:
+        manifest = json.loads((source / "source-manifest.json").read_bytes())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise DetectorDatasetError("review suggestion source manifest is invalid") from exc
+    source_type = manifest.get("type") if isinstance(manifest, dict) else None
+    if source_type == WAREHOUSE_PLATE_REVIEW_SOURCE_TYPE:
+        return verify_warehouse_plate_review_source(source)
+    if source_type == VIDEO_REVIEW_SOURCE_TYPE:
+        return verify_video_plate_review_source(source)
+    return verify_first_party_detector_source(source)
 
 
 def _suggestions(

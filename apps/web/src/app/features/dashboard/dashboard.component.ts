@@ -256,13 +256,13 @@ export class DashboardComponent implements OnInit {
     return typeof document === 'undefined' || !document.hidden;
   }
 
-  private buildHourlyActivity(events: VehicleEvent[]): Array<{
+  private buildHourlyActivity(events: VehicleEvent[]): {
     label: string;
     entries: number;
     exits: number;
     total: number;
     width: number;
-  }> {
+  }[] {
     const now = new Date();
     const hours = Array.from({ length: 7 }, (_, index) => {
       const point = new Date(now);

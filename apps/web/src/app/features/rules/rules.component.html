@@ -314,10 +314,11 @@
                   }
                 </select></label
               >
-              <label class="builder-value"
-                ><span>Value</span>
+              <div class="builder-value"
+                ><label [for]="'conditionValue' + $index">Value</label>
                 @if (condition.operator === "EXISTS") {
                   <select
+                    [id]="'conditionValue' + $index"
                     [name]="'conditionValue' + $index"
                     [(ngModel)]="condition.value"
                   >
@@ -326,6 +327,7 @@
                   </select>
                 } @else if (conditionChoices(condition).length) {
                   <select
+                    [id]="'conditionValue' + $index"
                     [name]="'conditionValue' + $index"
                     [(ngModel)]="condition.value"
                   >
@@ -335,13 +337,14 @@
                   </select>
                 } @else {
                   <input
+                    [id]="'conditionValue' + $index"
                     [name]="'conditionValue' + $index"
                     [(ngModel)]="condition.value"
                     [placeholder]="conditionPlaceholder(condition)"
                     required
                   />
                 }
-              </label>
+              </div>
               <button
                 class="icon-button danger builder-remove"
                 type="button"

@@ -102,7 +102,7 @@
       <div><dt>Vehicle</dt><dd>{{ event.vehicle.type }} · {{ event.vehicle.color || 'chưa rõ màu' }}</dd></div>
       <div><dt>OCR observations</dt><dd>{{ event.plate?.observationCount ?? 0 }}</dd></div>
       <div><dt>Plate confidence</dt><dd>{{ event.plate ? (event.plate.confidence | percent: '1.0-1') : 'N/A' }}</dd></div>
-      @if (event.plate?.review; as review) { <div><dt>AI / Human</dt><dd>{{ event.plate?.prediction?.normalized || event.plate?.normalized }} → {{ review.normalized }}</dd></div> }
+      @if (event.plate?.review; as review) { <div><dt>AI / Human</dt><dd>{{ event.plate.prediction?.normalized || event.plate.normalized }} → {{ review.normalized }}</dd></div> }
     </dl>
     <app-media-evidence [event]="event"></app-media-evidence>
     @if (event.vehicleId) { <a class="button primary full" [routerLink]="['/vehicles', event.vehicleId]">Mở logical vehicle <svg lucideChevronRight aria-hidden="true"></svg></a> }

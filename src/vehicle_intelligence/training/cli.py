@@ -15,7 +15,12 @@ from typing import Any
 from pydantic import ValidationError
 
 from vehicle_intelligence.application.dataset_review import DetectorReviewQuery
-from vehicle_intelligence.config import DetectorConfig, VehicleDetectorConfig, load_settings
+from vehicle_intelligence.config import (
+    DetectorConfig,
+    Settings,
+    VehicleDetectorConfig,
+    load_settings,
+)
 from vehicle_intelligence.domain.dataset_review import DetectorReviewDecision
 from vehicle_intelligence.exceptions import (
     ModelEvaluationError,
@@ -40,7 +45,12 @@ from vehicle_intelligence.training.bootstrap import (
     verify_bootstrap_source,
 )
 from vehicle_intelligence.training.bootstrap.http import BoundedHttpClient
-from vehicle_intelligence.training.config import load_training_settings
+from vehicle_intelligence.training.config import (
+    DetectorTargetConfig,
+    ModelTrainingSettings,
+    PaddleDetectionConfig,
+    load_training_settings,
+)
 from vehicle_intelligence.training.corpus import (
     VietnamPlateCorpusBuilder,
     verify_plate_corpus,
@@ -85,8 +95,26 @@ from vehicle_intelligence.training.video_review_source import (
     VideoPlateReviewSourceBuilder,
     verify_video_plate_review_source,
 )
+from vehicle_intelligence.training.warehouse_plate_review import (
+    WarehousePlateReviewSourceBuilder,
+    verify_warehouse_plate_review_source,
+)
+from vehicle_intelligence.training.warehouse_review_promotion import (
+    AttestedWarehouseReviewPromotionBuilder,
+)
+from vehicle_intelligence.training.warehouse_vehicle import WarehouseVehicleSourceBuilder
 
 _DEFAULT_CONFIG = Path("configs/model-training.yaml")
+_LOCAL_SOURCE_COMMANDS = frozenset(
+    {
+        "ingest-warehouse-vehicle-images",
+        "ingest-first-party-plate-images",
+        "stage-warehouse-plate-review-source",
+    }
+)
+_HUGGING_FACE_COMMANDS = frozenset(
+    {"hf-upload-dataset", "hf-upload-model", "hf-submit-job"}
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -138,21 +166,10 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("samples/extract/plate"),
     )
-
-    verify_corpus = commands.add_parser("verify-corpus")
-    verify_corpus.add_argument("corpus", type=Path)
-
-    verify_roboflow = commands.add_parser("verify-roboflow-source")
-    verify_roboflow.add_argument("source", type=Path)
-
-    verify_source = commands.add_parser("verify-source")
-    verify_source.add_argument("source", type=Path)
-
-    verify_first_party = commands.add_parser("verify-first-party-source")
-    verify_first_party.add_argument("source", type=Path)
-
-    verify_video_review = commands.add_parser("verify-video-review-source")
-    verify_video_review.add_argument("source", type=Path)
+    _add_warehouse_vehicle_parser(commands)
+    _add_warehouse_plate_review_parser(commands)
+    _add_warehouse_review_promotion_parser(commands)
+    _add_verification_parsers(commands)
 
     extract_videos = commands.add_parser(
         "extract-video-samples",
@@ -250,9 +267,6 @@ def build_parser() -> argparse.ArgumentParser:
     _role_argument(build)
     build.add_argument("--export-id", required=True)
 
-    verify_dataset = commands.add_parser("verify-dataset")
-    verify_dataset.add_argument("dataset", type=Path)
-
     train = commands.add_parser("train", help="Run configured PaddleDetection training")
     _role_argument(train)
     train.add_argument("dataset", type=Path)
@@ -307,9 +321,6 @@ def build_parser() -> argparse.ArgumentParser:
     package.add_argument("--model-version", required=True)
     package.add_argument("--output", type=Path, required=True)
 
-    verify_package = commands.add_parser("verify-package")
-    verify_package.add_argument("package", type=Path)
-
     upload_dataset = commands.add_parser("hf-upload-dataset")
     _role_argument(upload_dataset)
     upload_dataset.add_argument("dataset", type=Path)
@@ -342,239 +353,361 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _add_warehouse_vehicle_parser(commands: Any) -> None:
+    warehouse_vehicle = commands.add_parser(
+        "ingest-warehouse-vehicle-images",
+        help="Import, clean, deduplicate, and conservatively classify warehouse captures",
+    )
+    warehouse_vehicle.add_argument("archive", type=Path)
+    warehouse_vehicle.add_argument(
+        "--base-source",
+        type=Path,
+        default=Path("datasets/source/vehicle"),
+    )
+    warehouse_vehicle.add_argument(
+        "--output",
+        type=Path,
+        default=Path("datasets/source/vehicle-combined/phins-warehouse-vehicle-source-v1"),
+    )
+    warehouse_vehicle.add_argument(
+        "--model",
+        type=Path,
+        default=Path("models/yolo11n.onnx"),
+    )
+    warehouse_vehicle.add_argument(
+        "--source-id",
+        default="phins-warehouse-vehicle-source-v1",
+    )
+
+
+def _add_warehouse_plate_review_parser(commands: Any) -> None:
+    warehouse_review = commands.add_parser(
+        "stage-warehouse-plate-review-source",
+        help="Clean and deduplicate warehouse captures for plate review in the web UI",
+    )
+    warehouse_review.add_argument("archive", type=Path)
+    warehouse_review.add_argument(
+        "--source-id",
+        default="phins-vn-warehouse-plate-review-v1",
+    )
+    warehouse_review.add_argument("--output", type=Path)
+
+
+def _add_warehouse_review_promotion_parser(commands: Any) -> None:
+    promotion = commands.add_parser(
+        "promote-attested-warehouse-review",
+        help="Merge a fully reviewed first-party warehouse source into plate production",
+    )
+    promotion.add_argument("source_id")
+    promotion.add_argument(
+        "--base-source",
+        type=Path,
+        default=Path("datasets/source/plate-first-party/phins-vn-plate-production-source-v3"),
+    )
+    promotion.add_argument(
+        "--target-source-id",
+        default="phins-vn-plate-production-source-v4",
+    )
+    promotion.add_argument("--output", type=Path)
+    promotion.add_argument(
+        "--runtime-config",
+        type=Path,
+        default=Path("configs/default.yaml"),
+    )
+    promotion.add_argument("--rights-holder")
+    promotion.add_argument("--attested-by")
+    promotion.add_argument(
+        "--confirm-first-party-rights",
+        action="store_true",
+        help="Explicitly attest that the warehouse camera images are first-party",
+    )
+
+
+def _add_verification_parsers(commands: Any) -> None:
+    for command_name, argument_name in (
+        ("verify-corpus", "corpus"),
+        ("verify-roboflow-source", "source"),
+        ("verify-source", "source"),
+        ("verify-first-party-source", "source"),
+        ("verify-video-review-source", "source"),
+        ("verify-warehouse-review-source", "source"),
+        ("verify-dataset", "dataset"),
+        ("verify-package", "package"),
+    ):
+        command = commands.add_parser(command_name)
+        command.add_argument(argument_name, type=Path)
+
+
+def _verify_command(args: argparse.Namespace) -> tuple[dict[str, Any], str] | None:
+    verifiers: dict[str, tuple[str, Any]] = {
+        "verify-corpus": ("corpus", verify_plate_corpus),
+        "verify-roboflow-source": ("source", verify_roboflow_source),
+        "verify-source": ("source", verify_bootstrap_source),
+        "verify-first-party-source": ("source", verify_first_party_detector_source),
+        "verify-video-review-source": ("source", verify_video_plate_review_source),
+        "verify-warehouse-review-source": (
+            "source",
+            verify_warehouse_plate_review_source,
+        ),
+        "verify-dataset": ("dataset", verify_detector_dataset),
+        "verify-package": ("package", verify_model_package),
+    }
+    selected = verifiers.get(args.command_name)
+    if selected is None:
+        return None
+    argument_name, verifier = selected
+    return verifier(getattr(args, argument_name))
+
+
 def run(args: argparse.Namespace) -> int:
-    if args.command_name == "verify-source":
-        manifest, digest = verify_bootstrap_source(args.source)
-        _print({"manifestSha256": digest, "manifest": manifest})
-        return 0
-    if args.command_name == "verify-first-party-source":
-        manifest, digest = verify_first_party_detector_source(args.source)
-        _print({"manifestSha256": digest, "manifest": manifest})
-        return 0
-    if args.command_name == "verify-video-review-source":
-        manifest, digest = verify_video_plate_review_source(args.source)
-        _print({"manifestSha256": digest, "manifest": manifest})
-        return 0
-    if args.command_name == "verify-corpus":
-        manifest, digest = verify_plate_corpus(args.corpus)
-        _print({"manifestSha256": digest, "manifest": manifest})
-        return 0
-    if args.command_name == "verify-roboflow-source":
-        manifest, digest = verify_roboflow_source(args.source)
-        _print({"manifestSha256": digest, "manifest": manifest})
-        return 0
-    if args.command_name == "verify-dataset":
-        manifest, digest = verify_detector_dataset(args.dataset)
-        _print({"manifestSha256": digest, "manifest": manifest})
-        return 0
-    if args.command_name == "verify-package":
-        manifest, digest = verify_model_package(args.package)
+    verification = _verify_command(args)
+    if verification is not None:
+        manifest, digest = verification
         _print({"manifestSha256": digest, "manifest": manifest})
         return 0
 
     settings = load_training_settings(args.config)
-    if args.command_name == "ingest-first-party-plate-images":
-        result = FirstPartyPlateSourceBuilder(
-            input_directory=args.input,
-            output_directory=args.output,
-            label_reference_directory=args.label_reference,
-            auto_reference_directory=args.auto_reference,
-            source_id=args.source_id,
-            owner_namespace=settings.corpus.owner_namespace,
-            founder_id=settings.corpus.founder_id,
-        ).build()
-        _print(
-            {
-                "sourceId": result.source_id,
-                "directory": str(result.directory),
-                "manifestSha256": result.manifest_sha256,
-                "sampleCount": result.sample_count,
-                "annotationCount": result.annotation_count,
-                "negativeSampleCount": result.negative_sample_count,
-                "reviewQueueCount": result.review_queue_count,
-                "exactDuplicateFilesExcluded": result.exact_duplicate_files_excluded,
-                "unsupportedFileCount": result.unsupported_file_count,
-                "reused": result.reused,
-            }
-        )
-        return 0
+    result = _run_non_role_command(args, settings)
+    if result is not None:
+        return result
+    return _run_role_command(args, settings)
+
+
+def _run_non_role_command(
+    args: argparse.Namespace,
+    settings: ModelTrainingSettings,
+) -> int | None:
+    if args.command_name in _LOCAL_SOURCE_COMMANDS:
+        return _ingest_local_source(args, settings)
     if args.command_name == "extract-video-samples":
         return _extract_video_samples(args, settings)
     if args.command_name == "stage-video-plate-review-source":
-        output = args.output or (Path("datasets/source/plate-first-party") / args.source_id)
-        result = VideoPlateReviewSourceBuilder(
-            extraction_directory=args.input,
-            output_directory=output,
-            source_id=args.source_id,
-            owner_namespace=settings.corpus.owner_namespace,
-            founder_id=settings.corpus.founder_id,
-        ).build()
-        _print(
-            {
-                "sourceId": result.source_id,
-                "directory": str(result.directory),
-                "manifestSha256": result.manifest_sha256,
-                "sourceRecordCount": result.source_record_count,
-                "reviewQueueCount": result.review_queue_count,
-                "suggestionCount": result.suggestion_count,
-                "exactDuplicateImagesMerged": result.exact_duplicate_images_merged,
-                "promotionEligible": False,
-                "releaseEligible": False,
-                "reused": result.reused,
-            }
-        )
-        return 0
+        return _stage_video_review_source(args, settings)
     if args.command_name == "promote-attested-video-review":
-        if not args.confirm_first_party_rights:
-            raise ModelRegistryError(
-                "attested video promotion requires --confirm-first-party-rights"
-            )
-        runtime_settings = load_settings(args.runtime_config)
-        review_source, decisions = asyncio.run(
-            _completed_review_decisions(runtime_settings, args.source_id)
-        )
-        output = args.output or (
-            runtime_settings.dataset_review.promoted_sources_directory / args.target_source_id
-        )
-        rights_holder = args.rights_holder or settings.corpus.founder_id
-        attested_by = args.attested_by or settings.corpus.founder_id
-        result = AttestedVideoReviewPromotionBuilder(
-            base_source_directory=args.base_source,
-            review_source_directory=review_source,
-            output_directory=output,
-            target_source_id=args.target_source_id,
-            decisions=decisions,
-            rights_holder=rights_holder,
-            attested_by=attested_by,
-        ).build()
-        _print(
-            {
-                "sourceId": result.source_id,
-                "directory": str(result.directory),
-                "manifestSha256": result.manifest_sha256,
-                "sampleCount": result.sample_count,
-                "annotationCount": result.annotation_count,
-                "negativeSampleCount": result.negative_sample_count,
-                "promotedReviewCount": result.promoted_review_count,
-                "promotedPositiveCount": result.promoted_positive_count,
-                "promotedNegativeCount": result.promoted_negative_count,
-                "rejectedCount": result.rejected_count,
-                "releaseEligible": True,
-                "distributionEligible": False,
-                "reused": result.reused,
-            }
-        )
-        return 0
+        return _promote_attested_video(args, settings)
+    if args.command_name == "promote-attested-warehouse-review":
+        return _promote_attested_warehouse(args, settings)
     if args.command_name == "suggest-review-labels":
         return _suggest_review_labels(args)
     if args.command_name == "ingest-roboflow-plate-archives":
-        results = import_known_roboflow_archives(
-            args.archives,
-            owner_namespace=settings.corpus.owner_namespace,
-            founder_id=settings.corpus.founder_id,
-            detection_output_root=settings.corpus.plate_external_sources_directory,
-            auxiliary_output_root=settings.corpus.plate_auxiliary_output_directory,
-        )
-        _print(
-            {
-                "sources": [
-                    {
-                        "sourceId": result.source_id,
-                        "task": result.task,
-                        "directory": str(result.directory),
-                        "manifestSha256": result.manifest_sha256,
-                        "sourceImageCount": result.source_image_count,
-                        "canonicalImageCount": result.canonical_image_count,
-                        "annotationCount": result.annotation_count,
-                        "negativeSampleCount": result.negative_sample_count,
-                        "duplicateImagesMerged": result.duplicate_images_merged,
-                        "reused": result.reused,
-                    }
-                    for result in results
-                ]
-            }
-        )
-        return 0
+        return _ingest_roboflow_archives(args, settings)
     if args.command_name == "ingest-plate-corpus":
-        result = VietnamPlateCorpusBuilder(settings.corpus).build(args.archive)
-        _print(
-            {
-                "corpusId": result.corpus_id,
-                "directory": str(result.directory),
-                "manifestSha256": result.manifest_sha256,
-                "sampleCount": result.sample_count,
-                "annotationCount": result.annotation_count,
-                "duplicateImagesMerged": result.duplicate_images_merged,
-                "acceptanceEligible": False,
-                "releaseEligible": False,
-                "distributionEligible": False,
-                "reused": result.reused,
-            }
-        )
-        return 0
+        return _ingest_plate_corpus(args, settings)
+    return None
+
+
+def _stage_video_review_source(
+    args: argparse.Namespace,
+    settings: ModelTrainingSettings,
+) -> int:
+    output = args.output or (Path("datasets/source/plate-first-party") / args.source_id)
+    result = VideoPlateReviewSourceBuilder(
+        extraction_directory=args.input,
+        output_directory=output,
+        source_id=args.source_id,
+        owner_namespace=settings.corpus.owner_namespace,
+        founder_id=settings.corpus.founder_id,
+    ).build()
+    _print(
+        {
+            "sourceId": result.source_id,
+            "directory": str(result.directory),
+            "manifestSha256": result.manifest_sha256,
+            "sourceRecordCount": result.source_record_count,
+            "reviewQueueCount": result.review_queue_count,
+            "suggestionCount": result.suggestion_count,
+            "exactDuplicateImagesMerged": result.exact_duplicate_images_merged,
+            "promotionEligible": False,
+            "releaseEligible": False,
+            "reused": result.reused,
+        }
+    )
+    return 0
+
+
+def _promote_attested_video(
+    args: argparse.Namespace,
+    settings: ModelTrainingSettings,
+) -> int:
+    if not args.confirm_first_party_rights:
+        raise ModelRegistryError("attested video promotion requires --confirm-first-party-rights")
+    runtime_settings = load_settings(args.runtime_config)
+    review_source, decisions = asyncio.run(
+        _completed_review_decisions(runtime_settings, args.source_id)
+    )
+    output = args.output or (
+        runtime_settings.dataset_review.promoted_sources_directory / args.target_source_id
+    )
+    result = AttestedVideoReviewPromotionBuilder(
+        base_source_directory=args.base_source,
+        review_source_directory=review_source,
+        output_directory=output,
+        target_source_id=args.target_source_id,
+        decisions=decisions,
+        rights_holder=args.rights_holder or settings.corpus.founder_id,
+        attested_by=args.attested_by or settings.corpus.founder_id,
+    ).build()
+    _print(
+        {
+            "sourceId": result.source_id,
+            "directory": str(result.directory),
+            "manifestSha256": result.manifest_sha256,
+            "sampleCount": result.sample_count,
+            "annotationCount": result.annotation_count,
+            "negativeSampleCount": result.negative_sample_count,
+            "promotedReviewCount": result.promoted_review_count,
+            "promotedPositiveCount": result.promoted_positive_count,
+            "promotedNegativeCount": result.promoted_negative_count,
+            "rejectedCount": result.rejected_count,
+            "releaseEligible": True,
+            "distributionEligible": False,
+            "reused": result.reused,
+        }
+    )
+    return 0
+
+
+def _ingest_roboflow_archives(
+    args: argparse.Namespace,
+    settings: ModelTrainingSettings,
+) -> int:
+    results = import_known_roboflow_archives(
+        args.archives,
+        owner_namespace=settings.corpus.owner_namespace,
+        founder_id=settings.corpus.founder_id,
+        detection_output_root=settings.corpus.plate_external_sources_directory,
+        auxiliary_output_root=settings.corpus.plate_auxiliary_output_directory,
+    )
+    _print(
+        {
+            "sources": [
+                {
+                    "sourceId": result.source_id,
+                    "task": result.task,
+                    "directory": str(result.directory),
+                    "manifestSha256": result.manifest_sha256,
+                    "sourceImageCount": result.source_image_count,
+                    "canonicalImageCount": result.canonical_image_count,
+                    "annotationCount": result.annotation_count,
+                    "negativeSampleCount": result.negative_sample_count,
+                    "duplicateImagesMerged": result.duplicate_images_merged,
+                    "reused": result.reused,
+                }
+                for result in results
+            ]
+        }
+    )
+    return 0
+
+
+def _ingest_plate_corpus(args: argparse.Namespace, settings: ModelTrainingSettings) -> int:
+    result = VietnamPlateCorpusBuilder(settings.corpus).build(args.archive)
+    _print(
+        {
+            "corpusId": result.corpus_id,
+            "directory": str(result.directory),
+            "manifestSha256": result.manifest_sha256,
+            "sampleCount": result.sample_count,
+            "annotationCount": result.annotation_count,
+            "duplicateImagesMerged": result.duplicate_images_merged,
+            "acceptanceEligible": False,
+            "releaseEligible": False,
+            "distributionEligible": False,
+            "reused": result.reused,
+        }
+    )
+    return 0
+
+
+def _run_role_command(args: argparse.Namespace, settings: ModelTrainingSettings) -> int:
     role = DetectorRole(args.role)
     target = settings.target(role)
-
     if args.command_name == "build-dataset":
-        result = DetectorDatasetBuilder(target.dataset).build(args.export_id)
-        _print(
-            {
-                "exportId": result.export_id,
-                "directory": str(result.directory),
-                "manifestSha256": result.manifest_sha256,
-                "sampleCount": result.sample_count,
-                "annotationCount": result.annotation_count,
-                "splitCounts": result.split_counts,
-                "reused": result.reused,
-            }
-        )
-        return 0
+        return _build_dataset(args, target)
     if args.command_name == "bootstrap-samples":
-        with BoundedHttpClient() as http:
-            source, samples = acquire_bootstrap_samples(
-                role,
-                samples_per_class=args.samples_per_class,
-                http=http,
-            )
-        bootstrap_output = args.output or Path("datasets/source") / role.value
-        result = BootstrapSourceWriter(role, bootstrap_output).write(
-            source,
-            samples,
-        )
-        _print(
-            {
-                "role": result.role.value,
-                "directory": str(result.directory),
-                "manifestSha256": result.manifest_sha256,
-                "sampleCount": result.sample_count,
-                "annotationCount": result.annotation_count,
-                "acceptanceEligible": False,
-                "reused": result.reused,
-            }
-        )
-        return 0
+        return _bootstrap_samples(args, role)
+    if args.command_name in {"train", "export-onnx"}:
+        return _run_paddledetection_command(args, role, target)
+    if args.command_name == "predict":
+        return _predict(args, role, target.dataset.classes)
+    if args.command_name == "evaluate":
+        return _evaluate(args, role, target.gates)
+    if args.command_name == "package":
+        return _package_candidate(args, role, target)
+    if args.command_name in _HUGGING_FACE_COMMANDS:
+        return _run_hugging_face_command(args, settings, target)
+    raise AssertionError(f"unhandled model training command: {args.command_name}")
 
-    training_config = target.paddledetection
-    if args.command_name == "train":
-        updates = {
-            key: value
-            for key, value in {
-                "epochs": args.epochs,
-                "batch_size": args.batch_size,
-                "workers": args.workers,
-                "snapshot_epoch": args.snapshot_epoch,
-                "output_directory": args.output_directory,
-            }.items()
-            if value is not None
+
+def _build_dataset(args: argparse.Namespace, target: DetectorTargetConfig) -> int:
+    result = DetectorDatasetBuilder(target.dataset).build(args.export_id)
+    _print(
+        {
+            "exportId": result.export_id,
+            "directory": str(result.directory),
+            "manifestSha256": result.manifest_sha256,
+            "sampleCount": result.sample_count,
+            "annotationCount": result.annotation_count,
+            "splitCounts": result.split_counts,
+            "reused": result.reused,
         }
-        try:
-            training_config = type(training_config).model_validate(
-                {**training_config.model_dump(), **updates}
-            )
-        except ValidationError as exc:
-            raise ModelTrainingError("invalid detector training overrides") from exc
+    )
+    return 0
+
+
+def _bootstrap_samples(args: argparse.Namespace, role: DetectorRole) -> int:
+    with BoundedHttpClient() as http:
+        source, samples = acquire_bootstrap_samples(
+            role,
+            samples_per_class=args.samples_per_class,
+            http=http,
+        )
+    bootstrap_output = args.output or Path("datasets/source") / role.value
+    result = BootstrapSourceWriter(role, bootstrap_output).write(source, samples)
+    _print(
+        {
+            "role": result.role.value,
+            "directory": str(result.directory),
+            "manifestSha256": result.manifest_sha256,
+            "sampleCount": result.sample_count,
+            "annotationCount": result.annotation_count,
+            "acceptanceEligible": False,
+            "reused": result.reused,
+        }
+    )
+    return 0
+
+
+def _training_config(
+    args: argparse.Namespace,
+    config: PaddleDetectionConfig,
+) -> PaddleDetectionConfig:
+    if args.command_name != "train":
+        return config
+    updates = {
+        key: value
+        for key, value in {
+            "epochs": args.epochs,
+            "batch_size": args.batch_size,
+            "workers": args.workers,
+            "snapshot_epoch": args.snapshot_epoch,
+            "output_directory": args.output_directory,
+        }.items()
+        if value is not None
+    }
+    try:
+        return type(config).model_validate({**config.model_dump(), **updates})
+    except ValidationError as exc:
+        raise ModelTrainingError("invalid detector training overrides") from exc
+
+
+def _run_paddledetection_command(
+    args: argparse.Namespace,
+    role: DetectorRole,
+    target: DetectorTargetConfig,
+) -> int:
     trainer = PaddleDetectionTrainer(
-        training_config,
+        _training_config(args, target.paddledetection),
         role,
         target.dataset.classes,
     )
@@ -590,35 +723,42 @@ def run(args: argparse.Namespace) -> int:
         output = trainer.export_onnx(args.dataset, args.weights, args.output)
         _print({"onnx": str(output), "sha256": _sha256_file(output)})
         return 0
-    if args.command_name == "predict":
-        return _predict(args, role, target.dataset.classes)
-    if args.command_name == "evaluate":
-        return _evaluate(args, role, target.gates)
-    if args.command_name == "package":
-        result = package_detector_candidate(
-            role=role,
-            model_name=args.model_name,
-            model_version=args.model_version,
-            classes=target.dataset.classes,
-            onnx_path=args.onnx,
-            dataset_directory=args.dataset,
-            evaluation_path=args.evaluation,
-            output_directory=args.output,
-            training_run_path=args.training_run,
-        )
-        _print(
-            {
-                "directory": str(result.directory),
-                "manifestSha256": result.manifest_sha256,
-                "modelSha256": result.model_sha256,
-                "reused": result.reused,
-            }
-        )
-        return 0
-    if (
-        args.command_name in {"hf-upload-dataset", "hf-upload-model", "hf-submit-job"}
-        and not settings.huggingface.enabled
-    ):
+    raise AssertionError(f"unhandled PaddleDetection command: {args.command_name}")
+
+
+def _package_candidate(
+    args: argparse.Namespace,
+    role: DetectorRole,
+    target: DetectorTargetConfig,
+) -> int:
+    result = package_detector_candidate(
+        role=role,
+        model_name=args.model_name,
+        model_version=args.model_version,
+        classes=target.dataset.classes,
+        onnx_path=args.onnx,
+        dataset_directory=args.dataset,
+        evaluation_path=args.evaluation,
+        output_directory=args.output,
+        training_run_path=args.training_run,
+    )
+    _print(
+        {
+            "directory": str(result.directory),
+            "manifestSha256": result.manifest_sha256,
+            "modelSha256": result.model_sha256,
+            "reused": result.reused,
+        }
+    )
+    return 0
+
+
+def _run_hugging_face_command(
+    args: argparse.Namespace,
+    settings: ModelTrainingSettings,
+    target: DetectorTargetConfig,
+) -> int:
+    if not settings.huggingface.enabled:
         raise ModelRegistryError("Hugging Face integration is disabled in training config")
     if args.command_name == "hf-upload-dataset":
         result = HuggingFacePrivateRegistry().upload_dataset(
@@ -658,10 +798,99 @@ def run(args: argparse.Namespace) -> int:
         )
         _print(result.model_dump(mode="json"))
         return 0
-    raise AssertionError(f"unhandled model training command: {args.command_name}")
+    raise AssertionError(f"unhandled Hugging Face command: {args.command_name}")
 
 
-def _extract_video_samples(args: argparse.Namespace, training_settings: Any) -> int:
+def _ingest_local_source(args: argparse.Namespace, settings: ModelTrainingSettings) -> int:
+    if args.command_name == "ingest-warehouse-vehicle-images":
+        result = WarehouseVehicleSourceBuilder(
+            archive_path=args.archive,
+            base_source_directory=args.base_source,
+            output_directory=args.output,
+            model_path=args.model,
+            source_id=args.source_id,
+            owner_namespace=settings.corpus.owner_namespace,
+            founder_id=settings.corpus.founder_id,
+        ).build()
+        _print(
+            {
+                "sourceId": result.source_id,
+                "directory": str(result.directory),
+                "manifestSha256": result.manifest_sha256,
+                "archiveSha256": result.archive_sha256,
+                "baseSampleCount": result.base_sample_count,
+                "appendedSampleCount": result.appended_sample_count,
+                "combinedSampleCount": result.combined_sample_count,
+                "exactDuplicateFilesExcluded": result.exact_duplicate_files_excluded,
+                "nearDuplicateImagesExcluded": result.near_duplicate_images_excluded,
+                "reviewQueueCount": result.review_queue_count,
+                "rejectCount": result.reject_count,
+                "acceptanceEligible": False,
+                "releaseEligible": False,
+                "reused": result.reused,
+            }
+        )
+        return 0
+
+    if args.command_name == "stage-warehouse-plate-review-source":
+        output = args.output or (Path("datasets/source/plate-first-party") / args.source_id)
+        result = WarehousePlateReviewSourceBuilder(
+            archive_path=args.archive,
+            output_directory=output,
+            source_id=args.source_id,
+            owner_namespace=settings.corpus.owner_namespace,
+            founder_id=settings.corpus.founder_id,
+        ).build()
+        _print(
+            {
+                "sourceId": result.source_id,
+                "directory": str(result.directory),
+                "manifestSha256": result.manifest_sha256,
+                "archiveSha256": result.archive_sha256,
+                "archiveImageCount": result.archive_image_count,
+                "uniqueRawImageCount": result.unique_raw_image_count,
+                "reviewQueueCount": result.review_queue_count,
+                "exactDuplicateFilesExcluded": result.exact_duplicate_files_excluded,
+                "nearDuplicateImagesExcluded": result.near_duplicate_images_excluded,
+                "postCleanDuplicateImagesExcluded": (result.post_clean_duplicate_images_excluded),
+                "rejectedUniqueImages": result.rejected_unique_images,
+                "promotionEligible": False,
+                "releaseEligible": False,
+                "reused": result.reused,
+            }
+        )
+        return 0
+
+    result = FirstPartyPlateSourceBuilder(
+        input_directory=args.input,
+        output_directory=args.output,
+        label_reference_directory=args.label_reference,
+        auto_reference_directory=args.auto_reference,
+        source_id=args.source_id,
+        owner_namespace=settings.corpus.owner_namespace,
+        founder_id=settings.corpus.founder_id,
+    ).build()
+    _print(
+        {
+            "sourceId": result.source_id,
+            "directory": str(result.directory),
+            "manifestSha256": result.manifest_sha256,
+            "sampleCount": result.sample_count,
+            "annotationCount": result.annotation_count,
+            "negativeSampleCount": result.negative_sample_count,
+            "reviewQueueCount": result.review_queue_count,
+            "exactDuplicateFilesExcluded": result.exact_duplicate_files_excluded,
+            "unsupportedFileCount": result.unsupported_file_count,
+            "reused": result.reused,
+        }
+    )
+    return 0
+
+
+def _extract_video_samples(
+    args: argparse.Namespace,
+    training_settings: ModelTrainingSettings,
+) -> int:
     runtime_settings = load_settings(args.runtime_config)
     vehicle_model = args.vehicle_model.expanduser().resolve()
     plate_model = args.plate_model.expanduser().resolve()
@@ -748,7 +977,7 @@ def _extract_video_samples(args: argparse.Namespace, training_settings: Any) -> 
 
 
 async def _completed_review_decisions(
-    runtime_settings: Any,
+    runtime_settings: Settings,
     source_id: str,
 ) -> tuple[Path, dict[str, DetectorReviewDecision]]:
     config = runtime_settings.dataset_review
@@ -758,10 +987,10 @@ async def _completed_review_decisions(
         summaries = await repository.list_sources()
         summary = next((item for item in summaries if item.source_id == source_id), None)
         if summary is None:
-            raise ModelRegistryError(f"video review source not found: {source_id}")
+            raise ModelRegistryError(f"review source not found: {source_id}")
         if summary.pending_count or summary.reviewed_count != summary.queue_count:
             raise ModelRegistryError(
-                "video review source must have a terminal decision for every queue item"
+                "review source must have a terminal decision for every queue item"
             )
         decisions: dict[str, DetectorReviewDecision] = {}
         cursor: str | None = None
@@ -784,11 +1013,55 @@ async def _completed_review_decisions(
             if cursor is None:
                 break
         if len(decisions) != summary.queue_count:
-            raise ModelRegistryError("video review decision snapshot is incomplete")
+            raise ModelRegistryError("review decision snapshot is incomplete")
         source = (config.sources_directory / source_id).expanduser().resolve()
         return source, decisions
     finally:
         await repository.close()
+
+
+def _promote_attested_warehouse(
+    args: argparse.Namespace,
+    settings: ModelTrainingSettings,
+) -> int:
+    if not args.confirm_first_party_rights:
+        raise ModelRegistryError(
+            "attested warehouse promotion requires --confirm-first-party-rights"
+        )
+    runtime_settings = load_settings(args.runtime_config)
+    review_source, decisions = asyncio.run(
+        _completed_review_decisions(runtime_settings, args.source_id)
+    )
+    output = args.output or (
+        runtime_settings.dataset_review.promoted_sources_directory / args.target_source_id
+    )
+    result = AttestedWarehouseReviewPromotionBuilder(
+        base_source_directory=args.base_source,
+        review_source_directory=review_source,
+        output_directory=output,
+        target_source_id=args.target_source_id,
+        decisions=decisions,
+        rights_holder=args.rights_holder or settings.corpus.founder_id,
+        attested_by=args.attested_by or settings.corpus.founder_id,
+    ).build()
+    _print(
+        {
+            "sourceId": result.source_id,
+            "directory": str(result.directory),
+            "manifestSha256": result.manifest_sha256,
+            "sampleCount": result.sample_count,
+            "annotationCount": result.annotation_count,
+            "negativeSampleCount": result.negative_sample_count,
+            "promotedReviewCount": result.promoted_review_count,
+            "promotedPositiveCount": result.promoted_positive_count,
+            "promotedNegativeCount": result.promoted_negative_count,
+            "rejectedCount": result.rejected_count,
+            "releaseEligible": True,
+            "distributionEligible": False,
+            "reused": result.reused,
+        }
+    )
+    return 0
 
 
 def _suggest_review_labels(args: argparse.Namespace) -> int:

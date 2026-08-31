@@ -113,4 +113,10 @@ describe('dataset review geometry', () => {
       detectorReviewReason('VIDEO_MODEL_SUGGESTION_REQUIRES_HUMAN_REVIEW'),
     ).toBe('Video mới — model đề xuất, cần duyệt');
   });
+
+  it('labels warehouse images without suggestions as manual plate work', () => {
+    expect(detectorReviewReason('WAREHOUSE_IMAGE_REQUIRES_PLATE_REVIEW')).toBe(
+      'Ảnh kho — cần khoanh biển số thủ công',
+    );
+  });
 });

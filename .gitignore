@@ -10,6 +10,8 @@ dist/
 build/
 *.egg-info/
 .env
+deployment/*.env
+!deployment/*.env.example
 output/
 models/*.pt
 models/*.onnx

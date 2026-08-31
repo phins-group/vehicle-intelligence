@@ -82,7 +82,7 @@ export class OcrReviewComponent implements OnInit, OnDestroy {
   private resetQueued = false;
   private destroyed = false;
   private realtimeRevision = 0;
-  private realtimeLog: Array<{ revision: number; event: VehicleEvent }> = [];
+  private realtimeLog: { revision: number; event: VehicleEvent }[] = [];
   private reviewRequestGeneration = 0;
 
   plateText = '';
@@ -164,12 +164,13 @@ export class OcrReviewComponent implements OnInit, OnDestroy {
       }
     } finally {
       this.requestInFlight = false;
-      if (this.destroyed) return;
-      this.loading.set(false);
-      this.loadingMore.set(false);
-      if (this.resetQueued) {
-        this.resetQueued = false;
-        void this.load(true);
+      if (!this.destroyed) {
+        this.loading.set(false);
+        this.loadingMore.set(false);
+        if (this.resetQueued) {
+          this.resetQueued = false;
+          void this.load(true);
+        }
       }
     }
   }

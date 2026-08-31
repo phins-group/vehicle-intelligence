@@ -17,6 +17,18 @@ DOCKER_INSTRUCTION = re.compile(r"^(ARG|FROM)\s+(.+)$", re.IGNORECASE)
 DOCKER_VARIABLE = re.compile(
     r"\$(?:\{(?P<braced>[A-Za-z_][A-Za-z0-9_]*)\}|(?P<plain>[A-Za-z_][A-Za-z0-9_]*))"
 )
+REQUIRED_COMPOSE_IMAGE_REFERENCE = re.compile(
+    r"^\$\{(?P<image>[A-Za-z_][A-Za-z0-9_]*):\?[^{}]+\}"
+    r"@sha256:\$\{(?P<digest>[A-Za-z_][A-Za-z0-9_]*):\?[^{}]+\}$"
+)
+DEFERRED_COMPOSE_IMAGE_PINS = {
+    "docker-compose.production.yml": frozenset(
+        {
+            ("VIP_API_IMAGE", "VIP_API_IMAGE_SHA256"),
+            ("VIP_WEB_IMAGE", "VIP_WEB_IMAGE_SHA256"),
+        }
+    )
+}
 EXCLUDED_DIRECTORIES = frozenset(
     {
         ".git",
@@ -91,10 +103,24 @@ def _compose_failures() -> list[str]:
         services = document.get("services", {}) if isinstance(document, dict) else {}
         for service, config in services.items():
             reference = config.get("image") if isinstance(config, dict) else None
-            if reference is not None and not SHA256_REFERENCE.search(str(reference)):
-                relative_path = path.relative_to(ROOT)
+            relative_path = path.relative_to(ROOT)
+            if (
+                reference is not None
+                and not SHA256_REFERENCE.search(str(reference))
+                and not _is_deferred_compose_image_pin(relative_path, str(reference))
+            ):
                 failures.append(f"{relative_path}:{service}: unpinned image {reference!r}")
     return failures
+
+
+def _is_deferred_compose_image_pin(relative_path: Path, reference: str) -> bool:
+    """Allow named production inputs only when a digest is structurally required."""
+
+    match = REQUIRED_COMPOSE_IMAGE_REFERENCE.fullmatch(reference)
+    if match is None:
+        return False
+    allowed_pairs = DEFERRED_COMPOSE_IMAGE_PINS.get(relative_path.as_posix(), ())
+    return (match.group("image"), match.group("digest")) in allowed_pairs
 
 
 def _workflow_failures() -> list[str]:

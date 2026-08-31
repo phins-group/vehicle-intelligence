@@ -14,11 +14,14 @@ from vehicle_intelligence.config import (
     ModelQualityConfig,
     ObservabilityConfig,
     OCRConfig,
+    OIDCConfig,
+    OIDCConsoleConfig,
     OnvifDiscoveryConfig,
     RetentionConfig,
     Settings,
     load_settings,
 )
+from vehicle_intelligence.exceptions import ConfigurationError
 
 
 def test_application_environment_is_normalized_before_security_checks() -> None:
@@ -55,6 +58,72 @@ def test_environment_overrides_yaml(monkeypatch) -> None:
     assert settings.minio.maximum_retries == 2
     assert settings.observability.retention_metrics_port == 9201
     assert settings.finalization_outbox.maximum_entries == 321
+
+
+def test_environment_secret_file_overrides_yaml_without_exposing_value(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    secret = tmp_path / "redis-url"
+    secret.write_text("rediss://:private-password@redis.internal:6379/0\n", encoding="utf-8")
+    monkeypatch.setenv("VIP_REDIS__URL_FILE", str(secret))
+
+    settings = load_settings()
+
+    assert settings.redis.url.get_secret_value() == (
+        "rediss://:private-password@redis.internal:6379/0"
+    )
+    assert "private-password" not in repr(settings.redis.url)
+
+
+def test_environment_secret_file_fails_closed_on_conflict_and_missing_file(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    secret = tmp_path / "redis-url"
+    secret.write_text("redis://redis.internal:6379/0", encoding="utf-8")
+    monkeypatch.setenv("VIP_REDIS__URL", "redis://another.internal:6379/0")
+    monkeypatch.setenv("VIP_REDIS__URL_FILE", str(secret))
+
+    with pytest.raises(ConfigurationError, match="only one"):
+        load_settings()
+
+    monkeypatch.delenv("VIP_REDIS__URL")
+    monkeypatch.setenv("VIP_REDIS__URL_FILE", str(tmp_path / "missing"))
+    with pytest.raises(ConfigurationError, match="cannot read secret file"):
+        load_settings()
+
+
+def test_oidc_console_requires_https_pkce_metadata() -> None:
+    console = OIDCConsoleConfig(
+        authorization_endpoint="https://identity.example/authorize",
+        token_endpoint="https://identity.example/token",
+        client_id="vehicle-console",
+        scopes=["openid", "profile", "vehicle.read"],
+        callback_path="/login",
+    )
+    oidc = OIDCConfig(
+        issuer="https://identity.example",
+        jwks_url="https://identity.example/jwks",
+        audiences=["vehicle-api"],
+        console=console,
+    )
+
+    assert oidc.console == console
+    with pytest.raises(ValidationError, match="console requires HTTPS"):
+        OIDCConfig(
+            issuer="https://identity.example",
+            jwks_url="https://identity.example/jwks",
+            audiences=["vehicle-api"],
+            console=console.model_copy(update={"token_endpoint": "http://identity.example/token"}),
+        )
+    with pytest.raises(ValidationError, match="including openid"):
+        OIDCConsoleConfig(
+            authorization_endpoint="https://identity.example/authorize",
+            token_endpoint="https://identity.example/token",
+            client_id="vehicle-console",
+            scopes=["profile"],
+        )
 
 
 def test_finalization_outbox_capacity_is_bounded() -> None:

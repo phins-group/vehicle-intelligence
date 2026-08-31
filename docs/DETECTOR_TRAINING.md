@@ -102,6 +102,112 @@ testing, but candidate packaging rejects these datasets as release evidence.
 Use reviewed warehouse-camera captures for validation, test, and production
 acceptance.
 
+### Warehouse vehicle archive ingestion
+
+Warehouse archives whose filenames follow the `front_image_*` / `rear_image_*`
+camera contract can be appended to the vehicle bootstrap source without
+mutating the original Open Images source:
+
+```bash
+python run_model_training.py --config configs/model-training.yaml \
+  ingest-warehouse-vehicle-images ../externals/zimages.tar.gz
+
+python run_model_training.py verify-source \
+  datasets/source/vehicle-combined/phins-warehouse-vehicle-source-v1
+```
+
+The importer validates tar paths and size bounds, collapses exact SHA-256
+duplicates, recovers and inpaints the burned-in blue detector rectangle, and
+uses crop-local perceptual hashes plus pixel correlation to remove conservative
+near duplicates. Correlation runs on histogram-normalized grayscale crops and
+must also agree with an edge-overlap check. Only high-confidence `truck`
+classifications enter
+`annotations.jsonl`; other classes and ambiguous detections remain in
+`REVIEW_QUEUE.jsonl`. `DUPLICATES.jsonl`, `REJECTS.jsonl`, and
+`INGESTION_REPORT.json` preserve every exclusion decision and the model/archive
+checksums. These model-assisted labels remain bootstrap-only and require human
+review before they may become release or acceptance evidence.
+
+### Warehouse plate archive: review, append, and private Hub sync
+
+Plate labels must not reuse the burned-in whole-vehicle rectangle. Stage the
+same archive as a separate, immutable plate-review source instead:
+
+```bash
+python run_model_training.py --config configs/model-training.yaml \
+  stage-warehouse-plate-review-source ../externals/zimages.tar.gz \
+  --source-id phins-vn-warehouse-plate-review-20260827-v1
+
+python run_model_training.py verify-warehouse-review-source \
+  datasets/source/plate-first-party/phins-vn-warehouse-plate-review-20260827-v1
+```
+
+The staged 2026-08-27 snapshot contains 3,222 review images. It excluded 549
+byte-identical files, 46 conservative perceptual near-duplicates, and 96
+unrecoverable unique images from the 3,913 archive images. The source remains
+ineligible for training and release while review or rights confirmation is
+pending. Its queue, provenance, duplicate decisions, rejections, cleaned image
+checksums, and source archive checksum are all manifest-bound.
+
+Generate proposals without turning model output into human labels:
+
+```bash
+python run_model_training.py --config configs/model-training.yaml \
+  suggest-review-labels \
+  datasets/source/plate-first-party/phins-vn-warehouse-plate-review-20260827-v1 \
+  --plate-model models/review/license-plate-finetune-v1s.pt \
+  --model-name review-yolo11s-license-plate \
+  --model-version hf-251a30d \
+  --device cpu --image-size 1280 --confidence 0.70 --batch-size 4
+```
+
+The current evidence run produced suggestions for 2,310 images (2,522 boxes);
+912 images still require manual plate drawing. Open
+`http://localhost:4200/dataset-review`. When no valid source is selected, the
+web app selects the source with the largest pending count, so this warehouse
+queue appears by default. Complete every item as `APPROVED`, `CORRECTED`,
+`NEGATIVE`, or `REJECTED`.
+
+Only after all 3,222 items have terminal decisions and the data owner explicitly
+confirms first-party camera rights, append the accepted samples to production:
+
+```bash
+python run_model_training.py --config configs/model-training.yaml \
+  promote-attested-warehouse-review \
+  phins-vn-warehouse-plate-review-20260827-v1 \
+  --base-source \
+  datasets/source/plate-first-party/phins-vn-plate-production-source-v3 \
+  --target-source-id phins-vn-plate-production-source-v4 \
+  --rights-holder duyhuynh --attested-by duyhuynh \
+  --confirm-first-party-rights
+```
+
+The promotion refuses incomplete review queues, excludes `REJECTED` images,
+retains verified negatives, preserves warehouse transaction/camera grouping,
+and writes immutable decision and rights-attestation evidence. It never edits
+the v3 base or the review source. Point `plate.dataset.source_directory` and its
+split seed in `configs/model-training.yaml` to v4, then build and verify a new
+snapshot before uploading it to the configured private
+`phins-group/plate-dataset` repository:
+
+```bash
+python run_model_training.py --config configs/model-training.yaml \
+  build-dataset --role plate --export-id phins-vn-plate-production-v4
+
+python run_model_training.py verify-dataset \
+  datasets/detectors/plate/phins-vn-plate-production-v4
+
+python run_model_training.py --config configs/model-training.yaml \
+  hf-upload-dataset --role plate \
+  datasets/detectors/plate/phins-vn-plate-production-v4 \
+  --allow-restricted-private
+```
+
+Use `--replace-remote` as an additional explicit switch only when the private
+Hub repository must exactly mirror v4 and obsolete remote files should be
+removed. The `/datasets` admin workflow provides the equivalent server-side
+build, verification, and private-sync path when restricted sync is enabled.
+
 For the PHINS founder namespace, Vietnam polygon archive ingestion, deduplication,
 sequence-disjoint split policy, and the distinction between compilation identity
 and third-party image ownership, see
@@ -228,8 +334,9 @@ relay safely retries pending entries after an audit-store outage or restart.
 
 Recommended first pass for the current queue:
 
-1. Select reason `Model đề xuất — cần xác nhận` to process the 960 auto-label
-   samples.
+1. Select reason `Model đề xuất — cần xác nhận` for proposed boxes, or
+   `Ảnh kho — cần khoanh biển số thủ công` for warehouse images without a
+   proposal.
 2. Approve only when every visible plate is covered tightly.
 3. Redraw incomplete/wrong boxes and save as `CORRECTED`.
 4. Mark a genuine no-plate scene `NEGATIVE`; do not use `REJECTED` for useful

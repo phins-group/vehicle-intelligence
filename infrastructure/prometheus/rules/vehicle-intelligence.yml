@@ -1,0 +1,178 @@
+groups:
+  - name: vehicle-intelligence-service
+    rules:
+      - alert: VehicleIntelligenceApiUnavailable
+        expr: up{job="vehicle-intelligence-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Vehicle Intelligence API is unavailable
+          description: Prometheus has failed to scrape the API for more than one minute.
+
+      - alert: VehicleIntelligenceApiHighErrorRate
+        expr: |
+          sum(rate(http_requests_total{job="vehicle-intelligence-api",status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(http_requests_total{job="vehicle-intelligence-api"}[5m])), 0.001)
+          > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: API 5xx ratio is above 5%
+          description: The rolling five-minute server-error ratio has remained elevated for ten minutes.
+
+      - alert: VehicleIntelligenceApiHighLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket{job="vehicle-intelligence-api"}[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: API p95 latency is above one second
+          description: Tune this baseline after the site acceptance load test.
+
+  - name: vehicle-intelligence-camera
+    rules:
+      - alert: VehicleIntelligenceCameraOffline
+        expr: camera_online{job="vehicle-intelligence-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Camera {{ $labels.camera_id }} is offline
+          description: The latest persisted camera state has remained offline for two minutes.
+
+      - alert: VehicleIntelligenceCameraHighDropRatio
+        expr: |
+          rate(camera_frames_dropped_total{job="vehicle-intelligence-api"}[5m])
+          /
+          clamp_min(rate(camera_frames_total{job="vehicle-intelligence-api",kind="decoded"}[5m]), 0.001)
+          > 0.10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Camera {{ $labels.camera_id }} drops more than 10% of decoded frames
+          description: Check decoder pressure, inference capacity, and the configured sampling rate.
+
+      - alert: VehicleIntelligenceCameraQueueSaturated
+        expr: camera_queue_size{job="vehicle-intelligence-api"} >= 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Camera {{ $labels.camera_id }} decode queue remains saturated
+          description: The default queue is bounded at three frames; validate this threshold for custom deployments.
+
+      - alert: VehicleIntelligenceInferenceLatencyHigh
+        expr: inference_latency_ms{job="vehicle-intelligence-api"} > 500
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Camera {{ $labels.camera_id }} {{ $labels.stage }} inference latency is high
+          description: Inference latency has exceeded 500 ms; compare against the signed site SLO.
+
+  - name: vehicle-intelligence-retention
+    rules:
+      - alert: VehicleIntelligenceRetentionUnavailable
+        expr: up{job="vehicle-intelligence-retention"} == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Retention worker metrics are unavailable
+          description: Confirm the maintenance profile is running before enabling this alert in production.
+
+      - alert: VehicleIntelligenceRetentionDeletionFailure
+        expr: increase(retention_object_failures_total{job="vehicle-intelligence-retention"}[1h]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Retention failed to delete one or more media objects
+          description: Review storage connectivity and the bounded retry log before the backlog grows.
+
+  - name: vehicle-intelligence-event-worker
+    rules:
+      - alert: VehicleIntelligenceEventWorkerUnavailable
+        expr: up{job="vehicle-intelligence-event-worker"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Durable event worker is unavailable
+          description: Redis Stream messages can remain pending until the worker recovers.
+
+      - alert: VehicleIntelligenceEventPersistenceFailure
+        expr: increase(event_worker_persistence_failures_total[10m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: Event worker cannot persist one or more events
+          description: Check MongoDB readiness and Redis pending-entry age immediately.
+
+      - alert: VehicleIntelligenceDeadLetterMessage
+        expr: increase(event_worker_invalid_messages_total[10m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Invalid event moved to the dead-letter stream
+          description: Inspect the sanitized contract failure and use the audited DLQ procedure.
+
+  - name: vehicle-intelligence-otel-collector
+    rules:
+      - alert: VehicleIntelligenceTelemetryCollectorUnavailable
+        expr: up{job="vehicle-intelligence-otel-collector"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: OpenTelemetry Collector metrics are unavailable
+          description: Application traces may remain buffered or be dropped while the collector is unavailable.
+
+      - alert: VehicleIntelligenceTelemetryQueueSaturated
+        expr: |
+          max by (exporter) (
+            otelcol_exporter_queue_size{job="vehicle-intelligence-otel-collector"}
+          )
+          /
+          clamp_min(
+            max by (exporter) (
+              otelcol_exporter_queue_capacity{job="vehicle-intelligence-otel-collector"}
+            ),
+            1
+          ) > 0.80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: OpenTelemetry export queue is above 80% capacity
+          description: Restore the trace backend or reduce trace volume before the persistent queue fills.
+
+      - alert: VehicleIntelligenceTelemetryEnqueueFailure
+        expr: |
+          increase(
+            otelcol_exporter_enqueue_failed_spans{job="vehicle-intelligence-otel-collector"}[10m]
+          ) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: OpenTelemetry Collector rejected trace data before enqueue
+          description: Check queue capacity, disk space, and collector I/O errors; rejected spans are lost.
+
+      - alert: VehicleIntelligenceTelemetryExportFailure
+        expr: |
+          rate(
+            otelcol_exporter_send_failed_spans{job="vehicle-intelligence-otel-collector"}[5m]
+          ) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: OpenTelemetry trace export is failing
+          description: Persistent retries are active; inspect backend reachability before the queue saturates.

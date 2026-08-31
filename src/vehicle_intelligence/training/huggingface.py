@@ -233,6 +233,7 @@ def _validate_dataset_hub_metadata(
             not in {
                 "USER_CONFIRMED_FIRST_PARTY_COLLECTION",
                 "USER_CONFIRMED_FIRST_PARTY_VIDEO_COLLECTION",
+                "USER_CONFIRMED_FIRST_PARTY_WAREHOUSE_CAMERA_COLLECTION",
             }
             or source.get("licenseReviewStatus") != "PROPRIETARY_FIRST_PARTY_USER_CONFIRMED"
         ):

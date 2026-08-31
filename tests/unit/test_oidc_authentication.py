@@ -4,9 +4,10 @@ from types import SimpleNamespace
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from vehicle_intelligence.config import OIDCConfig
+from vehicle_intelligence.config import AuthConfig, OIDCConfig, OIDCConsoleConfig
 from vehicle_intelligence.domain import AuthenticationMethod, UserRole
 from vehicle_intelligence.infrastructure.security.oidc import OIDCAuthenticator
+from vehicle_intelligence.interfaces.security import AuthenticationConfigurationPublic
 
 
 class StaticSigningKeys:
@@ -82,3 +83,33 @@ async def test_oidc_fails_closed_for_wrong_issuer_audience_expiry_and_algorithm(
         algorithm="HS256",
     )
     assert await authenticator.authenticate(forged) is None
+
+
+def test_oidc_console_configuration_exposes_only_public_pkce_metadata() -> None:
+    oidc = config(
+        console=OIDCConsoleConfig(
+            authorization_endpoint="https://identity.example/authorize",
+            token_endpoint="https://identity.example/token",
+            client_id="vehicle-console",
+            scopes=["openid", "profile", "vehicle.read"],
+            end_session_endpoint="https://identity.example/logout",
+        )
+    )
+
+    document = AuthenticationConfigurationPublic.from_config(
+        AuthConfig(enabled=True, provider="oidc", oidc=oidc)
+    ).model_dump(by_alias=True)
+
+    assert document == {
+        "enabled": True,
+        "provider": "oidc",
+        "oidc": {
+            "issuer": "https://identity.example",
+            "authorizationEndpoint": "https://identity.example/authorize",
+            "tokenEndpoint": "https://identity.example/token",
+            "clientId": "vehicle-console",
+            "scopes": ["openid", "profile", "vehicle.read"],
+            "endSessionEndpoint": "https://identity.example/logout",
+            "callbackPath": "/login",
+        },
+    }

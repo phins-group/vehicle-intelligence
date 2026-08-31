@@ -1,7 +1,7 @@
 import '@angular/compiler';
 
 import { Injector, runInInjectionContext } from '@angular/core';
-import { Subject } from 'rxjs';
+import { of, Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AuthService } from '../../core/auth/auth.service';
@@ -13,15 +13,15 @@ import {
 import { ApiClientService } from '../../core/services/api-client.service';
 import { DatasetReviewComponent } from './dataset-review.component';
 
-type ReviewResponse = {
+interface ReviewResponse {
   detail: Subject<DetectorReviewItem>;
   image: Subject<Blob>;
   history: Subject<{ items: DetectorReviewDecision[] }>;
-};
+}
 
-type TestableDatasetReview = {
+interface TestableDatasetReview {
   schedulePromotionPoll(jobId: string, generation: number): void;
-};
+}
 
 function reviewItem(id: string): DetectorReviewItem {
   return {
@@ -98,6 +98,51 @@ describe('DatasetReviewComponent lifecycle', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it('opens the source with the largest pending queue by default', async () => {
+    const source = (sourceId: string, pendingCount: number) => ({
+      sourceId,
+      sourceManifestSha256: `${sourceId}-manifest`,
+      sourceType: 'FIRST_PARTY_DETECTOR_SOURCE',
+      collectionMethod: 'FIRST_PARTY_USER_COLLECTED',
+      rightsStatus: 'REVIEW_REQUIRED',
+      promotionEligible: false,
+      releaseEligible: false,
+      distributionEligible: false,
+      queueCount: pendingCount,
+      statusCounts: { PENDING_REVIEW: pendingCount },
+      reasonCounts: {},
+      reviewedCount: 0,
+      pendingCount,
+    });
+    const api = {
+      detectorReviewSources: vi.fn(() =>
+        of({
+          items: [
+            source('production-v3', 0),
+            source('traffic-review-v1', 626),
+            source('warehouse-review-v1', 2_900),
+          ],
+        }),
+      ),
+      detectorReviewItems: vi.fn(() =>
+        of({ items: [], nextCursor: null }),
+      ),
+    };
+    const component = createComponent(api);
+
+    await component.loadSources();
+
+    expect(component.sourceId).toBe('warehouse-review-v1');
+    expect(api.detectorReviewItems).toHaveBeenCalledWith({
+      sourceId: 'warehouse-review-v1',
+      limit: 50,
+      cursor: null,
+      status: 'PENDING_REVIEW',
+      reason: '',
+    });
+    component.ngOnDestroy();
   });
 
   it('keeps the newest item when an older detail response arrives last', async () => {

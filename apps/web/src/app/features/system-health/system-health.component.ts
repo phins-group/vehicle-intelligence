@@ -136,11 +136,12 @@ export class SystemHealthComponent implements OnDestroy {
       }
     } finally {
       this.requestInFlight = false;
-      if (this.destroyed) return;
-      this.loading.set(false);
-      if (this.refreshQueued) {
-        this.refreshQueued = false;
-        void this.load();
+      if (!this.destroyed) {
+        this.loading.set(false);
+        if (this.refreshQueued) {
+          this.refreshQueued = false;
+          void this.load();
+        }
       }
     }
   }

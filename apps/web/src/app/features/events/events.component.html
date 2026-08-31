@@ -157,7 +157,7 @@
       <div><dt>OCR observations</dt><dd>{{ event.plate?.observationCount ?? 0 }}</dd></div>
       <div><dt>Plate confidence</dt><dd>{{ event.plate ? (event.plate.confidence | percent: '1.0-1') : 'N/A' }}</dd></div>
       @if (event.plate?.review; as review) {
-        <div><dt>AI prediction</dt><dd>{{ event.plate?.prediction?.normalized || event.plate?.normalized }}</dd></div>
+        <div><dt>AI prediction</dt><dd>{{ event.plate.prediction?.normalized || event.plate.normalized }}</dd></div>
         <div><dt>Human review</dt><dd>{{ review.reviewedBy.displayName }} · rev {{ review.revision }}</dd></div>
       }
     </dl>

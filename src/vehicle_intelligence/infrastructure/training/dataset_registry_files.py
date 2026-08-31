@@ -56,6 +56,9 @@ from vehicle_intelligence.training.dataset import (
 from vehicle_intelligence.training.domain import DetectorRole, DetectorSample, HubUploadResult
 from vehicle_intelligence.training.huggingface import HuggingFacePrivateRegistry
 from vehicle_intelligence.training.video_review_source import VIDEO_REVIEW_SOURCE_TYPE
+from vehicle_intelligence.training.warehouse_plate_review import (
+    WAREHOUSE_PLATE_REVIEW_SOURCE_TYPE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +66,10 @@ _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _JOB_ID = re.compile(r"^dataset-sync-[0-9a-f]{32}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _REVISION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
+_REVIEW_ONLY_SOURCE_TYPES = {
+    VIDEO_REVIEW_SOURCE_TYPE,
+    WAREHOUSE_PLATE_REVIEW_SOURCE_TYPE,
+}
 
 
 class _DatasetUploader(Protocol):
@@ -502,7 +509,7 @@ class FileDatasetRegistryRepository:
                 continue
             raw, manifest = _read_manifest(manifest_path, "dataset source")
             source_id = manifest.get("sourceId")
-            if manifest.get("type") == VIDEO_REVIEW_SOURCE_TYPE:
+            if manifest.get("type") in _REVIEW_ONLY_SOURCE_TYPES:
                 if (
                     manifest.get("schemaVersion") != 1
                     or manifest.get("role") != "plate"

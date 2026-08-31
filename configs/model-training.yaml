@@ -16,7 +16,7 @@ corpus:
 vehicle:
   dataset:
     role: vehicle
-    source_directory: datasets/source/vehicle
+    source_directory: datasets/source/vehicle-combined/phins-warehouse-vehicle-source-v1
     annotations_file: annotations.jsonl
     output_directory: datasets/detectors/vehicle
     classes: [car, motorcycle, bus, truck]
@@ -24,7 +24,7 @@ vehicle:
       train: 0.70
       validation: 0.15
       test: 0.15
-      seed: vehicle-group-split-v1
+      seed: vehicle-warehouse-clean-split-v1
       require_non_empty: true
     maximum_samples: 100000
     maximum_annotation_line_bytes: 1000000

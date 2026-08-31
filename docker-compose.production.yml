@@ -1,0 +1,204 @@
+x-runtime-environment: &runtime-environment
+  VIP_APP__ENVIRONMENT: production
+  VIP_APP__CONFIG_VERSION: ${VIP_CONFIG_VERSION:?Set an immutable release/config version}
+  VIP_APP__LOG_LEVEL: ${VIP_LOG_LEVEL:-INFO}
+
+  VIP_MONGODB__ENABLED: "true"
+  VIP_MONGODB__URI_FILE: /run/secrets/mongodb_uri
+  VIP_MONGODB__DATABASE: ${VIP_MONGODB_DATABASE:-vehicle_intelligence}
+  VIP_MONGODB__TRANSACTIONS_ENABLED: "true"
+  VIP_EVENT_BUS__BACKEND: redis
+  VIP_REDIS__URL_FILE: /run/secrets/redis_url
+
+  VIP_STORAGE__BACKEND: minio
+  VIP_MINIO__ENDPOINT: ${VIP_MINIO_ENDPOINT:?Set the private MinIO host and port}
+  VIP_MINIO__PUBLIC_ENDPOINT: ${VIP_MINIO_PUBLIC_ENDPOINT:?Set the browser-visible media host and port}
+  VIP_MINIO__ACCESS_KEY_FILE: /run/secrets/minio_access_key
+  VIP_MINIO__SECRET_KEY_FILE: /run/secrets/minio_secret_key
+  VIP_MINIO__SECURE: "true"
+  VIP_MINIO__PUBLIC_SECURE: "true"
+  VIP_SECURITY__CAMERA_CREDENTIAL_KEY_FILE: /run/secrets/camera_credential_key
+
+  VIP_AUTH__ENABLED: "true"
+  VIP_AUTH__PROVIDER: oidc
+  VIP_AUTH__OIDC__ISSUER: ${VIP_OIDC_ISSUER:?Set the OIDC issuer}
+  VIP_AUTH__OIDC__JWKS_URL: ${VIP_OIDC_JWKS_URL:?Set the OIDC JWKS URL}
+  VIP_AUTH__OIDC__AUDIENCES: ${VIP_OIDC_AUDIENCES:?Set a JSON OIDC audience list}
+  VIP_AUTH__OIDC__ROLE_MAPPING: ${VIP_OIDC_ROLE_MAPPING:?Set a JSON role mapping}
+  VIP_AUTH__OIDC__CONSOLE__AUTHORIZATION_ENDPOINT: ${VIP_OIDC_AUTHORIZATION_ENDPOINT:?Set the OAuth authorization endpoint}
+  VIP_AUTH__OIDC__CONSOLE__TOKEN_ENDPOINT: ${VIP_OIDC_TOKEN_ENDPOINT:?Set the OAuth token endpoint}
+  VIP_AUTH__OIDC__CONSOLE__CLIENT_ID: ${VIP_OIDC_CLIENT_ID:?Set the public PKCE client ID}
+  VIP_AUTH__OIDC__CONSOLE__SCOPES: ${VIP_OIDC_SCOPES:-["openid","profile"]}
+  VIP_AUTH__OIDC__CONSOLE__END_SESSION_ENDPOINT: ${VIP_OIDC_END_SESSION_ENDPOINT:?Set the OIDC end-session endpoint}
+  VIP_AUTH__OIDC__CONSOLE__CALLBACK_PATH: /login
+
+  VIP_VISION__VEHICLE_DETECTION__MODEL_PATH: /app/models/${VIP_VEHICLE_MODEL_FILE:?Set the vehicle model filename}
+  VIP_VISION__VEHICLE_DETECTION__MODEL_VERSION: ${VIP_VEHICLE_MODEL_VERSION:?Set the vehicle model version}
+  VIP_VISION__VEHICLE_DETECTION__MODEL_HASH: ${VIP_VEHICLE_MODEL_SHA256:?Set the vehicle model SHA-256}
+  VIP_VISION__PLATE_DETECTION__MODEL_PATH: /app/models/${VIP_PLATE_MODEL_FILE:?Set the plate model filename}
+  VIP_VISION__PLATE_DETECTION__MODEL_VERSION: ${VIP_PLATE_MODEL_VERSION:?Set the plate model version}
+  VIP_VISION__PLATE_DETECTION__MODEL_HASH: ${VIP_PLATE_MODEL_SHA256:?Set the plate model SHA-256}
+  VIP_VISION__OCR__MODEL_VERSION: ${VIP_OCR_MODEL_VERSION:?Set the OCR model version}
+  VIP_VISION__OCR__DETECTION_MODEL_DIRECTORY: /app/models/${VIP_OCR_DETECTION_DIRECTORY:?Set the OCR detection directory}
+  VIP_VISION__OCR__DETECTION_MODEL_HASH: ${VIP_OCR_DETECTION_SHA256:?Set the OCR detection directory SHA-256}
+  VIP_VISION__OCR__RECOGNITION_MODEL_DIRECTORY: /app/models/${VIP_OCR_RECOGNITION_DIRECTORY:?Set the OCR recognition directory}
+  VIP_VISION__OCR__RECOGNITION_MODEL_HASH: ${VIP_OCR_RECOGNITION_SHA256:?Set the OCR recognition directory SHA-256}
+  VIP_IDENTITY__REID__EMBEDDING_WEIGHT: ${VIP_REID_EMBEDDING_WEIGHT:-0}
+
+  VIP_RETENTION__ENABLED: "true"
+  VIP_REALTIME__ENABLED: "true"
+  VIP_LIVE_MONITOR__ENABLED: ${VIP_LIVE_MONITOR_ENABLED:-true}
+  VIP_FINALIZATION_OUTBOX__ENABLED: "true"
+  VIP_RULE_ENGINE__EXTERNAL_ACTIONS_ENABLED: "false"
+  VIP_OBSERVABILITY__PROMETHEUS_ENABLED: "true"
+  VIP_OBSERVABILITY__OPENTELEMETRY_ENABLED: "true"
+  VIP_OBSERVABILITY__OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+  VIP_OBSERVABILITY__SERVICE_VERSION: ${VIP_CONFIG_VERSION:?Set an immutable release/config version}
+  VIP_OBSERVABILITY__TRACE_SAMPLE_RATIO: ${VIP_TRACE_SAMPLE_RATIO:-0.10}
+
+x-python-hardening: &python-hardening
+  init: true
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 512
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=256m
+  logging:
+    driver: local
+    options:
+      max-size: 20m
+      max-file: "5"
+
+x-runtime-secrets: &runtime-secrets
+  - mongodb_uri
+  - redis_url
+  - minio_access_key
+  - minio_secret_key
+  - camera_credential_key
+
+services:
+  api:
+    <<: *python-hardening
+    image: ${VIP_API_IMAGE:?Set the API image repository and tag}@sha256:${VIP_API_IMAGE_SHA256:?Set the API image digest}
+    stop_grace_period: 30s
+    environment:
+      <<: *runtime-environment
+      VIP_OBSERVABILITY__SERVICE_NAME: vehicle-intelligence-api
+    secrets: *runtime-secrets
+    volumes:
+      - ${VIP_MODELS_DIRECTORY:?Set the immutable host model directory}:/app/models:ro
+      - ${VIP_DATA_DIRECTORY:?Set the protected application data directory}:/app/datasets
+    expose: [8000]
+    cpus: ${VIP_API_CPUS:-2.0}
+    mem_limit: ${VIP_API_MEMORY:-2g}
+
+  web:
+    image: ${VIP_WEB_IMAGE:?Set the web image repository and tag}@sha256:${VIP_WEB_IMAGE_SHA256:?Set the web image digest}
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    environment:
+      WEB_API_UPSTREAM: http://api:8000
+      WEB_MEDIA_UPSTREAM: ${VIP_WEB_MEDIA_UPSTREAM:?Set the private HTTPS MinIO upstream}
+      WEB_REALTIME_CONNECT_SRC: ${VIP_WEB_REALTIME_CONNECT_SRC:?Set the exact public WSS origin}
+      WEB_OIDC_CONNECT_SRC: ${VIP_WEB_OIDC_CONNECT_SRC:?Set the exact HTTPS OIDC token origin}
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+      - /var/cache/nginx:rw,noexec,nosuid,size=16m
+      - /var/run:rw,noexec,nosuid,size=1m
+      - /etc/nginx/conf.d:rw,noexec,nosuid,size=1m
+    ports:
+      - ${VIP_BIND_ADDRESS:-127.0.0.1}:${VIP_WEB_PORT:-8080}:8080
+    depends_on:
+      api:
+        condition: service_healthy
+    cpus: ${VIP_WEB_CPUS:-1.0}
+    mem_limit: ${VIP_WEB_MEMORY:-256m}
+    logging:
+      driver: local
+      options:
+        max-size: 20m
+        max-file: "5"
+
+  event-worker:
+    <<: *python-hardening
+    image: ${VIP_API_IMAGE:?Set the API image repository and tag}@sha256:${VIP_API_IMAGE_SHA256:?Set the API image digest}
+    command: [vehicle-event-worker]
+    environment:
+      <<: *runtime-environment
+      VIP_OBSERVABILITY__SERVICE_NAME: vehicle-intelligence-event-worker
+      VIP_OBSERVABILITY__EVENT_WORKER_METRICS_PORT: "9102"
+    secrets: *runtime-secrets
+    expose: [9102]
+    cpus: ${VIP_EVENT_WORKER_CPUS:-2.0}
+    mem_limit: ${VIP_EVENT_WORKER_MEMORY:-2g}
+
+  retention-worker:
+    <<: *python-hardening
+    image: ${VIP_API_IMAGE:?Set the API image repository and tag}@sha256:${VIP_API_IMAGE_SHA256:?Set the API image digest}
+    command: [vehicle-retention-worker]
+    environment:
+      <<: *runtime-environment
+      VIP_OBSERVABILITY__SERVICE_NAME: vehicle-intelligence-retention-worker
+      VIP_OBSERVABILITY__RETENTION_METRICS_PORT: "9101"
+    secrets: *runtime-secrets
+    expose: [9101]
+    cpus: ${VIP_RETENTION_CPUS:-1.0}
+    mem_limit: ${VIP_RETENTION_MEMORY:-1g}
+
+  prometheus:
+    image: prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${VIP_PROMETHEUS_RETENTION:-30d}
+    volumes:
+      - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infrastructure/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    ports:
+      - ${VIP_BIND_ADDRESS:-127.0.0.1}:${VIP_PROMETHEUS_PORT:-9090}:9090
+    depends_on: [api, event-worker, retention-worker, otel-collector]
+    cpus: ${VIP_PROMETHEUS_CPUS:-1.0}
+    mem_limit: ${VIP_PROMETHEUS_MEMORY:-1g}
+
+  otel-collector:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.153.0@sha256:93aad750175cbf1a973ae1c5886c3371f4d800f61be25cdd26870b8441ffe9fa
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    command: [--config=/etc/otelcol/collector.yml]
+    environment:
+      OTEL_TRACES_EXPORT_ENDPOINT: ${VIP_OTEL_TRACES_EXPORT_ENDPOINT:?Set the durable trace backend OTLP/HTTP endpoint}
+    volumes:
+      - ./infrastructure/otel/collector.production.yml:/etc/otelcol/collector.yml:ro
+      - otel_storage:/var/lib/otelcol
+    expose: [4318, 8888, 13133]
+    cpus: ${VIP_OTEL_CPUS:-1.0}
+    mem_limit: ${VIP_OTEL_MEMORY:-512m}
+
+secrets:
+  mongodb_uri:
+    file: ${VIP_MONGODB_URI_FILE:?Set a mode-0600 MongoDB URI secret file}
+  redis_url:
+    file: ${VIP_REDIS_URL_FILE:?Set a mode-0600 Redis URI secret file}
+  minio_access_key:
+    file: ${VIP_MINIO_ACCESS_KEY_FILE:?Set a mode-0600 MinIO access-key file}
+  minio_secret_key:
+    file: ${VIP_MINIO_SECRET_KEY_FILE:?Set a mode-0600 MinIO secret-key file}
+  camera_credential_key:
+    file: ${VIP_CAMERA_CREDENTIAL_KEY_FILE:?Set a mode-0600 AES-256-GCM key file}
+
+volumes:
+  prometheus_data:
+  otel_storage:

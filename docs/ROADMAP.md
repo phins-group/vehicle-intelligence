@@ -41,10 +41,11 @@
   recovery, authorized SSE/WebSocket endpoints, and realtime health.
 - Acceptance record:
   [PHASE2_REALTIME_ACCEPTANCE.md](PHASE2_REALTIME_ACCEPTANCE.md).
-- Implemented operator-console foundation: Angular 21 standalone/lazy routes,
-  API-key session handling, role-aware controls, dashboard, cursor/live event
-  explorer, camera operations, alert workflow, system health, WebSocket gap
-  recovery, and same-origin Nginx packaging.
+- Implemented operator-console foundation: Angular 22 standalone/lazy routes,
+  OIDC Authorization Code + PKCE and development API-key authentication,
+  role-aware controls, dashboard, cursor/live event explorer, camera operations,
+  alert workflow, system health, WebSocket gap recovery, and same-origin Nginx
+  packaging.
 - Acceptance record:
   [PHASE2_OPERATOR_DASHBOARD_ACCEPTANCE.md](PHASE2_OPERATOR_DASHBOARD_ACCEPTANCE.md).
 - Implemented policy console: typed watchlist CRUD with validity lifecycle,

@@ -2,6 +2,9 @@ global:
   scrape_interval: 5s
   evaluation_interval: 15s
 
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
 scrape_configs:
   - job_name: vehicle-intelligence-api
     metrics_path: /metrics
@@ -12,3 +15,13 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: [retention-worker:9101]
+
+  - job_name: vehicle-intelligence-event-worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: [event-worker:9102]
+
+  - job_name: vehicle-intelligence-otel-collector
+    metrics_path: /metrics
+    static_configs:
+      - targets: [otel-collector:8888]

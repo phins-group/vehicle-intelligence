@@ -48,11 +48,18 @@ from vehicle_intelligence.infrastructure.audit_serialization import (
     audit_log_to_json,
 )
 from vehicle_intelligence.training.video_review_source import VIDEO_REVIEW_SOURCE_TYPE
+from vehicle_intelligence.training.warehouse_plate_review import (
+    WAREHOUSE_PLATE_REVIEW_SOURCE_TYPE,
+)
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _REVIEW_ID = re.compile(r"^review-[0-9a-f]{24}$")
 logger = logging.getLogger(__name__)
+_REVIEW_ONLY_SOURCE_TYPES = {
+    VIDEO_REVIEW_SOURCE_TYPE,
+    WAREHOUSE_PLATE_REVIEW_SOURCE_TYPE,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -403,19 +410,19 @@ class FileDetectorReviewRepository:
         if (
             not isinstance(source_id, str)
             or not _IDENTIFIER.fullmatch(source_id)
-            or source_type not in {"FIRST_PARTY_DETECTOR_SOURCE", VIDEO_REVIEW_SOURCE_TYPE}
+            or source_type not in {"FIRST_PARTY_DETECTOR_SOURCE", *_REVIEW_ONLY_SOURCE_TYPES}
             or manifest.get("role") != "plate"
             or not isinstance(manifest.get("files"), list)
         ):
             raise DatasetReviewStorageError("detector source is not a reviewable plate source")
-        if source_type == VIDEO_REVIEW_SOURCE_TYPE and (
+        if source_type in _REVIEW_ONLY_SOURCE_TYPES and (
             manifest.get("licenseStatus") != "REVIEW_REQUIRED"
             or manifest.get("acceptanceEligible") is not False
             or manifest.get("releaseEligible") is not False
             or manifest.get("distributionEligible") is not False
             or manifest.get("promotionEligible") is not False
         ):
-            raise DatasetReviewStorageError("video detector review source eligibility is invalid")
+            raise DatasetReviewStorageError("review-only detector source eligibility is invalid")
         file_entries = {
             entry.get("path"): entry
             for entry in manifest["files"]

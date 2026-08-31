@@ -89,6 +89,20 @@ class _TrackedVehicleContext:
     crop: NDArray[np.uint8]
 
 
+@dataclass(frozen=True, slots=True)
+class _EvaluatedPlate:
+    detection: PlateDetection
+    display_bbox: BoundingBox
+    crop: NDArray[np.uint8]
+    quality: PlateQuality
+
+
+@dataclass(frozen=True, slots=True)
+class _RecognizedPlate:
+    result: OCRResult
+    normalization: PlateNormalization
+
+
 class VideoVehiclePipeline:
     def __init__(
         self,
@@ -652,129 +666,168 @@ class VideoVehiclePipeline:
         frame_id: int,
         timestamp: datetime,
     ) -> LivePlateOverlay | None:
-        evaluated: list[tuple[PlateDetection, BoundingBox, NDArray[np.uint8], PlateQuality]] = []
+        visual, candidate = self._select_plate_candidates(track, detection_image, detections)
+        if visual is None:
+            return None
+        prior = track.plate_observations[-1] if track.plate_observations else None
+        overlay = self._plate_overlay(
+            visual,
+            detection_image_bbox,
+            text=prior.normalized_text if prior is not None else None,
+            ocr_confidence=prior.ocr_confidence if prior is not None else None,
+        )
+        if candidate is None:
+            return overlay
+
+        recognized = self._recognize_plate(track, candidate)
+        if recognized is None:
+            if prior is not None:
+                self._consider_plate_image(
+                    track,
+                    candidate.crop,
+                    candidate.quality,
+                    candidate.detection.confidence,
+                    prior.ocr_confidence,
+                    frame_id,
+                    timestamp,
+                )
+            return overlay
+
+        result = recognized.result
+        normalization = recognized.normalization
+        observation = PlateObservation(
+            frame_id=frame_id,
+            timestamp=timestamp,
+            raw_text=result.text,
+            normalized_text=normalization.normalized,
+            compact_text=normalization.compact,
+            ocr_confidence=result.confidence,
+            detection_confidence=candidate.detection.confidence,
+            quality_score=candidate.quality.total_score,
+            corrections=normalization.corrections,
+            plate_model=candidate.detection.model,
+            ocr_model=result.model,
+            partial=normalization.partial,
+        )
+        track.add_plate_observation(observation)
+        self._stats.ocr_observations += 1
+        self._consider_plate_image(
+            track,
+            candidate.crop,
+            candidate.quality,
+            candidate.detection.confidence,
+            result.confidence,
+            frame_id,
+            timestamp,
+        )
+        return self._plate_overlay(
+            candidate,
+            detection_image_bbox,
+            text=normalization.normalized,
+            ocr_confidence=result.confidence,
+        )
+
+    def _select_plate_candidates(
+        self,
+        track: VehicleTrack,
+        detection_image: NDArray[np.uint8],
+        detections: list[PlateDetection],
+    ) -> tuple[_EvaluatedPlate | None, _EvaluatedPlate | None]:
+        best_visual: _EvaluatedPlate | None = None
+        best_eligible: _EvaluatedPlate | None = None
+        image_height, image_width = detection_image.shape[:2]
+        vehicle_type = track.vehicle_type
         for detection in detections:
-            display_bbox = detection.bbox.clip(
-                detection_image.shape[1],
-                detection_image.shape[0],
-            )
+            display_bbox = detection.bbox.clip(image_width, image_height)
             if display_bbox is None:
                 continue
             effective = expanded_plate_detection(
                 detection,
-                image_width=detection_image.shape[1],
-                image_height=detection_image.shape[0],
-                vehicle_type=track.vehicle_type,
+                image_width=image_width,
+                image_height=image_height,
+                vehicle_type=vehicle_type,
                 config=self._settings.vision.plate_crop,
             )
             if effective is None:
                 continue
             plate_crop = self._crop(detection_image, effective.bbox)
             quality = self._quality_evaluator.evaluate(plate_crop, effective)
+            evaluated = _EvaluatedPlate(effective, display_bbox, plate_crop, quality)
+            if best_visual is None or quality.total_score > best_visual.quality.total_score:
+                best_visual = evaluated
             if not quality.eligible:
                 self._stats.quality_rejections += 1
-            evaluated.append((effective, display_bbox, plate_crop, quality))
-        if not evaluated:
+                continue
+            if best_eligible is None or quality.total_score > best_eligible.quality.total_score:
+                best_eligible = evaluated
+        return best_visual, best_eligible
+
+    def _recognize_plate(
+        self,
+        track: VehicleTrack,
+        candidate: _EvaluatedPlate,
+    ) -> _RecognizedPlate | None:
+        if not self._ocr_is_due(track):
             return None
-        visual_detection, visual_bbox, _visual_crop, visual_quality = max(
-            evaluated,
-            key=lambda item: item[3].total_score,
+        variants = self._preprocessor.variants(
+            candidate.crop,
+            candidate.quality,
+            candidate.detection,
         )
-        prior = track.plate_observations[-1] if track.plate_observations else None
-        overlay = LivePlateOverlay(
-            bbox=visual_bbox.translate(detection_image_bbox.x1, detection_image_bbox.y1),
-            detection_confidence=visual_detection.confidence,
-            quality_score=visual_quality.total_score,
-            text=prior.normalized_text if prior is not None else None,
-            ocr_confidence=prior.ocr_confidence if prior is not None else None,
-        )
-        candidates = [item for item in evaluated if item[3].eligible]
-        if not candidates:
-            return overlay
-        detection, clipped, plate_crop, quality = max(
-            candidates,
-            key=lambda item: item[3].total_score,
-        )
-        best_ocr: OCRResult | None = None
-        best_normalization: PlateNormalization | None = None
+        if not variants:
+            return None
+
+        track.last_ocr_attempt_frame_seen = track.frames_seen
+        best: _RecognizedPlate | None = None
         ocr_config = self._settings.vision.ocr
-        if self._ocr_is_due(track):
-            variants = self._preprocessor.variants(plate_crop, quality, detection)
-            if variants:
-                track.last_ocr_attempt_frame_seen = track.frames_seen
-                for variant in variants:
-                    self._stats.ocr_requests += 1
-                    inference_started = time.perf_counter()
-                    try:
-                        result = self._ocr.recognize(variant.image)
-                    except InferenceError:
-                        self._stats.ocr_failures += 1
-                        logger.exception(
-                            "ocr_failed",
-                            extra={
-                                "camera_id": track.camera_id,
-                                "track_id": track.logical_id,
-                            },
-                        )
-                        continue
-                    finally:
-                        self._stats.ocr_inference_seconds += time.perf_counter() - inference_started
-                    if result.confidence < ocr_config.minimum_confidence:
-                        continue
-                    normalized = self._normalizer.normalize(result.text)
-                    if not normalized.valid:
-                        continue
-                    if best_ocr is None or result.confidence > best_ocr.confidence:
-                        best_ocr = result
-                        best_normalization = normalized
-                    if (
-                        ocr_config.variant_early_stop_confidence is not None
-                        and result.confidence >= ocr_config.variant_early_stop_confidence
-                    ):
-                        break
-        if best_ocr is None or best_normalization is None:
-            if prior is not None:
-                self._consider_plate_image(
-                    track,
-                    plate_crop,
-                    quality,
-                    detection.confidence,
-                    prior.ocr_confidence,
-                    frame_id,
-                    timestamp,
+        for variant in variants:
+            self._stats.ocr_requests += 1
+            inference_started = time.perf_counter()
+            try:
+                result = self._ocr.recognize(variant.image)
+            except InferenceError:
+                self._stats.ocr_failures += 1
+                logger.exception(
+                    "ocr_failed",
+                    extra={
+                        "camera_id": track.camera_id,
+                        "track_id": track.logical_id,
+                    },
                 )
-            return overlay
-        observation = PlateObservation(
-            frame_id=frame_id,
-            timestamp=timestamp,
-            raw_text=best_ocr.text,
-            normalized_text=best_normalization.normalized,
-            compact_text=best_normalization.compact,
-            ocr_confidence=best_ocr.confidence,
-            detection_confidence=detection.confidence,
-            quality_score=quality.total_score,
-            corrections=best_normalization.corrections,
-            plate_model=detection.model,
-            ocr_model=best_ocr.model,
-            partial=best_normalization.partial,
-        )
-        track.add_plate_observation(observation)
-        self._stats.ocr_observations += 1
-        self._consider_plate_image(
-            track,
-            plate_crop,
-            quality,
-            detection.confidence,
-            best_ocr.confidence,
-            frame_id,
-            timestamp,
-        )
+                continue
+            finally:
+                self._stats.ocr_inference_seconds += time.perf_counter() - inference_started
+            if result.confidence < ocr_config.minimum_confidence:
+                continue
+            normalization = self._normalizer.normalize(result.text)
+            if not normalization.valid:
+                continue
+            if best is None or result.confidence > best.result.confidence:
+                best = _RecognizedPlate(result, normalization)
+            if (
+                ocr_config.variant_early_stop_confidence is not None
+                and result.confidence >= ocr_config.variant_early_stop_confidence
+            ):
+                break
+        return best
+
+    @staticmethod
+    def _plate_overlay(
+        candidate: _EvaluatedPlate,
+        detection_image_bbox: BoundingBox,
+        *,
+        text: str | None,
+        ocr_confidence: float | None,
+    ) -> LivePlateOverlay:
         return LivePlateOverlay(
-            bbox=clipped.translate(detection_image_bbox.x1, detection_image_bbox.y1),
-            detection_confidence=detection.confidence,
-            quality_score=quality.total_score,
-            text=best_normalization.normalized,
-            ocr_confidence=best_ocr.confidence,
+            bbox=candidate.display_bbox.translate(
+                detection_image_bbox.x1,
+                detection_image_bbox.y1,
+            ),
+            detection_confidence=candidate.detection.confidence,
+            quality_score=candidate.quality.total_score,
+            text=text,
+            ocr_confidence=ocr_confidence,
         )
 
     async def _report_live_preview(

@@ -178,6 +178,7 @@ async def test_partial_policy_failure_reclaims_without_repeating_completed_actio
         batch_size=10,
         block_ms=50,
         claim_idle_ms=1000,
+        reclaim_interval_ms=100,
     )
     mongo_config = MongoConfig(
         enabled=True,
@@ -241,7 +242,13 @@ async def test_partial_policy_failure_reclaims_without_repeating_completed_actio
         RuleEvaluator(),
         engine,
     )
-    worker = VehicleEventWorker(consumer, events, codec, post_processor=processor)
+    worker = VehicleEventWorker(
+        consumer,
+        events,
+        codec,
+        post_processor=processor,
+        reclaim_interval_seconds=redis_config.reclaim_interval_ms / 1000.0,
+    )
     admin = Redis.from_url(os.environ["TEST_REDIS_URL"], decode_responses=True)
     execution_ids = [action_execution_id(event.id, rule.id, action.id) for action in rule.actions]
     try:

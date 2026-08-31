@@ -8,6 +8,8 @@ Observability is split by process rather than hidden behind the API:
 camera workers -> latest camera_health -> API /metrics -> Prometheus
 API requests   -> normalized HTTP metrics -----------> Prometheus
 API requests   -> OTLP/HTTP spans -> Collector ------> trace backend/debug
+Collector      -> internal :8888/metrics ------------> Prometheus
+event worker   -> worker :9102/metrics --------------> Prometheus
 retention pass -> worker :9101/metrics --------------> Prometheus
 ```
 
@@ -56,6 +58,10 @@ The retention worker exports:
 - `retention_events_deleted_total`;
 - `retention_run_duration_seconds`.
 
+The event worker exports cumulative read/reclaim/persist/duplicate/DLQ,
+persistence/policy failure, action, and realtime publication counters from a
+scrape-time snapshot of its in-process stats.
+
 Collection failures increment a bounded `observability_collection_errors_total`
 counter and do not make `/metrics` fail.
 
@@ -72,9 +78,14 @@ active span adds lowercase 32-character `trace_id` and 16-character `span_id`
 fields to structured JSON logs. Request IDs remain a separate correlation
 signal and are added as a span attribute.
 
-The bundled collector uses the debug exporter only as local acceptance evidence.
-A production deployment should replace it with an authenticated trace backend;
-the API's OTLP contract remains unchanged.
+The bundled development collector uses the debug exporter only as local
+acceptance evidence. `infrastructure/otel/collector.production.yml` instead
+exports to a durable OTLP/HTTP backend with indefinite retry, fsync, a
+byte-bounded disk-backed sending queue, and start/rebound compaction. Its basic
+internal metrics are exposed on port 8888 so Prometheus can alert on collector
+availability, queue saturation, enqueue loss, and sustained export failure.
+Notification routing remains owned by the deployment Alertmanager/monitoring
+service.
 
 ## Retention ownership
 
@@ -136,6 +147,7 @@ observability:
   prometheus_enabled: true
   prometheus_path: /metrics
   retention_metrics_port: 9101
+  event_worker_metrics_port: 9102
   opentelemetry_enabled: false
   otlp_traces_endpoint: null
   service_name: vehicle-intelligence-api
@@ -166,8 +178,8 @@ lease is coordinated.
 Start the optional profiles:
 
 ```bash
-docker compose --profile observability --profile maintenance up -d \
-  api prometheus otel-collector retention-worker
+docker compose --profile observability --profile maintenance --profile event-driven up -d \
+  api event-worker prometheus otel-collector retention-worker
 ```
 
 Run one bounded host-native pass:
@@ -184,12 +196,14 @@ Useful acceptance queries:
 ```promql
 up{job="vehicle-intelligence-api"}
 up{job="vehicle-intelligence-retention"}
+up{job="vehicle-intelligence-otel-collector"}
 rate(http_requests_total[5m])
 histogram_quantile(0.95, sum by (le, route) (
   rate(http_request_duration_seconds_bucket[5m])
 ))
 increase(retention_object_failures_total[1h])
+otelcol_exporter_queue_size / clamp_min(otelcol_exporter_queue_capacity, 1)
 ```
 
-Alerting rules and a durable production trace backend remain deployment policy,
-not hardcoded application behavior.
+Bundled alert thresholds are starting points. The durable trace backend,
+site-specific thresholds, and notification routing remain deployment policy.

@@ -68,6 +68,8 @@ jobs:
         run: |
           docker compose --profile '*' config --quiet
           docker compose -f docker-compose.edge.yml --profile '*' config --quiet
+          docker compose --env-file deployment/production.env.example \
+            -f docker-compose.production.yml config --quiet
 
   real-services:
     name: Real services (MongoDB replica set, Redis, MinIO)
@@ -145,7 +147,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: "22"
+          node-version: "24.15.0"
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
 
@@ -155,23 +157,22 @@ jobs:
       - name: Audit web dependencies
         run: |
           npm run test:contracts
-          npm audit --package-lock-only --omit=dev --audit-level=high
-          audit_report="$RUNNER_TEMP/npm-audit.json"
-          set +e
-          npm audit --package-lock-only --json > "$audit_report"
-          audit_status=$?
-          set -e
-          if [ "$audit_status" -ne 0 ] && [ "$audit_status" -ne 1 ]; then
-            cat "$audit_report"
-            exit "$audit_status"
-          fi
-          node scripts/check_npm_audit_policy.mjs "$audit_report"
+          npm audit --package-lock-only --omit=dev --audit-level=low
+          npm audit --package-lock-only --audit-level=low
 
       - name: Test web
-        run: npm test
+        run: |
+          npm run lint
+          npm test
 
       - name: Type-check web
         run: npm run typecheck
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Test browser authentication and RBAC
+        run: npm run test:e2e
 
       - name: Build web
         run: npm run build
@@ -183,6 +184,21 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Validate telemetry configuration
+        run: |
+          docker run --rm --entrypoint /bin/promtool \
+            --volume "$PWD/infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            --volume "$PWD/infrastructure/prometheus/rules:/etc/prometheus/rules:ro" \
+            prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893 \
+            check config /etc/prometheus/prometheus.yml
+          mkdir -p "$RUNNER_TEMP/otel-storage"
+          docker run --rm \
+            --env OTEL_TRACES_EXPORT_ENDPOINT=https://traces.example.test:4318 \
+            --volume "$PWD/infrastructure/otel/collector.production.yml:/etc/otelcol/collector.yml:ro" \
+            --volume "$RUNNER_TEMP/otel-storage:/var/lib/otelcol" \
+            ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.153.0@sha256:93aad750175cbf1a973ae1c5886c3371f4d800f61be25cdd26870b8441ffe9fa \
+            validate --config=/etc/otelcol/collector.yml
 
       - name: Build locked API image
         run: docker build --tag vehicle-intelligence:ci .
@@ -225,6 +241,9 @@ jobs:
             docker run --rm \
               --volume /var/run/docker.sock:/var/run/docker.sock \
               --volume trivy-cache:/root/.cache/trivy \
-              aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f \
-              image --scanners vuln --severity CRITICAL --exit-code 1 "$image"
+              --volume "$PWD/.trivyignore.yaml:/workspace/.trivyignore.yaml:ro" \
+              aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 \
+              image --skip-version-check --timeout 30m \
+              --ignorefile /workspace/.trivyignore.yaml --show-suppressed \
+              --scanners vuln --severity CRITICAL --exit-code 1 "$image"
           done

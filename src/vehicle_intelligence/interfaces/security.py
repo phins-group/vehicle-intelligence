@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Security, status
+from fastapi import APIRouter, Depends, HTTPException, Response, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -85,9 +86,59 @@ class PrincipalPublic(BaseModel):
         )
 
 
-def build_auth_router(security: APISecurity) -> APIRouter:
+class OIDCConsolePublic(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    issuer: str
+    authorization_endpoint: str = Field(alias="authorizationEndpoint")
+    token_endpoint: str = Field(alias="tokenEndpoint")
+    client_id: str = Field(alias="clientId")
+    scopes: list[str]
+    end_session_endpoint: str | None = Field(alias="endSessionEndpoint")
+    callback_path: str = Field(alias="callbackPath")
+
+
+class AuthenticationConfigurationPublic(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    enabled: bool
+    provider: Literal["disabled", "api_key", "oidc"]
+    oidc: OIDCConsolePublic | None = None
+
+    @classmethod
+    def from_config(cls, config: AuthConfig) -> AuthenticationConfigurationPublic:
+        if not config.enabled:
+            return cls(enabled=False, provider="disabled")
+        if config.provider != "oidc" or config.oidc is None:
+            return cls(enabled=True, provider="api_key")
+        console = config.oidc.console
+        return cls(
+            enabled=True,
+            provider="oidc",
+            oidc=(
+                OIDCConsolePublic(
+                    issuer=config.oidc.issuer,
+                    authorizationEndpoint=console.authorization_endpoint,
+                    tokenEndpoint=console.token_endpoint,
+                    clientId=console.client_id,
+                    scopes=console.scopes,
+                    endSessionEndpoint=console.end_session_endpoint,
+                    callbackPath=console.callback_path,
+                )
+                if console is not None
+                else None
+            ),
+        )
+
+
+def build_auth_router(security: APISecurity, config: AuthConfig) -> APIRouter:
     router = APIRouter(prefix="/api/auth", tags=["authentication"])
     read_access = security.require(Permission.READ_PLATFORM)
+
+    @router.get("/config", response_model=AuthenticationConfigurationPublic)
+    async def configuration(response: Response) -> AuthenticationConfigurationPublic:
+        response.headers["Cache-Control"] = "no-store"
+        return AuthenticationConfigurationPublic.from_config(config)
 
     @router.get("/me", response_model=PrincipalPublic)
     async def me(

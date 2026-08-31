@@ -57,7 +57,7 @@
   <div class="panel-heading"><div><h2>Theo version OCR</h2><p>Traceability từ AI metadata của canonical event</p></div><svg lucideGauge aria-hidden="true"></svg></div>
   <div class="table-scroll"><table><thead><tr><th>Model</th><th>Events</th><th>OCR success</th><th>Unknown</th><th>Reviewed</th><th>Correction</th><th>Confidence</th></tr></thead><tbody>
     @for (item of report()?.models ?? []; track (item.model?.name ?? 'unknown') + (item.model?.version ?? '')) {
-      <tr><td><strong>{{ item.model?.name || 'Unknown metadata' }}</strong><small>{{ item.model?.version || '—' }} @if (item.model?.hash) { · <span class="mono">{{ item.model?.hash }}</span> }</small></td><td>{{ item.metrics.eventCount }}</td><td>{{ item.metrics.ocrSuccessRate | percent: '1.1-1' }}</td><td>{{ item.metrics.unknownPlateRate | percent: '1.1-1' }}</td><td>{{ item.metrics.reviewedCount }}</td><td>{{ item.metrics.humanCorrectionRate | percent: '1.1-1' }}</td><td>{{ item.metrics.averagePlateConfidence ?? 0 | percent: '1.1-1' }}</td></tr>
+      <tr><td><strong>{{ item.model?.name || 'Unknown metadata' }}</strong><small>{{ item.model?.version || '—' }} @if (item.model?.hash) { · <span class="mono">{{ item.model.hash }}</span> }</small></td><td>{{ item.metrics.eventCount }}</td><td>{{ item.metrics.ocrSuccessRate | percent: '1.1-1' }}</td><td>{{ item.metrics.unknownPlateRate | percent: '1.1-1' }}</td><td>{{ item.metrics.reviewedCount }}</td><td>{{ item.metrics.humanCorrectionRate | percent: '1.1-1' }}</td><td>{{ item.metrics.averagePlateConfidence ?? 0 | percent: '1.1-1' }}</td></tr>
     } @empty { <tr><td colspan="7"><div class="empty-state">Chưa có model metadata.</div></td></tr> }
   </tbody></table></div>
   </section>
