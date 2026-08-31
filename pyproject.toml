@@ -38,7 +38,7 @@ edge = [
 ]
 vision = [
   "paddleocr>=3.3,<4",
-  "supervision>=0.27,<0.28",
+  "supervision>=0.27,<0.31",
   "ultralytics>=8.3,<9",
 ]
 minio = ["minio>=7.2,<8"]
